@@ -1,0 +1,31 @@
+# Local/generated result directories
+outputs/
+**/outputs/
+**/Outputs/
+**/BatchResults*/
+**/batch_logs/
+**/comsol_results/
+**/inversion_results/
+**/dxf_pore/
+**/dxf_solid/
+**/mph_models/
+**/outputs_standard_demo/
+**/.git.codex-temp/
+
+# Large COMSOL model/result binaries; use Git LFS or external storage if needed.
+*.mph
+
+# MATLAB/Python local artifacts
+*.asv
+*.m~
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments and editor state
+.venv/
+venv/
+.env
+.vscode/
+.idea/
+*.log

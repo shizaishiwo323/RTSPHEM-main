@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nmr-t2-standard"
+version = "0.1.0"
+description = "Standardized NNLS/L-curve inversion, plotting and Gaussian decomposition for NMR T2 data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "NMR T2 Team" }
+]
+dependencies = [
+  "numpy>=1.23",
+  "pandas>=1.5",
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+  "openpyxl>=3.1"
+]
+
+[tool.setuptools]
+packages = ["nmr_t2"]
