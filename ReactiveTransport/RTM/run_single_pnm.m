@@ -5,6 +5,8 @@
 %   2. 在 MATLAB 中运行本文件。
 %   3. 如果 enableNMRSimulation=true，NMR 的 COMSOL/Python 路径等细节在
 %      ReactiveTransport/automation/AutomationConfig.m 中设置。
+%   4. 如果 enableNMRSurrogate=true，则用 NMR-agent 训练好的图像替代模型预测
+%      归一化弛豫曲线，再沿用本项目 T2 反演流程。
 %
 % 输出：
 %   outputs/rtm_runs/<runName>/
@@ -14,6 +16,9 @@
 %     comsol_results/        仅 enableNMRSimulation=true 时生成
 %     inversion_results/     仅 enableNMRSimulation=true 时生成
 %     nmr_sync_log.csv       仅 enableNMRSimulation=true 时生成
+%     surrogate_results/     仅 enableNMRSurrogate=true 时生成
+%     surrogate_inversion_results/ 仅 enableNMRSurrogate=true 时生成
+%     nmr_surrogate_sync_log.csv   仅 enableNMRSurrogate=true 时生成
 
 clear; clc;
 
@@ -71,7 +76,7 @@ cfg.diffusionCoefficient = 1e-5;
 % 碳酸钙摩尔体积 [cm^3/mol]
 cfg.molarVolume = 36.9;
 
-% 反应速率常数 [mol/dm^2/s]
+% 反应速率常数 [mol/cm^2/s]
 cfg.rateCoefficientTST = 1e-4;
 
 %% ===================== 时间步与终止条件 =====================
@@ -117,7 +122,17 @@ cfg.showDebugFigures = false;
 %% ===================== 同步 NMR 模拟 =====================
 % false：只跑 RTM，后续再单独跑 NMR。
 % true ：每次导出 pore/solid DXF 后立即运行 COMSOL NMR + T2 反演。
-cfg.enableNMRSimulation = true;
+cfg.enableNMRSimulation = false;
+
+% 是否使用 NMR-agent 机器学习替代模型。
+% 与 enableNMRSimulation 同级互斥：二者最多只能打开一个。
+% true：每次生成界面图像后，用 U-Net 预测归一化 NMR 弛豫曲线，再做 T2 反演。
+cfg.enableNMRSurrogate = true;
+cfg.nmrSurrogateModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
+cfg.nmrSurrogateRoot = 'C:\Users\imgw\Documents\Codex\NMR-agent';
+cfg.nmrSurrogatePythonExe = 'C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe';
+cfg.nmrSurrogateResolution = 256;
+cfg.nmrSurrogateDevice = 'auto';
 
 % 注意：
 %   NMR 的 COMSOL 模型、Python解释器、是否覆盖已有结果、是否启用COMSOL/反演等
@@ -131,6 +146,7 @@ fprintf('  L      = %.6g cm\n', cfg.characteristicLength);
 fprintf('  u_in   = %.6g cm/s\n', cfg.inletVelocity);
 fprintf('  c_in   = %.6g mol/cm^3\n', cfg.initialHydrogenConcentration);
 fprintf('  sync NMR = %s\n', mat2str(cfg.enableNMRSimulation));
+fprintf('  surrogate NMR = %s\n', mat2str(cfg.enableNMRSurrogate));
 fprintf('========================================\n\n');
 
 result = PNM_beauty3(cfg);

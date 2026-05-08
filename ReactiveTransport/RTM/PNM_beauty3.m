@@ -6,7 +6,7 @@ function result = PNM_beauty3(config)
 %     outputRoot, resultsDir, runName, layoutType, characteristicLength,
 %     inletVelocity, initialHydrogenConcentration, exportEvery,
 %     saveMainPlot, saveIndividualPlots, exportDXF, saveRealtimePlot,
-%     enableNMRSimulation.
+%     enableNMRSimulation, enableNMRSurrogate.
 %
 % Outputs:
 %   result struct with the run directory, metadata, and final scalar metrics.
@@ -41,6 +41,13 @@ numPartitionsMicroscale = cfgget(config, 'numPartitionsMicroscale', 2 * 64); % N
 
 % 时间步长控制参数（maximalStep 将根据 Pe 自动设置）
 initialMacroscaleTimeStepSize = cfgget(config, 'initialMacroscaleTimeStepSize', 0.10); % 初始宏观时间步长 [s]
+timeStepperType = char(cfgget(config, 'timeStepperType', 'expmax'));
+maxTotalTimeSteps = cfgget(config, 'maxTotalTimeSteps', []);
+porosityStepTarget = cfgget(config, 'porosityStepTarget', 0.01);
+porosityStepTolerance = cfgget(config, 'porosityStepTolerance', 0.0025);
+adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 1.4);
+adaptiveShrinkSafety = cfgget(config, 'adaptiveShrinkSafety', 0.85);
+adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
 
 % ----------------------------------
 % 可调参数
@@ -62,8 +69,12 @@ targetAspectRatio = cfgget(config, 'targetAspectRatio', 0.6 / 0.4);          % �
 % 2) minThroatRandom 用作随机排布时的最小孔喉约束（通常取 targetAvgSpacing/3 左右）
 targetAvgSpacing = cfgget(config, 'targetAvgSpacing', cfgget(config, 'characteristicLength', SizeMicron * 0.001));      % 目标平均孔喉 [cm]
 minThroatRandom = cfgget(config, 'minThroatRandom', targetAvgSpacing / 3.0);   % random 模式的最小孔喉 [cm]
+useRandomParticleRadii = logical(cfgget(config, 'useRandomParticleRadii', false));
+randomParticleRadiusMin = cfgget(config, 'randomParticleRadiusMin', circleRadius);
+randomParticleRadiusMax = cfgget(config, 'randomParticleRadiusMax', circleRadius);
+targetInitialPorosity = cfgget(config, 'targetInitialPorosity', []);
 if ~strcmp(layoutType, 'random')
-    circleSpacing = cfgget(config, 'characteristicLength', circleSpacing);
+    circleSpacing = cfgget(config, 'circleSpacing', cfgget(config, 'characteristicLength', circleSpacing));
 end
 
 % === 随机几何加载/保存选项 ===
@@ -94,6 +105,10 @@ showDebugFigures = cfgget(config, 'showDebugFigures', false);
 % ReactiveTransport/automation 中的 COMSOL + T2 反演流程。
 % COMSOL模型、Python解释器、覆盖策略等仍在 AutomationConfig.m 中设置。
 enableNMRSimulation = logical(cfgget(config, 'enableNMRSimulation', cfgget(config, 'syncNMRSimulation', false)));
+enableNMRSurrogate = logical(cfgget(config, 'enableNMRSurrogate', cfgget(config, 'enableNMRSurrogateModel', false)));
+if enableNMRSimulation && enableNMRSurrogate
+    error('MATLAB:PNMNMRMode', 'enableNMRSimulation 和 enableNMRSurrogate 不能同时为 true；请选择真实 COMSOL NMR 或机器学习替代模型。');
+end
 if enableNMRSimulation && ~exportDXF
     warning('MATLAB:PNMNMRSync', 'enableNMRSimulation=true 需要导出 pore/solid DXF，已自动启用 exportDXF。');
     exportDXF = true;
@@ -103,6 +118,12 @@ nmrComsolOutputDir = '';
 nmrInversionOutputDir = '';
 nmrSyncLogFile = '';
 nmrCalibrationFactor = [];
+nmrSurrogateConfig = [];
+nmrSurrogateOutputDir = '';
+nmrSurrogateInversionOutputDir = '';
+nmrSurrogateMaskDir = '';
+nmrSurrogateSyncLogFile = '';
+nmrSurrogateCalibrationFactor = [];
  
 % 计算比例供参考
 minSpacingRatio = circleSpacing / circleRadius;      % square/hex 的最小孔喉相对半径
@@ -113,6 +134,7 @@ minRandomRatio  = minThroatRandom / circleRadius;    % random 最小孔喉相对
 % 保证上下左右边界条件满足
 if ~useExternalGeometry
     marginLeft = circleRadius * circleSpacingX_left;  % 左边入口留白
+    circleRadii = [];
     
     switch layoutType
         case 'square'
@@ -200,10 +222,11 @@ mu = rhoWater * kinematicViscosityWater;
 thickness = 1;
 
 if strcmp(layoutType, 'random')
-    characteristicLength = targetAvgSpacing; % [cm]
+    defaultCharacteristicLength = targetAvgSpacing; % [cm]
 else
-    characteristicLength = circleSpacing; % [cm]
+    defaultCharacteristicLength = circleSpacing; % [cm]
 end
+characteristicLength = cfgget(config, 'characteristicLength', defaultCharacteristicLength); % [cm]
 
 reynoldsNumber = inletVelocity * characteristicLength / kinematicViscosityWater;
 
@@ -306,6 +329,8 @@ end
 
 maximalStepAuto = min(4320000, max(1, round(base_step * da_mult * lowPeDa_step_boost)));
 maximalStep = cfgget(config, 'maximalStep', maximalStepAuto);
+adaptiveMaxTimeStep = cfgget(config, 'adaptiveMaxTimeStep', maximalStep);
+initialMacroscaleTimeStepSize = min(max(initialMacroscaleTimeStepSize, adaptiveMinTimeStep), maximalStep);
 fprintf('maximalStep = %g s (base: %g, da_mult: %g, boost: %g)\n', ...
     maximalStep, base_step, da_mult, lowPeDa_step_boost);
 
@@ -378,8 +403,6 @@ fprintf('endTime = %g s (base: %g, da_mult: %g, boost: %g)\n', ...
     endTime, base_endtime, da_end_mult, lowPeDa_end_boost);
 
 %% Computation of time steps in simulation
-timeStepperType = 'expmax';
-
 switch (timeStepperType)
     case 'linear'
         if (mod(endTime, initialMacroscaleTimeStepSize) < EPS)
@@ -406,6 +429,30 @@ switch (timeStepperType)
         end
         timeSteps = [timeSteps(1:(end -1)), endTime];
         size(timeSteps); %#ok<SIZINT>
+    case 'adaptive_porosity'
+        if isempty(maxTotalTimeSteps)
+            maxTotalTimeSteps = 120;
+        end
+        maxTotalTimeSteps = max(2, round(maxTotalTimeSteps));
+        adaptiveMaxTimeStep = max(adaptiveMinTimeStep, adaptiveMaxTimeStep);
+        initialMacroscaleTimeStepSize = min(max(initialMacroscaleTimeStepSize, adaptiveMinTimeStep), adaptiveMaxTimeStep);
+
+        timeSteps = zeros(1, maxTotalTimeSteps + 1);
+        timeSteps(1) = 0;
+        nextStepSize = initialMacroscaleTimeStepSize;
+        for kStep = 1:maxTotalTimeSteps
+            timeSteps(kStep + 1) = min(timeSteps(kStep) + nextStepSize, endTime);
+            if timeSteps(kStep + 1) >= endTime - EPS
+                timeSteps = timeSteps(1:(kStep + 1));
+                break;
+            end
+            nextStepSize = min(adaptiveMaxTimeStep, nextStepSize * adaptiveGrowthFactor);
+        end
+        endTime = timeSteps(end);
+        fprintf(['adaptive_porosity: target dPorosity=%.4g +/- %.4g, ', ...
+            'dt0=%g s, dt range=[%g, %g] s, safety steps=%d\n'], ...
+            porosityStepTarget, porosityStepTolerance, initialMacroscaleTimeStepSize, ...
+            adaptiveMinTimeStep, adaptiveMaxTimeStep, numel(timeSteps)-1);
     otherwise
         error('Time stepper type not implemented.');
 end
@@ -533,6 +580,11 @@ else
                     if radiusMatch && sizeMatch && spacingMatch
                         
                         circleCenters = loadedData.circleCenters;
+                        if isfield(loadedData, 'circleRadii')
+                            circleRadii = loadedData.circleRadii;
+                        else
+                            circleRadii = repmat(circleRadius, size(circleCenters, 1), 1);
+                        end
                         geometryLoaded = true;
                         
                         actualAvgSpacing = calculateAverageSpacing(circleCenters, circleRadius);
@@ -563,6 +615,68 @@ else
             
             % === 如果未加载，则生成新的随机几何 ===
             if ~geometryLoaded
+                if useRandomParticleRadii
+                    fprintf('=== 多粒径随机分布 ===\n');
+                    fprintf('颗粒半径范围: %.4f-%.4f cm (%.1f-%.1f μm)\n', ...
+                        randomParticleRadiusMin, randomParticleRadiusMax, ...
+                        randomParticleRadiusMin * 1e4, randomParticleRadiusMax * 1e4);
+                    if isempty(targetInitialPorosity)
+                        targetInitialPorosity = 0.35;
+                    end
+                    targetSolidArea = randomArea * (1 - targetInitialPorosity);
+                    maxTrials = 80000;
+                    circleCenters = [];
+                    circleRadii = [];
+                    solidArea = 0;
+                    trial = 0;
+                    while trial < maxTrials && solidArea < targetSolidArea
+                        trial = trial + 1;
+                        fillFraction = solidArea / max(targetSolidArea, eps);
+                        if fillFraction < 0.75
+                            radiusNow = randomParticleRadiusMin + ...
+                                rand * (randomParticleRadiusMax - randomParticleRadiusMin);
+                        else
+                            radiusNow = randomParticleRadiusMin + ...
+                                rand^2 * (randomParticleRadiusMax - randomParticleRadiusMin);
+                        end
+                        xMin = marginLeft + radiusNow;
+                        if xMin >= maxX
+                            continue;
+                        end
+                        cx = xMin + rand * (maxX - xMin);
+                        cy = rand * maxY;
+                        candidate = [cx, cy];
+                        if isempty(circleCenters)
+                            accept = true;
+                        else
+                            distances = sqrt(sum((circleCenters - candidate).^2, 2));
+                            accept = all(distances >= (circleRadii + radiusNow + minThroatRandom));
+                        end
+                        if accept
+                            circleCenters = [circleCenters; candidate]; %#ok<AGROW>
+                            circleRadii = [circleRadii; radiusNow]; %#ok<AGROW>
+                            solidArea = solidArea + pi * radiusNow^2;
+                        end
+                    end
+                    finalPorosity = 1 - solidArea / randomArea;
+                    fprintf('颗粒数: %d\n', size(circleCenters, 1));
+                    fprintf('估算孔隙率: %.3f [目标: %.3f]\n', finalPorosity, targetInitialPorosity);
+                    if finalPorosity >= 0.50
+                        warning('MATLAB:RandomPorosityHigh', ...
+                            '多粒径随机几何估算孔隙率 %.3f >= 0.50；可降低 targetInitialPorosity 或减小 minThroatRandom。', ...
+                            finalPorosity);
+                    end
+                    finalAvgSpacing = calculateAverageSpacing(circleCenters, mean(circleRadii));
+                    try
+                        save(geometrySaveFile, 'circleCenters', 'circleRadii', 'circleRadius', ...
+                             'targetAvgSpacing', 'circleSpacing', 'lengthXAxis', 'lengthYAxis', ...
+                             'finalAvgSpacing', 'finalPorosity', 'randomParticleRadiusMin', ...
+                             'randomParticleRadiusMax', 'targetInitialPorosity', '-v7.3');
+                        fprintf('✓ 几何配置已保存至: %s\n', geometrySaveFile);
+                    catch ME
+                        warning('MATLAB:GeometrySave', '保存几何配置失败: %s', ME.message);
+                    end
+                else
                 fprintf('=== 迭代优化随机分布 ===\n');
                 fprintf('目标平均孔喉: %.4f cm (%.2f×R)\n', targetAvgSpacing, avgSpacingRatio);
             
@@ -573,7 +687,7 @@ else
             bestError = inf;
             
             % 初始参数估算
-            densityFactor = 1.8; % 密度调整因子
+            densityFactor = cfgget(config, 'randomDensityFactor', 1.8); % 密度调整因子
             
             for iteration = 1:maxIterations
                 % 根据密度因子估算目标颗粒数
@@ -700,10 +814,15 @@ else
                     [Xc, Yc] = meshgrid(xCenters, yCenters);
                     circleCenters = [Xc(:), Yc(:)];
                 end
+                end
             end  % end if ~geometryLoaded
 
         otherwise
             error('Unknown layoutType. Use square | hex | random.');
+    end
+
+    if isempty(circleRadii)
+        circleRadii = repmat(circleRadius, size(circleCenters, 1), 1);
     end
 
     % ----------------------------------
@@ -715,8 +834,9 @@ else
 
     for k = 1:size(circleCenters, 1)
         center = circleCenters(k,:);
+        radiusK = circleRadii(k);
         dist = sqrt( (coord(:,1) - center(1)).^2 + (coord(:,2) - center(2)).^2 );
-        phi_k = circleRadius - dist;
+        phi_k = radiusK - dist;
         phi_at_nodes = max(phi_at_nodes, phi_k);
     end
 
@@ -960,6 +1080,11 @@ if enableNMRSimulation
     [nmrConfig, nmrComsolOutputDir, nmrInversionOutputDir, nmrSyncLogFile] = ...
         initializeNMRSync(reactiveRoot, resultsDir);
 end
+if enableNMRSurrogate
+    [nmrSurrogateConfig, nmrSurrogateOutputDir, nmrSurrogateInversionOutputDir, ...
+        nmrSurrogateMaskDir, nmrSurrogateSyncLogFile] = initializeNMRSurrogateSync( ...
+        reactiveRoot, resultsDir, config);
+end
 
 % 创建单独子图保存文件夹
 individualPlotsDir = fullfile(resultsDir, 'individual_plots');
@@ -989,13 +1114,25 @@ metadata.parameters = struct( ...
     'circleSpacing_cm', circleSpacing, ...
     'targetAvgSpacing_cm', targetAvgSpacing, ...
     'minThroatRandom_cm', minThroatRandom, ...
+    'useRandomParticleRadii', useRandomParticleRadii, ...
+    'randomParticleRadiusMin_cm', randomParticleRadiusMin, ...
+    'randomParticleRadiusMax_cm', randomParticleRadiusMax, ...
+    'targetInitialPorosity', targetInitialPorosity, ...
     'inletVelocity_cm_s', inletVelocity, ...
     'initialHydrogenConcentration_mol_cm3', initialHydrogenConcentration, ...
     'diffusionCoefficient_cm2_s', diffusionCoefficient, ...
     'molarVolume_cm3_mol', molarVolume, ...
     'rateCoefficientTST_mol_dm2_s', rateCoefficientTST, ...
+    'timeStepperType', string(timeStepperType), ...
+    'initialMacroscaleTimeStepSize_s', initialMacroscaleTimeStepSize, ...
     'maximalStep_s', maximalStep, ...
+    'adaptiveMaxTimeStep_s', adaptiveMaxTimeStep, ...
+    'porosityStepTarget', porosityStepTarget, ...
+    'porosityStepTolerance', porosityStepTolerance, ...
+    'adaptiveGrowthFactor', adaptiveGrowthFactor, ...
+    'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
     'endTime_s', endTime, ...
+    'maxTotalTimeSteps', maxTotalTimeSteps, ...
     'numPartitionsMicroscale', numPartitionsMicroscale);
 metadata.outputs = struct( ...
     'global_evolution', string(xlsxFile), ...
@@ -1010,10 +1147,17 @@ metadata.nmr = struct( ...
     'config_source', string(fullfile(reactiveRoot, 'automation', 'AutomationConfig.m')), ...
     'comsol_results_dir', string(nmrComsolOutputDir), ...
     'inversion_results_dir', string(nmrInversionOutputDir), ...
-    'sync_log', string(nmrSyncLogFile));
+    'sync_log', string(nmrSyncLogFile), ...
+    'surrogate_enabled', enableNMRSurrogate, ...
+    'surrogate_model_path', string(cfgget(config, 'nmrSurrogateModelPath', '')), ...
+    'surrogate_results_dir', string(nmrSurrogateOutputDir), ...
+    'surrogate_inversion_results_dir', string(nmrSurrogateInversionOutputDir), ...
+    'surrogate_sync_log', string(nmrSurrogateSyncLogFile));
 writeJsonFile(fullfile(resultsDir, 'run_metadata.json'), metadata);
 
 %% Time iteration
+useAdaptivePorositySteps = strcmpi(timeStepperType, 'adaptive_porosity');
+adaptivePreviousPorosity = NaN;
 while transportStepper.next
     timeIterationStep = transportStepper.curstep;
     macroscaleTimeStepSize = transportStepper.curtau;
@@ -1742,7 +1886,7 @@ while transportStepper.next
 
 
     % 新建图窗口,绘制固液边界
-    if doExportStep && (exportDXF || saveInterfaceMask)
+    if doExportStep && (exportDXF || saveInterfaceMask || enableNMRSurrogate)
     fig1 = figure('Visible', 'off');  % 可改为 'on' 调试查看
 
     [X, Y] = meshgrid(linspace(0, lengthXAxis, dxfResolutionX), linspace(0, lengthYAxis, dxfResolutionY));
@@ -1777,6 +1921,23 @@ while transportStepper.next
                 nmrSyncLogFile, ...
                 nmrCalibrationFactor);
         end
+    end
+
+    if enableNMRSurrogate
+        nmrSurrogateCalibrationFactor = runSynchronousNMRSurrogateStep( ...
+            nmrSurrogateConfig, ...
+            solidMask, ...
+            poreMask, ...
+            lengthXAxis, ...
+            lengthYAxis, ...
+            timeIterationStep, ...
+            t_now, ...
+            porosityVal, ...
+            nmrSurrogateOutputDir, ...
+            nmrSurrogateInversionOutputDir, ...
+            nmrSurrogateMaskDir, ...
+            nmrSurrogateSyncLogFile, ...
+            nmrSurrogateCalibrationFactor);
     end
 
     % 绘制彩色图像：固体=黄色，液体=红色
@@ -1858,7 +2019,7 @@ while transportStepper.next
     
     % 截取当前已计算的时间步数据
     currentRange = 1:(timeIterationStep + 1);
-    t_hist = timeSteps(currentRange);
+    t_hist = transportStepper.timepts(currentRange);
     
     subplot(7,1,1);
     plot(t_hist, Rate(currentRange), 'b.-');
@@ -1922,6 +2083,24 @@ while transportStepper.next
         sprintf('global_evolution_realtime (step=%d)', timeIterationStep));
     safeCloseFigure(rtFig);
     end
+
+    if useAdaptivePorositySteps && ~stopAfterThisStep && timeIterationStep < transportStepper.numsteps
+        if isnan(adaptivePreviousPorosity)
+            porosityDeltaForStep = NaN;
+        else
+            porosityDeltaForStep = max(0, porosityVal - adaptivePreviousPorosity);
+        end
+
+        nextMacroscaleStepSize = adaptivePorosityStepSize( ...
+            macroscaleTimeStepSize, porosityDeltaForStep, porosityStepTarget, ...
+            porosityStepTolerance, adaptiveGrowthFactor, adaptiveShrinkSafety, ...
+            adaptiveMinTimeStep, adaptiveMaxTimeStep);
+        transportStepper.setTimeStepSize(timeIterationStep + 1, nextMacroscaleStepSize);
+        timeSteps = transportStepper.timepts(:)';
+        fprintf(' Adaptive dt update: dPorosity=%s, next dt=%g s\n', ...
+            formatAdaptiveDelta(porosityDeltaForStep), nextMacroscaleStepSize);
+    end
+    adaptivePreviousPorosity = porosityVal;
     
     % === 检查是否需要在完成当前步骤后停止 ===
     if stopAfterThisStep
@@ -1935,6 +2114,7 @@ while transportStepper.next
 end % while
 
 % 获取实际完成的时间步数（处理提前终止的情况）
+timeSteps = transportStepper.timepts(:)';
 nValidSteps = length(surfaceArea{1});
 validTimeSteps = timeSteps(1:nValidSteps);
 validRate = Rate(1:nValidSteps);
@@ -2211,6 +2391,177 @@ appendNMRSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, comsolSucces
     inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor, excelOutput, message);
 end
 
+function [surrogateConfig, surrogateOutputDir, inversionOutputDir, maskDir, syncLogFile] = initializeNMRSurrogateSync(reactiveRoot, resultsDir, userConfig)
+automationDir = fullfile(reactiveRoot, 'automation');
+if ~exist(automationDir, 'dir')
+    error('NMR自动化目录不存在: %s', automationDir);
+end
+addpath(automationDir);
+
+inversionConfig = AutomationConfig();
+defaultModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
+modelPath = char(cfgget(userConfig, 'nmrSurrogateModelPath', defaultModelPath));
+if isempty(modelPath) || ~exist(modelPath, 'file')
+    error('NMR替代模型文件不存在: %s', modelPath);
+end
+
+scriptPath = fullfile(automationDir, 'run_nmr_surrogate_prediction.py');
+if ~exist(scriptPath, 'file')
+    error('NMR替代模型推理脚本不存在: %s', scriptPath);
+end
+
+nmrAgentRoot = char(cfgget(userConfig, 'nmrSurrogateRoot', inferNmrAgentRootFromModel(modelPath)));
+datasetPath = char(cfgget(userConfig, 'nmrSurrogateDatasetPath', ''));
+pythonExe = char(cfgget(userConfig, 'nmrSurrogatePythonExe', ''));
+if isempty(pythonExe)
+    candidatePython = fullfile(nmrAgentRoot, '.venv', 'Scripts', 'python.exe');
+    if exist(candidatePython, 'file')
+        pythonExe = candidatePython;
+    elseif isprop(inversionConfig, 'python_exe') && exist(inversionConfig.python_exe, 'file')
+        pythonExe = inversionConfig.python_exe;
+    else
+        pythonExe = 'python';
+    end
+end
+
+surrogateConfig = struct();
+surrogateConfig.inversionConfig = inversionConfig;
+surrogateConfig.pythonExe = pythonExe;
+surrogateConfig.scriptPath = scriptPath;
+surrogateConfig.modelPath = modelPath;
+surrogateConfig.datasetPath = datasetPath;
+surrogateConfig.nmrAgentRoot = nmrAgentRoot;
+surrogateConfig.device = char(cfgget(userConfig, 'nmrSurrogateDevice', 'auto'));
+surrogateConfig.resolution = cfgget(userConfig, 'nmrSurrogateResolution', 256);
+
+surrogateOutputDir = fullfile(resultsDir, 'surrogate_results');
+inversionOutputDir = fullfile(resultsDir, 'surrogate_inversion_results');
+maskDir = fullfile(surrogateOutputDir, 'interface_images');
+if ~exist(surrogateOutputDir, 'dir'); mkdir(surrogateOutputDir); end
+if ~exist(inversionOutputDir, 'dir'); mkdir(inversionOutputDir); end
+if ~exist(maskDir, 'dir'); mkdir(maskDir); end
+
+syncLogFile = fullfile(resultsDir, 'nmr_surrogate_sync_log.csv');
+if ~exist(syncLogFile, 'file')
+    fid = fopen(syncLogFile, 'w');
+    if fid ~= -1
+        fprintf(fid, 'timestep,time_s,porosity,surrogate_success,inversion_success,total_water,raw_spectrum_sum,calibration_factor,excel_output,message\n');
+        fclose(fid);
+    else
+        warning('MATLAB:PNMNMRSurrogate', '无法创建NMR替代模型同步日志: %s', syncLogFile);
+    end
+end
+
+fprintf('[NMR替代模型] 已启用。模型: %s\n', modelPath);
+fprintf('[NMR替代模型] Python: %s\n', pythonExe);
+fprintf('[NMR替代模型] 衰减曲线输出: %s\n', surrogateOutputDir);
+fprintf('[NMR替代模型] 反演输出: %s\n', inversionOutputDir);
+end
+
+function calibrationFactor = runSynchronousNMRSurrogateStep(surrogateConfig, solidMask, poreMask, ...
+    lengthXAxis, lengthYAxis, timestep, timeSeconds, porosityValue, surrogateOutputDir, ...
+    inversionOutputDir, maskDir, syncLogFile, calibrationFactor)
+
+excelOutput = fullfile(surrogateOutputDir, sprintf('T2_t%04d.xlsx', timestep));
+csvOutput = fullfile(surrogateOutputDir, sprintf('T2_t%04d.csv', timestep));
+interfaceImagePath = fullfile(maskDir, sprintf('interface_t%04d.png', timestep));
+surrogateSuccess = false;
+inversionSuccess = false;
+totalWater = NaN;
+rawSpectrumSum = NaN;
+message = "OK";
+
+try
+    fprintf('[NMR替代模型] 时间步 %04d: U-Net预测 + T2反演\n', timestep);
+    writeSurrogateInterfaceImage(interfaceImagePath, solidMask, poreMask);
+
+    surrogateSuccess = runNMRSurrogatePrediction( ...
+        surrogateConfig, ...
+        interfaceImagePath, ...
+        lengthXAxis, ...
+        lengthYAxis, ...
+        excelOutput, ...
+        csvOutput);
+
+    if ~surrogateSuccess
+        message = "替代模型预测失败";
+        appendNMRSurrogateSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, surrogateSuccess, ...
+            inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor, excelOutput, message);
+        warning('MATLAB:PNMNMRSurrogate', 'NMR替代模型跳过时间步 %04d: 预测失败。', timestep);
+        return;
+    end
+
+    if ~exist(excelOutput, 'file')
+        message = "替代模型Excel未生成";
+        appendNMRSurrogateSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, surrogateSuccess, ...
+            inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor, excelOutput, message);
+        warning('MATLAB:PNMNMRSurrogate', 'NMR替代模型跳过时间步 %04d: Excel未生成: %s', timestep, excelOutput);
+        return;
+    end
+
+    shouldCalibrate = isempty(calibrationFactor);
+    [inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor] = run_python_inversion( ...
+        excelOutput, inversionOutputDir, surrogateConfig.inversionConfig, calibrationFactor);
+
+    if inversionSuccess && shouldCalibrate && isfinite(porosityValue) && ...
+            isfinite(rawSpectrumSum) && rawSpectrumSum > 0
+        calibrationFactor = porosityValue / rawSpectrumSum;
+        fprintf('[NMR替代模型] 基于时间步 %04d 孔隙率 %.6f 计算校准因子: %.6e\n', ...
+            timestep, porosityValue, calibrationFactor);
+        [inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor] = run_python_inversion( ...
+            excelOutput, inversionOutputDir, surrogateConfig.inversionConfig, calibrationFactor);
+    end
+
+    if ~inversionSuccess
+        message = "T2反演失败";
+        warning('MATLAB:PNMNMRSurrogate', 'NMR替代模型时间步 %04d 的T2反演失败。', timestep);
+    end
+catch ME
+    message = string(ME.message);
+    warning('MATLAB:PNMNMRSurrogate', 'NMR替代模型时间步 %04d 失败: %s', timestep, ME.message);
+end
+
+appendNMRSurrogateSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, surrogateSuccess, ...
+    inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor, excelOutput, message);
+end
+
+function success = runNMRSurrogatePrediction(surrogateConfig, interfaceImagePath, ...
+    lengthXAxis, lengthYAxis, excelOutput, csvOutput)
+cmd = sprintf('%s %s --interface-image %s --length-x-axis %.17g --length-y-axis %.17g --model-path %s --output-excel %s --output-csv %s --resolution %d --device %s', ...
+    quoteSystemArg(surrogateConfig.pythonExe), ...
+    quoteSystemArg(surrogateConfig.scriptPath), ...
+    quoteSystemArg(interfaceImagePath), ...
+    lengthXAxis, ...
+    lengthYAxis, ...
+    quoteSystemArg(surrogateConfig.modelPath), ...
+    quoteSystemArg(excelOutput), ...
+    quoteSystemArg(csvOutput), ...
+    surrogateConfig.resolution, ...
+    quoteSystemArg(surrogateConfig.device));
+
+if isfield(surrogateConfig, 'datasetPath') && ~isempty(surrogateConfig.datasetPath)
+    cmd = sprintf('%s --dataset-path %s', cmd, quoteSystemArg(surrogateConfig.datasetPath));
+end
+if isfield(surrogateConfig, 'nmrAgentRoot') && ~isempty(surrogateConfig.nmrAgentRoot)
+    cmd = sprintf('%s --nmr-agent-root %s', cmd, quoteSystemArg(surrogateConfig.nmrAgentRoot));
+end
+
+[status, cmdout] = system(cmd);
+if ~isempty(strtrim(cmdout))
+    fprintf('%s\n', strtrim(cmdout));
+end
+
+result = parseResultJson(cmdout);
+success = status == 0 && isfield(result, 'success') && logical(result.success);
+if ~success
+    if isfield(result, 'error')
+        fprintf('        x NMR替代模型预测失败: %s\n', result.error);
+    else
+        fprintf('        x NMR替代模型预测失败，退出码: %d\n', status);
+    end
+end
+end
+
 function appendNMRSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, comsolSuccess, ...
     inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor, excelOutput, message)
 fid = fopen(syncLogFile, 'a');
@@ -2232,6 +2583,105 @@ fprintf(fid, '%d,%.6f,%.8f,%d,%d,%.8g,%.8g,%.8g,"%s","%s"\n', ...
     timestep, timeSeconds, porosityValue, logical(comsolSuccess), logical(inversionSuccess), ...
     totalWater, rawSpectrumSum, calibrationValue, excelOutput, message);
 clear cleaner;
+end
+
+function appendNMRSurrogateSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, surrogateSuccess, ...
+    inversionSuccess, totalWater, rawSpectrumSum, calibrationFactor, excelOutput, message)
+fid = fopen(syncLogFile, 'a');
+if fid == -1
+    warning('MATLAB:PNMNMRSurrogate', '无法写入NMR替代模型同步日志: %s', syncLogFile);
+    return;
+end
+cleaner = onCleanup(@() fclose(fid));
+
+if isempty(calibrationFactor)
+    calibrationValue = NaN;
+else
+    calibrationValue = calibrationFactor;
+end
+
+message = strrep(char(message), '"', '""');
+excelOutput = strrep(char(excelOutput), '"', '""');
+fprintf(fid, '%d,%.6f,%.8f,%d,%d,%.8g,%.8g,%.8g,"%s","%s"\n', ...
+    timestep, timeSeconds, porosityValue, logical(surrogateSuccess), logical(inversionSuccess), ...
+    totalWater, rawSpectrumSum, calibrationValue, excelOutput, message);
+clear cleaner;
+end
+
+function writeSurrogateInterfaceImage(outputPath, solidMask, poreMask)
+maskImage = zeros([size(solidMask), 3], 'uint8');
+maskImage(:,:,1) = uint8((solidMask | poreMask) * 255);
+maskImage(:,:,2) = uint8(solidMask * 255);
+imwrite(maskImage, outputPath);
+end
+
+function nmrAgentRoot = inferNmrAgentRootFromModel(modelPath)
+runDir = fileparts(modelPath);
+runsDir = fileparts(runDir);
+nmrAgentRoot = fileparts(runsDir);
+end
+
+function quoted = quoteSystemArg(value)
+value = char(value);
+value = strrep(value, '"', '\"');
+quoted = ['"' value '"'];
+end
+
+function result = parseResultJson(cmdout)
+result = struct();
+marker = 'RESULT_JSON=';
+lines = regexp(cmdout, '\r?\n', 'split');
+jsonText = '';
+
+for iLine = 1:length(lines)
+    line = strtrim(lines{iLine});
+    if startsWith(line, marker)
+        jsonText = extractAfter(line, strlength(marker));
+    end
+end
+
+if strlength(jsonText) == 0
+    return;
+end
+
+try
+    result = jsondecode(char(jsonText));
+catch ME
+    fprintf('        x JSON解析失败: %s\n', ME.message);
+    result = struct();
+end
+end
+
+function nextStepSize = adaptivePorosityStepSize(currentStepSize, porosityDelta, targetDelta, ...
+    tolerance, growthFactor, shrinkSafety, minStepSize, maxStepSize)
+targetDelta = max(eps, targetDelta);
+tolerance = max(0, tolerance);
+growthFactor = max(1.0, growthFactor);
+shrinkSafety = min(1.0, max(0.1, shrinkSafety));
+
+if isnan(porosityDelta)
+    proposedStepSize = currentStepSize;
+elseif porosityDelta <= eps
+    proposedStepSize = currentStepSize * growthFactor;
+elseif porosityDelta > targetDelta + tolerance
+    shrinkFactor = max(0.05, shrinkSafety * targetDelta / porosityDelta);
+    proposedStepSize = currentStepSize * min(1.0, shrinkFactor);
+elseif porosityDelta < max(0, targetDelta - tolerance)
+    growFactor = min(growthFactor, max(1.05, shrinkSafety * targetDelta / porosityDelta));
+    proposedStepSize = currentStepSize * growFactor;
+else
+    proposedStepSize = currentStepSize;
+end
+
+nextStepSize = min(maxStepSize, max(minStepSize, proposedStepSize));
+end
+
+function text = formatAdaptiveDelta(porosityDelta)
+if isnan(porosityDelta)
+    text = 'n/a';
+else
+    text = sprintf('%.4g', porosityDelta);
+end
 end
 
 function value = cfgget(config, fieldName, defaultValue)

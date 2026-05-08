@@ -30,7 +30,7 @@ from scipy.io import savemat
 from scipy.signal import find_peaks
 
 
-DEFAULT_REGULARIZATION = 0.5
+DEFAULT_REGULARIZATION = 10000
 DEFAULT_CALIBRATION_FACTOR = 0.00001 * 2.15544
 
 

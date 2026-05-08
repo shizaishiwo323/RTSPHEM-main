@@ -1,7 +1,7 @@
 """Standalone T2 inversion runner for existing NMR/COMSOL decay workbooks.
 
 This script does not run RTM or COMSOL. It only scans an existing result folder
-for NMR decay Excel files, then runs T2 inversion into a separate run-ID folder.
+for NMR decay Excel files, then runs T2 inversion into separate run-ID folders.
 
 Typical input folder:
     C:\\Users\\imgw\\Documents\\Codex\\RTSPHEM-main\\outputs\\rtm_tests\\visual_test_matlab
@@ -10,12 +10,15 @@ Expected input files:
     <target_folder>\\comsol_results\\T2*.xlsx
 
 Outputs:
-    <target_folder>\\inversion_results\\<run_id>\\
+    <simulation_folder>\\inversion_results\\<run_id>\\
         *_T2.png
         *_T2.mat
         *_T2_lcurve.png      # only when REGULARIZATION_MODE = "lcurve"
         inversion_summary.csv
         run_config.json
+
+When <target_folder> is a batch root that contains multiple simulation folders,
+each simulation folder keeps its own inversion_results output tree.
 
 You can either edit the USER CONFIG section below and run this file directly,
 or pass command-line arguments to override the defaults.
@@ -41,7 +44,7 @@ import pandas as pd
 # USER CONFIG - edit these values when running manually
 # =============================================================================
 
-TARGET_FOLDER = r"C:\Users\imgw\Documents\Codex\RTSPHEM-main\outputs\rtm_runs\rtm_20260502_220315_980_hex"
+TARGET_FOLDER = r"C:\Users\imgw\Documents\Codex\RTSPHEM-main\outputs\rtm_batches\batch_20260502_223826"
 
 # T2 axis settings, in milliseconds.
 T2_MIN_MS = 1.0e-2
@@ -157,6 +160,37 @@ def find_nmr_decay_excels(target_folder: Path, pattern: str) -> list[Path]:
     return filtered
 
 
+def infer_result_folder(excel_file: Path, target_folder: Path) -> Path:
+    """Return the simulation folder that should own this workbook's outputs."""
+    excel_file = excel_file.resolve()
+    target_folder = target_folder.resolve()
+
+    if excel_file.parent.name.lower() == "comsol_results":
+        return excel_file.parent.parent
+
+    for parent in excel_file.parents:
+        if parent == target_folder:
+            break
+        if (parent / "global_evolution.xlsx").is_file():
+            return parent
+        if (parent / "comsol_results").is_dir():
+            return parent
+
+    return target_folder
+
+
+def group_excels_by_result_folder(excel_files: list[Path], target_folder: Path) -> dict[Path, list[Path]]:
+    groups: dict[Path, list[Path]] = {}
+    for excel_file in excel_files:
+        result_folder = infer_result_folder(excel_file, target_folder)
+        groups.setdefault(result_folder, []).append(excel_file)
+
+    return {
+        result_folder: sorted(paths)
+        for result_folder, paths in sorted(groups.items(), key=lambda item: str(item[0]).lower())
+    }
+
+
 def read_first_porosity(target_folder: Path) -> float | None:
     global_file = target_folder / "global_evolution.xlsx"
     if not global_file.is_file():
@@ -230,65 +264,48 @@ def write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def run_batch(config: T2OnlyConfig) -> Path:
-    target_folder = config.target_folder.resolve()
-    if not target_folder.is_dir():
-        raise FileNotFoundError(f"target_folder does not exist: {target_folder}")
-
-    mode = config.regularization_mode.lower().strip()
-    if mode not in {"fixed", "lcurve"}:
-        raise ValueError("regularization_mode must be 'fixed' or 'lcurve'.")
-    config.regularization_mode = mode
-
-    if not (0 < config.t2_min_ms < config.t2_max_ms):
-        raise ValueError("Require 0 < t2_min_ms < t2_max_ms.")
-    if config.num_t2_bins < 3:
-        raise ValueError("num_t2_bins must be at least 3.")
-    if config.lcurve_alpha_count < 3:
-        raise ValueError("lcurve_alpha_count must be at least 3.")
-
-    excel_files = find_nmr_decay_excels(target_folder, config.excel_name_pattern)
-    if not excel_files:
-        raise FileNotFoundError(
-            "No NMR decay Excel files were found.\n"
-            f"  target_folder: {target_folder}\n"
-            f"  preferred location: {target_folder / 'comsol_results'}\n"
-            f"  pattern: {config.excel_name_pattern}\n"
-            "Please run COMSOL NMR simulation first, or point target_folder to a folder that already contains T2*.xlsx."
-        )
-
-    run_id = make_run_id(config)
-    output_dir = target_folder / "inversion_results" / run_id
+def run_inversion_group(
+    *,
+    result_folder: Path,
+    excel_files: list[Path],
+    output_dir: Path,
+    config: T2OnlyConfig,
+    run_id: str,
+    group_index: int,
+    group_count: int,
+    start_index: int,
+    total_files: int,
+) -> list[dict[str, Any]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config_payload = asdict(config)
-    config_payload["target_folder"] = str(target_folder)
+    config_payload["target_folder"] = str(config.target_folder.resolve())
+    config_payload["result_folder"] = str(result_folder)
     config_payload["run_id"] = run_id
     config_payload["created_at"] = datetime.now().isoformat(timespec="seconds")
     config_payload["input_excels"] = [str(path) for path in excel_files]
     write_json(output_dir / "run_config.json", config_payload)
 
-    print(f"T2-only inversion run ID: {run_id}")
-    print(f"Input folder : {target_folder}")
-    print(f"Output folder: {output_dir}")
-    print(f"Found {len(excel_files)} NMR decay workbook(s).")
-    print(f"Mode: {config.regularization_mode}")
-    if config.regularization_mode == "fixed":
-        print(f"Fixed regularization: {config.fixed_regularization:g}")
-    else:
-        print(
-            "L-curve alpha search: "
-            f"[{config.lcurve_alpha_min:g}, {config.lcurve_alpha_max:g}], "
-            f"count={config.lcurve_alpha_count}"
-        )
-    print("")
+    relative_folder = result_folder.name
+    try:
+        relative_folder = str(result_folder.relative_to(config.target_folder.resolve()))
+    except ValueError:
+        pass
 
-    first_porosity = read_first_porosity(target_folder)
+    print(f"---- Group {group_index}/{group_count}: {relative_folder} ----")
+    print(f"Output folder: {output_dir}")
+    print(f"Found {len(excel_files)} NMR decay workbook(s) in this group.")
+
+    first_porosity = read_first_porosity(result_folder)
     calibration_factor = config.manual_calibration_factor
     summary_rows: list[dict[str, Any]] = []
 
-    for index, excel_file in enumerate(excel_files, start=1):
-        print(f"========== [{index}/{len(excel_files)}] {excel_file.name} ==========")
+    for local_index, excel_file in enumerate(excel_files, start=1):
+        global_index = start_index + local_index - 1
+        print(
+            f"========== [{global_index}/{total_files}] "
+            f"{relative_folder} :: {excel_file.name} =========="
+        )
         try:
             result = run_one_inversion(
                 excel_file=excel_file,
@@ -298,7 +315,7 @@ def run_batch(config: T2OnlyConfig) -> Path:
             )
 
             if (
-                index == 1
+                local_index == 1
                 and config.use_first_porosity_calibration
                 and first_porosity is not None
                 and result.get("raw_spectrum_sum")
@@ -350,10 +367,81 @@ def run_batch(config: T2OnlyConfig) -> Path:
             )
 
     write_summary_csv(output_dir / "inversion_summary.csv", summary_rows)
+    print(f"Summary: {output_dir / 'inversion_summary.csv'}")
+    print("")
+    return summary_rows
+
+
+def run_batch(config: T2OnlyConfig) -> Path:
+    target_folder = config.target_folder.resolve()
+    if not target_folder.is_dir():
+        raise FileNotFoundError(f"target_folder does not exist: {target_folder}")
+
+    mode = config.regularization_mode.lower().strip()
+    if mode not in {"fixed", "lcurve"}:
+        raise ValueError("regularization_mode must be 'fixed' or 'lcurve'.")
+    config.regularization_mode = mode
+
+    if not (0 < config.t2_min_ms < config.t2_max_ms):
+        raise ValueError("Require 0 < t2_min_ms < t2_max_ms.")
+    if config.num_t2_bins < 3:
+        raise ValueError("num_t2_bins must be at least 3.")
+    if config.lcurve_alpha_count < 3:
+        raise ValueError("lcurve_alpha_count must be at least 3.")
+
+    excel_files = find_nmr_decay_excels(target_folder, config.excel_name_pattern)
+    if not excel_files:
+        raise FileNotFoundError(
+            "No NMR decay Excel files were found.\n"
+            f"  target_folder: {target_folder}\n"
+            f"  preferred location: {target_folder / 'comsol_results'}\n"
+            f"  pattern: {config.excel_name_pattern}\n"
+            "Please run COMSOL NMR simulation first, or point target_folder to a folder that already contains T2*.xlsx."
+        )
+
+    run_id = make_run_id(config)
+    grouped_excels = group_excels_by_result_folder(excel_files, target_folder)
+
+    print(f"T2-only inversion run ID: {run_id}")
+    print(f"Input folder : {target_folder}")
+    print(f"Found {len(excel_files)} NMR decay workbook(s).")
+    print(f"Output groups: {len(grouped_excels)}")
+    print(f"Mode: {config.regularization_mode}")
+    if config.regularization_mode == "fixed":
+        print(f"Fixed regularization: {config.fixed_regularization:g}")
+    else:
+        print(
+            "L-curve alpha search: "
+            f"[{config.lcurve_alpha_min:g}, {config.lcurve_alpha_max:g}], "
+            f"count={config.lcurve_alpha_count}"
+        )
+    print("")
+
+    processed_files = 0
+    first_output_dir: Path | None = None
+
+    for group_index, (result_folder, group_excel_files) in enumerate(grouped_excels.items(), start=1):
+        output_dir = result_folder / "inversion_results" / run_id
+        if first_output_dir is None:
+            first_output_dir = output_dir
+
+        run_inversion_group(
+            result_folder=result_folder,
+            excel_files=group_excel_files,
+            output_dir=output_dir,
+            config=config,
+            run_id=run_id,
+            group_index=group_index,
+            group_count=len(grouped_excels),
+            start_index=processed_files + 1,
+            total_files=len(excel_files),
+        )
+        processed_files += len(group_excel_files)
+
     print("")
     print("Done.")
-    print(f"Summary: {output_dir / 'inversion_summary.csv'}")
-    return output_dir
+    print(f"Wrote {len(grouped_excels)} per-folder inversion result set(s).")
+    return first_output_dir if first_output_dir is not None else target_folder
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
