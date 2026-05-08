@@ -35,50 +35,70 @@ batchName = '';
 % batchResultsDir = fullfile(batchOutputRoot, 'my_batch_test');
 
 %% ===================== 全局物理参数 =====================
-% 这些参数用于实际 RTM 计算，也用于脚本预估 Pe、Da 和自动 Time_stepmax。
+% 这些参数提供默认值；每个 Da 组会覆盖 D_H+ 和 k_TST。
 physics = struct();
-physics.diffusionCoefficient = 1e-5;  % [cm^2/s]
+physics.diffusionCoefficient = 1e-4;  % [cm^2/s], per-case D_H+ will override this.
 physics.molarVolume = 36.9;           % [cm^3/mol]
-physics.rateCoefficientTST = 1e-4;    % [mol/dm^2/s]
+physics.rateCoefficientTST = 1e-4;    % Solver convention; treated consistently in calcPeDa.
 
-%% ===================== 第一版数据集设计 =====================
-% 目标：为后续 NMR-agent 本地训练准备一版小而有判别力的 RTM 样本。
+%% ===================== 600x400 um Pe-Da 批次设计 =====================
+% 目标：固定模拟域约 600 um x 400 um，系统扫描 Pe 与 Da。
 %
 % 全局固定参数：
-%   L_cm      = 0.001 cm，固定孔喉/特征长度，避免 L 与几何尺寸同时变化。
-%   Da        = 0.0369，固定反应强度；c_in 由 Da、L 和物理参数反推。
-%   Pe_list   = [0.1, 1, 10]，只改变入口速度 u_in 来覆盖扩散/过渡/对流 regime。
+%   targetLengthX/Y = 600/400 um，固定几何尺寸。
+%   L_cm            = 孔喉/平均孔隙间距，作为 Pe/Da/Re 使用的统一特征长度。
+%   c_in            = 1 / molarVolume，使本脚本的 Da 表与现有求解器定义一致：
+%                     Da = c_in * molarVolume * k_TST * 1000 * L / D
+%                        = 1000 * k_TST * L / D
+%   Pe_list         = 0.01 到 50，对数式覆盖扩散主导到强对流。
 %
 % 每个轮次变化参数：
-%   shapeFamily        - 数据标签用形状：square | rectangle | random。
-%   layoutType         - PNM_beauty3 求解器实际布局：square | random。
-%   targetLengthX/Y_um - 目标模拟域尺寸，范围覆盖 200-1000 um。
-%   Pe_target          - 当前轮次目标 Pe；u_in = Pe_target * D / L。
+%   geometryCase      - hex、random_1、random_2 三个几何因子。
+%   layoutType        - PNM_beauty3 求解器布局：hex | random。
+%   Pe_target         - 当前目标 Pe；u_in = Pe_target * D_H+ / L_cm。
+%   Da_target         - 当前目标 Da；由 D_H+ 和 k_TST 共同指定。
 %
 % 说明：
-%   PNM_beauty3 没有单独的 'rectangle' layoutType。rectangle 使用规则 square
-%   排布加非 1:1 的 targetAspectRatio 表示，并在 summary 中保留 shapeFamily。
+%   Da=0.01-1 为低 Da 数值敏感性扩展，k_TST 会低于常规文献范围。
+%   每个 Pe-Da 组都跑 1 个 hex 和 2 个多粒径 random 几何，共 15*9*3=405 组。
+%   D_H+ 统一取 3e-5 cm^2/s。若某个 Pe 在当前 L_cm 下导致 u>0.3 cm/s，
+%   该组合会写入 skipped 设计表并跳过，不启动模拟。
 fixedDesign = struct();
-fixedDesign.L_cm = 0.001;
-fixedDesign.Da = 0.0369;
-fixedDesign.c_in = concentrationForDa(fixedDesign.Da, fixedDesign.L_cm, physics);
+fixedDesign.targetLengthX_um = 600;
+fixedDesign.targetLengthY_um = 400;
+fixedDesign.c_in = 1 / physics.molarVolume;
+fixedDesign.maxInletVelocity = 0.3;  % [cm/s], Stokes-flow safeguard requested by user.
 
-peList = [0.1, 1, 10];
+peList = [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 50];
 
 % 格式：
-%   {'geometryCase', 'shapeFamily', 'layoutType', targetLengthX_um, targetLengthY_um}
+%   {'geometryCase', 'shapeFamily', 'layoutType', targetLengthX_um, targetLengthY_um,
+%    geometryFactor, randomSeed, particleRadius_um, throatSpacing_um, minThroatRandom_um,
+%    randomDensityFactor, useRandomParticleRadii, randomRadiusMin_um, randomRadiusMax_um, targetInitialPorosity}
 geometryCases = {
-    'square_200',         'square',    'square',  200,  200;
-    'square_400',         'square',    'square',  400,  400;
-    'square_600',         'square',    'square',  600,  600;
-    'square_800',         'square',    'square',  800,  800;
-    'square_1000',        'square',    'square', 1000, 1000;
-    'rectangle_600x400',  'rectangle', 'square',  600,  400;
-    'rectangle_1000x600', 'rectangle', 'square', 1000,  600;
-    'rectangle_400x800',  'rectangle', 'square',  400,  800;
-    'random_600x400',     'random',    'random',  600,  400;
-    'random_1000x600',    'random',    'random', 1000,  600;
-    'random_400x800',     'random',    'random',  400,  800;
+    'hex_600x400_R50_throat20',          'hex',    'hex',    600, 400, 1, NaN,        50.0, 20.0, NaN, 1.0, false, NaN,  NaN,  NaN;
+    'random_600x400_poly_R25_50_throat20','random', 'random', 600, 400, 1, 2026050701, 37.5, 20.0, 3.0, 1.0, true,  25.0, 50.0, 0.40;
+    'random_600x400_poly_R30_60_throat20','random', 'random', 600, 400, 2, 2026050702, 45.0, 20.0, 3.0, 1.0, true,  30.0, 60.0, 0.38;
+};
+
+% 格式：
+%   {'daCase', Da_target, D_H+ [cm^2/s], 'category'}
+daCases = {
+    'Da_0p01', 0.01, 3.0e-5, 'low_Da_sensitivity';
+    'Da_0p03', 0.03, 3.0e-5, 'low_Da_sensitivity';
+    'Da_0p1',  0.1,  3.0e-5, 'low_Da_sensitivity';
+    'Da_0p3',  0.3,  3.0e-5, 'low_Da_sensitivity';
+    'Da_1',    1,    3.0e-5, 'low_Da_boundary';
+    'Da_2p1',  2.1,  3.0e-5, 'physical_lower_bound';
+    'Da_3',    3,    3.0e-5, 'physical_core';
+    'Da_5',    5,    3.0e-5, 'physical_core';
+    'Da_10',   10,   3.0e-5, 'physical_core';
+    'Da_20',   20,   3.0e-5, 'physical_core';
+    'Da_30',   30,   3.0e-5, 'physical_core';
+    'Da_50',   50,   3.0e-5, 'physical_core';
+    'Da_75',   75,   3.0e-5, 'high_Da_extension';
+    'Da_100',  100,  3.0e-5, 'high_Da_extension';
+    'Da_150',  150,  3.0e-5, 'high_Da_extension';
 };
 
 %% ===================== 全局几何参数 =====================
@@ -93,7 +113,16 @@ geometry.tifPath = "";
 %% ===================== 时间步与终止条件 =====================
 timeControl = struct();
 timeControl.initialMacroscaleTimeStepSize = 0.10;  % [s]
-timeControl.endTime = [];                          % [] 表示由 PNM_beauty3 自动估算
+timeControl.endTime = [];                          % adaptive_porosity 下仅作为内部安全时长自动生成
+timeControl.timeStepperType = 'adaptive_porosity'; % 根据每步孔隙率增量动态调整下一步
+timeControl.maxTotalTimeSteps = 1000;              % 仅作异常保护/预分配，不作为目标步数
+timeControl.porosityStepTarget = 0.01;             % 目标：每个 RTM 步孔隙率约增加 1%
+timeControl.porosityStepTolerance = 0.0025;        % 允许约 0.75%-1.25% 的自然波动
+timeControl.adaptiveGrowthFactor = 1.4;            % 未达到目标时，下一步最多增长 40%
+timeControl.adaptiveShrinkSafety = 0.85;           % 超过目标时，按比例回缩并留安全余量
+timeControl.adaptiveMinTimeStep = 1e-5;            % 高 Da 快反应时允许更小的起始时间步
+timeControl.adaptiveMaxStepGrowthMultiple = 200;   % adaptiveMaxTimeStep = dt0 * 此倍率，再受 cap 限制
+timeControl.adaptiveMaxTimeStepCap = 30;           % [s] 只是增长上限，真正步长由孔隙率反馈决定
 timeControl.permeabilityRatioThreshold = 100;      % k/k0 达到该倍数后完成当前步并停止
 
 %% ===================== 网格与导出精度 =====================
@@ -121,7 +150,16 @@ batchOptions.writeExcel = true;
 batchOptions.saveFinalPlot = true;
 
 % false：只批量跑 RTM；true：每次导出 DXF 后同步跑 COMSOL NMR + T2 反演。
-batchOptions.enableNMRSimulation = true;
+batchOptions.enableNMRSimulation = false;
+
+% true：使用 NMR-agent 图像替代模型预测归一化弛豫曲线，再做 T2 反演。
+% 与 enableNMRSimulation 互斥，二者最多只能打开一个。
+batchOptions.enableNMRSurrogate = true;
+batchOptions.nmrSurrogateModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
+batchOptions.nmrSurrogateRoot = 'C:\Users\imgw\Documents\Codex\NMR-agent';
+batchOptions.nmrSurrogatePythonExe = 'C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe';
+batchOptions.nmrSurrogateResolution = 256;
+batchOptions.nmrSurrogateDevice = 'auto';
 
 %% ===================== 由参数表构建实验列表 =====================
 if ~exist(batchOutputRoot, 'dir')
@@ -141,42 +179,132 @@ if ~exist(batchResultsDir, 'dir')
 end
 
 paramList = {};
+skippedParamList = {};
 expCounter = 0;
+skippedCounter = 0;
 for iCase = 1:size(geometryCases, 1)
     row = geometryCases(iCase, :);
     targetX_um = row{4};
     targetY_um = row{5};
     targetX_cm = micronToCm(targetX_um);
     targetY_cm = micronToCm(targetY_um);
+    geometryFactor = row{6};
+    randomSeed = row{7};
+    particleRadius_um = row{8};
+    throatSpacing_um = row{9};
+    minThroatRandom_um = row{10};
+    randomDensityFactor = row{11};
+    useRandomParticleRadii = logical(row{12});
+    randomRadiusMin_um = row{13};
+    randomRadiusMax_um = row{14};
+    targetInitialPorosity = row{15};
+    particleRadius_cm = micronToCm(particleRadius_um);
+    throatSpacing_cm = micronToCm(throatSpacing_um);
+    minThroatRandom_cm = micronToCm(minThroatRandom_um);
+    randomRadiusMin_cm = micronToCm(randomRadiusMin_um);
+    randomRadiusMax_cm = micronToCm(randomRadiusMax_um);
+    characteristicLength_cm = throatSpacing_cm;
+    estimatedInitialPorosity = estimateInitialPorosity( ...
+        row{3}, targetX_um, targetY_um, particleRadius_um, throatSpacing_um, ...
+        randomDensityFactor, useRandomParticleRadii, randomRadiusMin_um, ...
+        randomRadiusMax_um, targetInitialPorosity);
+    if estimatedInitialPorosity >= 0.50
+        error('BatchSimple:InitialPorosityTooHigh', ...
+            '%s estimated initial porosity is %.3f; adjust particle radius/spacing below 0.50.', ...
+            row{1}, estimatedInitialPorosity);
+    end
 
-    for iPe = 1:numel(peList)
-        expCounter = expCounter + 1;
-        Pe_target = peList(iPe);
+    for iDa = 1:size(daCases, 1)
+        daRow = daCases(iDa, :);
+        daCase = daRow{1};
+        Da_target = daRow{2};
+        diffusionCoefficient = daRow{3};
+        daCategory = daRow{4};
+        rateCoefficientTST = rateCoefficientForDa( ...
+            Da_target, characteristicLength_cm, diffusionCoefficient, physics, fixedDesign.c_in);
 
-        p = struct();
-        p.geometryCase = row{1};
-        p.shapeFamily = row{2};
-        p.layoutType = row{3};
-        p.targetLengthXAxis_um = targetX_um;
-        p.targetLengthYAxis_um = targetY_um;
-        p.targetLengthXAxis = targetX_cm;
-        p.targetLengthYAxis = targetY_cm;
-        p.targetAspectRatio = targetX_cm / targetY_cm;
-        p.Pe_target = Pe_target;
-        p.Da_target = fixedDesign.Da;
-        p.L_cm = fixedDesign.L_cm;
-        p.u_in = Pe_target * physics.diffusionCoefficient / fixedDesign.L_cm;
-        p.c_in = fixedDesign.c_in;
-        p.Time_stepmax = estimateTimeStepmax(p, physics);
-        [p.dxfResolutionX, p.dxfResolutionY] = estimateDxfResolution( ...
-            targetX_um, targetY_um, meshExport);
+        for iPe = 1:numel(peList)
+            Pe_target = peList(iPe);
 
-        p = mergeStructs(p, physics);
-        p = mergeStructs(p, geometry);
-        p = mergeStructs(p, timeControl);
-        p = mergeStructs(p, meshExport);
-        p = mergeStructs(p, batchOptions);
-        paramList{expCounter, 1} = p; %#ok<SAGROW>
+            p = struct();
+            p.geometryCase = row{1};
+            p.shapeFamily = row{2};
+            p.layoutType = row{3};
+            p.geometryFactor = geometryFactor;
+            p.randomSeed = randomSeed;
+            p.daCase = daCase;
+            p.daCategory = daCategory;
+            p.targetLengthXAxis_um = targetX_um;
+            p.targetLengthYAxis_um = targetY_um;
+            p.targetLengthXAxis = targetX_cm;
+            p.targetLengthYAxis = targetY_cm;
+            p.targetAspectRatio = targetX_cm / targetY_cm;
+            p.Pe_target = Pe_target;
+            p.Da_target = Da_target;
+            p.L_cm = characteristicLength_cm;
+            p.particleRadius_um = particleRadius_um;
+            p.particleRadius_cm = particleRadius_cm;
+            p.circleRadius = particleRadius_cm;
+            p.circleSpacing = throatSpacing_cm;
+            p.targetAvgSpacing = throatSpacing_cm;
+            p.minThroatRandom = minThroatRandom_cm;
+            p.randomDensityFactor = randomDensityFactor;
+            p.useRandomParticleRadii = useRandomParticleRadii;
+            p.randomParticleRadiusMin = randomRadiusMin_cm;
+            p.randomParticleRadiusMax = randomRadiusMax_cm;
+            p.randomParticleRadiusMin_um = randomRadiusMin_um;
+            p.randomParticleRadiusMax_um = randomRadiusMax_um;
+            p.targetInitialPorosity = targetInitialPorosity;
+            p.estimatedInitialPorosity = estimatedInitialPorosity;
+            p.diffusionCoefficient = diffusionCoefficient;
+            p.rateCoefficientTST = rateCoefficientTST;
+            p.u_in = Pe_target * diffusionCoefficient / p.L_cm;
+            p.c_in = fixedDesign.c_in;
+            if p.u_in > fixedDesign.maxInletVelocity
+                skippedCounter = skippedCounter + 1;
+                p.skipReason = sprintf('u_in %.4g cm/s exceeds %.4g cm/s for Pe=%g, D=%g, L=%g', ...
+                    p.u_in, fixedDesign.maxInletVelocity, Pe_target, diffusionCoefficient, p.L_cm);
+                [p.dxfResolutionX, p.dxfResolutionY] = estimateDxfResolution( ...
+                    targetX_um, targetY_um, meshExport);
+                p.Time_stepmax = NaN;
+                p.initialMacroscaleTimeStepSize = NaN;
+                p.adaptiveMaxTimeStep = NaN;
+                p.porosityStepTarget = NaN;
+                p.endTime = NaN;
+                p.estimatedTotalTimeSteps = NaN;
+                skippedParamList{skippedCounter, 1} = p; %#ok<SAGROW>
+                continue;
+            end
+            timeStepSettings = estimateTimeStepSettings(p, physics, timeControl);
+            p.Time_stepmax = timeStepSettings.maximalStep;
+            [p.dxfResolutionX, p.dxfResolutionY] = estimateDxfResolution( ...
+                targetX_um, targetY_um, meshExport);
+
+            p = mergeStructs(p, physics);
+            p.diffusionCoefficient = diffusionCoefficient;
+            p.rateCoefficientTST = rateCoefficientTST;
+            p = mergeStructs(p, geometry);
+            p = mergeStructs(p, timeControl);
+            p.initialMacroscaleTimeStepSize = timeStepSettings.initialStep;
+            p.adaptiveMaxTimeStep = timeStepSettings.adaptiveMaxStep;
+            p.porosityStepTarget = timeStepSettings.porosityStepTarget;
+            if isempty(p.endTime)
+                [p.endTime, p.estimatedTotalTimeSteps] = estimateEndTimeForMaxSteps( ...
+                    p.initialMacroscaleTimeStepSize, p.Time_stepmax, p.maxTotalTimeSteps);
+            else
+                p.estimatedTotalTimeSteps = estimateNumTimeSteps( ...
+                    p.initialMacroscaleTimeStepSize, p.Time_stepmax, p.endTime);
+                if p.estimatedTotalTimeSteps > p.maxTotalTimeSteps
+                    error('BatchSimple:TimeStepLimitExceeded', ...
+                        'Configured endTime=%g creates %d time steps, exceeding maxTotalTimeSteps=%d.', ...
+                        p.endTime, p.estimatedTotalTimeSteps, p.maxTotalTimeSteps);
+                end
+            end
+            p = mergeStructs(p, meshExport);
+            p = mergeStructs(p, batchOptions);
+            expCounter = expCounter + 1;
+            paramList{expCounter, 1} = p; %#ok<SAGROW>
+        end
     end
 end
 
@@ -185,26 +313,38 @@ fprintf('========================================\n');
 fprintf('精简批量 RTM/NMR 运行\n');
 fprintf('  批次目录: %s\n', batchResultsDir);
 fprintf('  实验数量: %d\n', numel(paramList));
+fprintf('  跳过数量: %d (velocity limit)\n', numel(skippedParamList));
 fprintf('  sync NMR: %s\n', mat2str(batchOptions.enableNMRSimulation));
-fprintf('  固定 L: %.4g cm | 固定 Da: %.4g | 固定 c_in: %.4g mol/cm^3\n', ...
-    fixedDesign.L_cm, fixedDesign.Da, fixedDesign.c_in);
+fprintf('  surrogate NMR: %s\n', mat2str(batchOptions.enableNMRSurrogate));
+fprintf('  固定几何: %.0fx%.0f um | L=throat/avg spacing per geometry | c_in: %.4g mol/cm^3 | u_max: %.4g cm/s\n', ...
+    fixedDesign.targetLengthX_um, fixedDesign.targetLengthY_um, ...
+    fixedDesign.c_in, fixedDesign.maxInletVelocity);
+fprintf('  time-step mode: %s | target dPorosity/step ~= %.3f | guard steps <= %d\n', ...
+    timeControl.timeStepperType, timeControl.porosityStepTarget, timeControl.maxTotalTimeSteps);
 fprintf('========================================\n\n');
 
-fprintf('%-5s %-18s %-10s %-8s %-9s %-9s %-8s %-10s %-10s %-8s\n', ...
-    'Exp', 'Case', 'Shape', 'Layout', 'X(um)', 'Y(um)', 'Pe', 'u_in', 'Da', 'dtmax');
-fprintf('%s\n', repmat('-', 1, 116));
+fprintf('%-5s %-20s %-8s %-8s %-8s %-9s %-10s %-8s %-9s %-9s %-8s %-10s %-8s %-10s %-8s\n', ...
+    'Exp', 'Case', 'R(um)', 'L(cm)', 'DaCase', 'Pe', 'phi0_est', 'D_H+', 'k_TST', 'u_in', 'Da', 'dtmax', 'dt0', 'nSteps', 'GeomFac');
+fprintf('%s\n', repmat('-', 1, 184));
 for i = 1:numel(paramList)
     p = paramList{i};
     [Pe, Da] = calcPeDa(p, physics);
-    fprintf('%-5d %-18s %-10s %-8s %-9.0f %-9.0f %-8.4g %-10.4g %-10.4g %-8.4g\n', ...
-        i, p.geometryCase, p.shapeFamily, p.layoutType, p.targetLengthXAxis_um, ...
-        p.targetLengthYAxis_um, Pe, p.u_in, Da, p.Time_stepmax);
+    fprintf('%-5d %-20s %-8.1f %-8.4g %-8s %-9.4g %-10.3f %-8.2e %-9.2e %-9.4g %-8.4g %-10.4g %-8.3g %-10d %-8g\n', ...
+        i, p.geometryCase, p.particleRadius_um, p.L_cm, p.daCase, Pe, ...
+        p.estimatedInitialPorosity, p.diffusionCoefficient, p.rateCoefficientTST, ...
+        p.u_in, Da, p.Time_stepmax, p.initialMacroscaleTimeStepSize, ...
+        p.estimatedTotalTimeSteps, p.geometryFactor);
 end
-fprintf('%s\n\n', repmat('-', 1, 116));
+fprintf('%s\n\n', repmat('-', 1, 184));
 
 designTable = buildDesignTable(paramList, physics);
 writetable(designTable, fullfile(batchResultsDir, 'batch_design_table.xlsx'));
 writetable(designTable, fullfile(batchResultsDir, 'batch_design_table.csv'));
+skippedDesignTable = buildSkippedDesignTable(skippedParamList, physics);
+if ~isempty(skippedDesignTable)
+    writetable(skippedDesignTable, fullfile(batchResultsDir, 'batch_skipped_design_table.xlsx'));
+    writetable(skippedDesignTable, fullfile(batchResultsDir, 'batch_skipped_design_table.csv'));
+end
 
 %% ===================== 执行批量实验 =====================
 summary = table();
@@ -222,11 +362,24 @@ for expIdx = 1:numel(paramList)
     fprintf('实验 %d/%d | %s | %s | %gx%g um | L=%.4g cm\n', ...
         expIdx, numel(paramList), p.geometryCase, p.shapeFamily, ...
         p.targetLengthXAxis_um, p.targetLengthYAxis_um, p.L_cm);
-    fprintf('u=%.4g cm/s, c=%.2e mol/cm^3\n', p.u_in, p.c_in);
-    fprintf('Pe=%.6g, Da=%.6g, Time_stepmax=%.6g s\n', Pe, Da, p.Time_stepmax);
+    if p.useRandomParticleRadii
+        fprintf('R=%.1f-%.1f um, throat=%.1f um, estimated initial porosity=%.3f\n', ...
+            p.randomParticleRadiusMin_um, p.randomParticleRadiusMax_um, ...
+            p.circleSpacing * 1e4, p.estimatedInitialPorosity);
+    else
+        fprintf('R=%.1f um, throat=%.1f um, estimated initial porosity=%.3f\n', ...
+            p.particleRadius_um, p.circleSpacing * 1e4, p.estimatedInitialPorosity);
+    end
+    fprintf('D_H+=%.4g cm^2/s, k_TST=%.4g, u=%.4g cm/s, c=%.2e mol/cm^3\n', ...
+        p.diffusionCoefficient, p.rateCoefficientTST, p.u_in, p.c_in);
+    fprintf('Pe=%.6g, Da=%.6g (%s), Time_stepmax=%.6g s, endTime=%.6g s, nSteps<=%d\n', ...
+        Pe, Da, p.daCategory, p.Time_stepmax, p.endTime, p.estimatedTotalTimeSteps);
     fprintf('########################################\n');
 
     try
+        if isfield(p, 'randomSeed') && ~isnan(p.randomSeed)
+            rng(p.randomSeed);
+        end
         result = PNM_batch(p, batchResultsDir, expIdx, timeControl.permeabilityRatioThreshold);
         status = "Success";
         message = "";
@@ -258,16 +411,31 @@ for expIdx = 1:numel(paramList)
     end
 
     newRow = table(expIdx, string(p.geometryCase), string(p.shapeFamily), string(p.layoutType), ...
+        p.geometryFactor, p.randomSeed, string(p.daCase), string(p.daCategory), ...
+        p.particleRadius_um, p.particleRadius_cm, p.circleSpacing, p.targetAvgSpacing, ...
+        p.minThroatRandom, p.randomDensityFactor, p.useRandomParticleRadii, ...
+        p.randomParticleRadiusMin_um, p.randomParticleRadiusMax_um, ...
+        p.targetInitialPorosity, p.estimatedInitialPorosity, ...
         p.targetLengthXAxis_um, p.targetLengthYAxis_um, actualX_um, actualY_um, ...
         p.targetAspectRatio, p.dxfResolutionX, p.dxfResolutionY, p.L_cm, ...
-        p.Pe_target, p.Da_target, p.u_in, p.c_in, Pe, Da, PeDa, ...
-        p.Time_stepmax, finalPorosity, initialPerm, finalPerm, pbStep, pbTime, ...
+        p.Pe_target, p.Da_target, p.diffusionCoefficient, p.rateCoefficientTST, ...
+        p.u_in, p.c_in, Pe, Da, PeDa, ...
+        p.Time_stepmax, p.initialMacroscaleTimeStepSize, p.adaptiveMaxTimeStep, ...
+        p.porosityStepTarget, p.endTime, p.estimatedTotalTimeSteps, ...
+        finalPorosity, initialPerm, finalPerm, pbStep, pbTime, ...
         status, message, resultsDir, ...
         'VariableNames', {'ExpIdx', 'GeometryCase', 'ShapeFamily', 'SolverLayout', ...
+        'GeometryFactor', 'RandomSeed', 'DaCase', 'DaCategory', ...
+        'ParticleRadius_um', 'ParticleRadius_cm', 'CircleSpacing_cm', 'TargetAvgSpacing_cm', ...
+        'MinThroatRandom_cm', 'RandomDensityFactor', 'UseRandomParticleRadii', ...
+        'RandomParticleRadiusMin_um', 'RandomParticleRadiusMax_um', ...
+        'TargetInitialPorosity', 'EstimatedInitialPorosity', ...
         'TargetX_um', 'TargetY_um', 'ActualX_um', 'ActualY_um', ...
         'TargetAspectRatio', 'DxfResolutionX', 'DxfResolutionY', 'L_cm', ...
-        'Pe_target', 'Da_target', 'u_in_cm_s', 'c_in_mol_cm3', ...
-        'Pe', 'Da', 'Pe_Da', 'Time_stepmax_s', 'FinalPorosity', ...
+        'Pe_target', 'Da_target', 'D_H_cm2_s', 'k_TST', 'u_in_cm_s', 'c_in_mol_cm3', ...
+        'Pe', 'Da', 'Pe_Da', 'Time_stepmax_s', 'InitialTimeStep_s', ...
+        'AdaptiveMaxTimeStep_s', 'PorosityStepTarget', ...
+        'EndTime_s', 'EstimatedTotalTimeSteps', 'FinalPorosity', ...
         'InitialPerm_mD', 'FinalPerm_mD', 'PBTimeStep', 'PBTime_s', ...
         'Status', 'Message', 'ResultsDir'});
     summary = [summary; newRow]; %#ok<AGROW>
@@ -280,8 +448,9 @@ end
 writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple.xlsx'));
 writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple.csv'));
 save(fullfile(batchResultsDir, 'batch_workspace_simple.mat'), ...
-    'paramList', 'summary', 'designTable', 'batchResultsDir', 'physics', ...
-    'fixedDesign', 'peList', 'geometryCases', 'geometry', ...
+    'paramList', 'skippedParamList', 'summary', 'designTable', 'skippedDesignTable', ...
+    'batchResultsDir', 'physics', ...
+    'fixedDesign', 'peList', 'daCases', 'geometryCases', 'geometry', ...
     'timeControl', 'meshExport', 'batchOptions');
 
 fprintf('\n========================================\n');
@@ -300,22 +469,84 @@ end
 end
 
 function [Pe, Da] = calcPeDa(p, physics)
-Pe = p.u_in * p.L_cm / physics.diffusionCoefficient;
-Da = p.c_in * physics.molarVolume * physics.rateCoefficientTST * 1000 * p.L_cm / physics.diffusionCoefficient;
+D = getStructValue(p, 'diffusionCoefficient', physics.diffusionCoefficient);
+kTST = getStructValue(p, 'rateCoefficientTST', physics.rateCoefficientTST);
+molarVolume = getStructValue(p, 'molarVolume', physics.molarVolume);
+Pe = p.u_in * p.L_cm / D;
+Da = p.c_in * molarVolume * kTST * 1000 * p.L_cm / D;
 end
 
 function cm = micronToCm(micronValue)
 cm = micronValue * 1e-4;
 end
 
-function c_in = concentrationForDa(targetDa, L_cm, physics)
-c_in = targetDa * physics.diffusionCoefficient / ...
-    (physics.molarVolume * physics.rateCoefficientTST * 1000 * L_cm);
+function kTST = rateCoefficientForDa(targetDa, L_cm, diffusionCoefficient, physics, c_in)
+kTST = targetDa * diffusionCoefficient / ...
+    (c_in * physics.molarVolume * 1000 * L_cm);
+end
+
+function value = getStructValue(s, fieldName, defaultValue)
+if isfield(s, fieldName) && ~isempty(s.(fieldName))
+    value = s.(fieldName);
+else
+    value = defaultValue;
+end
 end
 
 function [resolutionX, resolutionY] = estimateDxfResolution(targetX_um, targetY_um, meshExport)
 resolutionX = max(meshExport.minDxfResolution, round(targetX_um / meshExport.dxfMicronsPerPixel));
 resolutionY = max(meshExport.minDxfResolution, round(targetY_um / meshExport.dxfMicronsPerPixel));
+end
+
+function phi0 = estimateInitialPorosity(layoutType, targetX_um, targetY_um, radius_um, throat_um, ...
+    randomDensityFactor, useRandomParticleRadii, randomRadiusMin_um, randomRadiusMax_um, targetInitialPorosity)
+marginLeft_um = 0.5 * radius_um;
+
+switch char(layoutType)
+    case 'hex'
+        stepX_um = 2 * radius_um + throat_um;
+        stepY_um = sqrt(3) * radius_um + throat_um;
+        actualY_um = max(1, round(targetY_um / stepY_um)) * stepY_um;
+        actualX_um = marginLeft_um + max(1, round((targetX_um - marginLeft_um) / stepX_um)) * stepX_um;
+        xStart_um = marginLeft_um + radius_um;
+        xCenters1 = xStart_um : stepX_um : actualX_um;
+        xCenters2 = (xStart_um + stepX_um / 2) : stepX_um : actualX_um;
+        yCenters = 0 : stepY_um : actualY_um;
+        nCircles = 0;
+        for i = 1:numel(yCenters)
+            if mod(i, 2) == 1
+                nCircles = nCircles + numel(xCenters1);
+            else
+                nCircles = nCircles + numel(xCenters2);
+            end
+        end
+        domainArea_um2 = actualX_um * actualY_um;
+
+    case 'random'
+        if useRandomParticleRadii && ~isnan(targetInitialPorosity)
+            phi0 = targetInitialPorosity;
+            return;
+        end
+        randomArea_um2 = max(eps, (targetX_um - marginLeft_um) * targetY_um);
+        targetAvgDist_um = 2 * radius_um + throat_um;
+        if useRandomParticleRadii
+            meanRadius_um = 0.5 * (randomRadiusMin_um + randomRadiusMax_um);
+            targetAvgDist_um = 2 * meanRadius_um + throat_um;
+            meanSolidArea_um2 = pi * mean([randomRadiusMin_um, randomRadiusMax_um].^2);
+            nCircles = floor(randomArea_um2 / (randomDensityFactor * targetAvgDist_um^2));
+            solidArea_um2 = nCircles * meanSolidArea_um2;
+            phi0 = max(0, min(1, 1 - solidArea_um2 / randomArea_um2));
+            return;
+        end
+        nCircles = floor(randomArea_um2 / (randomDensityFactor * targetAvgDist_um^2));
+        domainArea_um2 = randomArea_um2;
+
+    otherwise
+        error('BatchSimple:UnknownLayoutForPorosity', 'Unknown layout type: %s', layoutType);
+end
+
+solidArea_um2 = nCircles * pi * radius_um^2;
+phi0 = max(0, min(1, 1 - solidArea_um2 / domainArea_um2));
 end
 
 function designTable = buildDesignTable(paramList, physics)
@@ -324,14 +555,60 @@ for i = 1:numel(paramList)
     p = paramList{i};
     [Pe, Da] = calcPeDa(p, physics);
     row = table(i, string(p.geometryCase), string(p.shapeFamily), string(p.layoutType), ...
+        p.geometryFactor, p.randomSeed, string(p.daCase), string(p.daCategory), ...
+        p.particleRadius_um, p.particleRadius_cm, p.circleSpacing, p.targetAvgSpacing, ...
+        p.minThroatRandom, p.randomDensityFactor, p.useRandomParticleRadii, ...
+        p.randomParticleRadiusMin_um, p.randomParticleRadiusMax_um, ...
+        p.targetInitialPorosity, p.estimatedInitialPorosity, ...
         p.targetLengthXAxis_um, p.targetLengthYAxis_um, p.targetAspectRatio, ...
         p.dxfResolutionX, p.dxfResolutionY, p.L_cm, p.Pe_target, p.Da_target, ...
-        p.u_in, p.c_in, Pe, Da, p.Time_stepmax, ...
+        p.diffusionCoefficient, p.rateCoefficientTST, p.u_in, p.c_in, Pe, Da, ...
+        p.Time_stepmax, p.initialMacroscaleTimeStepSize, p.adaptiveMaxTimeStep, ...
+        p.porosityStepTarget, p.endTime, p.estimatedTotalTimeSteps, ...
         'VariableNames', {'ExpIdx', 'GeometryCase', 'ShapeFamily', 'SolverLayout', ...
+        'GeometryFactor', 'RandomSeed', 'DaCase', 'DaCategory', ...
+        'ParticleRadius_um', 'ParticleRadius_cm', 'CircleSpacing_cm', 'TargetAvgSpacing_cm', ...
+        'MinThroatRandom_cm', 'RandomDensityFactor', 'UseRandomParticleRadii', ...
+        'RandomParticleRadiusMin_um', 'RandomParticleRadiusMax_um', ...
+        'TargetInitialPorosity', 'EstimatedInitialPorosity', ...
         'TargetX_um', 'TargetY_um', 'TargetAspectRatio', 'DxfResolutionX', ...
-        'DxfResolutionY', 'L_cm', 'Pe_target', 'Da_target', 'u_in_cm_s', ...
-        'c_in_mol_cm3', 'Pe', 'Da', 'Time_stepmax_s'});
+        'DxfResolutionY', 'L_cm', 'Pe_target', 'Da_target', 'D_H_cm2_s', 'k_TST', 'u_in_cm_s', ...
+        'c_in_mol_cm3', 'Pe', 'Da', 'Time_stepmax_s', 'InitialTimeStep_s', ...
+        'AdaptiveMaxTimeStep_s', 'PorosityStepTarget', ...
+        'EndTime_s', 'EstimatedTotalTimeSteps'});
     designTable = [designTable; row]; %#ok<AGROW>
+end
+end
+
+function skippedTable = buildSkippedDesignTable(skippedParamList, physics)
+skippedTable = table();
+for i = 1:numel(skippedParamList)
+    p = skippedParamList{i};
+    [Pe, Da] = calcPeDa(p, physics);
+    row = table(i, string(p.geometryCase), string(p.shapeFamily), string(p.layoutType), ...
+        p.geometryFactor, p.randomSeed, string(p.daCase), string(p.daCategory), ...
+        p.particleRadius_um, p.particleRadius_cm, p.circleSpacing, p.targetAvgSpacing, ...
+        p.minThroatRandom, p.randomDensityFactor, p.useRandomParticleRadii, ...
+        p.randomParticleRadiusMin_um, p.randomParticleRadiusMax_um, ...
+        p.targetInitialPorosity, p.estimatedInitialPorosity, ...
+        p.targetLengthXAxis_um, p.targetLengthYAxis_um, p.targetAspectRatio, ...
+        p.dxfResolutionX, p.dxfResolutionY, p.L_cm, p.Pe_target, p.Da_target, ...
+        p.diffusionCoefficient, p.rateCoefficientTST, p.u_in, p.c_in, Pe, Da, ...
+        p.Time_stepmax, p.initialMacroscaleTimeStepSize, p.adaptiveMaxTimeStep, ...
+        p.porosityStepTarget, p.endTime, p.estimatedTotalTimeSteps, string(p.skipReason), ...
+        'VariableNames', {'SkippedIdx', 'GeometryCase', 'ShapeFamily', 'SolverLayout', ...
+        'GeometryFactor', 'RandomSeed', 'DaCase', 'DaCategory', ...
+        'ParticleRadius_um', 'ParticleRadius_cm', 'CircleSpacing_cm', 'TargetAvgSpacing_cm', ...
+        'MinThroatRandom_cm', 'RandomDensityFactor', 'UseRandomParticleRadii', ...
+        'RandomParticleRadiusMin_um', 'RandomParticleRadiusMax_um', ...
+        'TargetInitialPorosity', 'EstimatedInitialPorosity', ...
+        'TargetX_um', 'TargetY_um', 'TargetAspectRatio', 'DxfResolutionX', ...
+        'DxfResolutionY', 'L_cm', 'Pe_target', 'Da_target', 'D_H_cm2_s', 'k_TST', 'u_in_cm_s', ...
+        'c_in_mol_cm3', 'Pe', 'Da', 'Time_stepmax_s', 'InitialTimeStep_s', ...
+        'AdaptiveMaxTimeStep_s', 'PorosityStepTarget', ...
+        'EndTime_s', 'EstimatedTotalTimeSteps', ...
+        'SkipReason'});
+    skippedTable = [skippedTable; row]; %#ok<AGROW>
 end
 end
 
@@ -349,26 +626,62 @@ if isfield(result, 'metadata') && isfield(result.metadata, 'parameters')
 end
 end
 
-function dt = estimateTimeStepmax(p, physics)
-[Pe, Da] = calcPeDa(p, physics);
-
-if Pe >= 10
-    baseStep = 1;
-elseif Pe >= 1
-    baseStep = 5;
-elseif Pe >= 0.01
-    baseStep = 90;
-else
-    baseStep = 300;
+function [endTime, numTimeSteps] = estimateEndTimeForMaxSteps(initialStep, maximalStep, maxTotalTimeSteps)
+if maxTotalTimeSteps < 2
+    error('BatchSimple:InvalidTimeStepCap', 'maxTotalTimeSteps must be at least 2.');
 end
 
-if Da >= 0.1
-    daMultiplier = 1;
-elseif Da >= 0.01
-    daMultiplier = 5;
-else
-    daMultiplier = 10;
+timeSteps = [0, initialStep];
+while numel(timeSteps) < maxTotalTimeSteps
+    nextTime = min(timeSteps(end) * 2, timeSteps(end) + maximalStep);
+    if nextTime <= timeSteps(end)
+        nextTime = timeSteps(end) + maximalStep;
+    end
+    timeSteps(end + 1) = nextTime; %#ok<AGROW>
 end
 
-dt = baseStep * daMultiplier;
+endTime = timeSteps(end);
+numTimeSteps = numel(timeSteps);
+end
+
+function numTimeSteps = estimateNumTimeSteps(initialStep, maximalStep, endTime)
+if endTime <= 0
+    numTimeSteps = 1;
+    return;
+end
+
+timeSteps = [0, initialStep];
+while timeSteps(end) < endTime
+    nextTime = min(timeSteps(end) * 2, timeSteps(end) + maximalStep);
+    if nextTime <= timeSteps(end)
+        nextTime = timeSteps(end) + maximalStep;
+    end
+    timeSteps(end + 1) = nextTime; %#ok<AGROW>
+end
+numTimeSteps = numel(timeSteps);
+end
+
+function settings = estimateTimeStepSettings(p, physics, timeControl)
+[~, Da] = calcPeDa(p, physics);
+
+defaultInitialStep = getStructValue(timeControl, 'initialMacroscaleTimeStepSize', 0.10);
+minStep = getStructValue(timeControl, 'adaptiveMinTimeStep', 1e-5);
+maxGrowthMultiple = getStructValue(timeControl, 'adaptiveMaxStepGrowthMultiple', 200);
+maxStepCap = getStructValue(timeControl, 'adaptiveMaxTimeStepCap', 30);
+porosityStepTarget = getStructValue(timeControl, 'porosityStepTarget', 0.01);
+
+% 这里只估计自适应步长的上下界，不估计最终溶解时间。
+% Da 越大，第一步越小；之后是否增长由 PNM_beauty3 中每步孔隙率增量决定。
+referenceDa = 0.01;
+reactionScale = min(1, referenceDa / max(Da, eps));
+initialStep = min(defaultInitialStep, max(minStep, defaultInitialStep * reactionScale));
+
+adaptiveMaxStep = min(maxStepCap, max(initialStep, initialStep * maxGrowthMultiple));
+adaptiveMaxStep = max(adaptiveMaxStep, initialStep);
+
+settings = struct();
+settings.maximalStep = adaptiveMaxStep;
+settings.initialStep = initialStep;
+settings.adaptiveMaxStep = adaptiveMaxStep;
+settings.porosityStepTarget = porosityStepTarget;
 end

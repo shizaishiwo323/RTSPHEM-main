@@ -112,9 +112,20 @@ classdef Stepper < handle
         %% Update TimeStepSize
         % Overwrite length of next timestep
         function [] = setTimeStepSize(this, num, val)
-            this.timepts(num+1) = this.timepts(num) + val;
-            this.curtau = val;
-            this.curtime = this.timepts(num+1);
+            assert(num >= 1 && num <= this.numsteps, ...
+                'HyPHM: Step number out of range [1, %d]', this.numsteps)
+            assert(val > 0, 'HyPHM: Time step size must be positive.')
+
+            newEndTime = this.timepts(num) + val;
+            delta = newEndTime - this.timepts(num+1);
+            this.timepts(num+1:end) = this.timepts(num+1:end) + delta;
+            this.stepvec(num) = val;
+            this.endtime = this.timepts(end);
+
+            if this.curstep == num
+                this.curtau = val;
+                this.curtime = this.timepts(num+1);
+            end
         end
 
         %% DE-ITERATE TIMER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

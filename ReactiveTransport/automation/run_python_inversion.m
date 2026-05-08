@@ -62,8 +62,8 @@ function [success, total_water, raw_spectrum_sum, calibration_factor] = run_pyth
         return;
     end
 
-    % 数值模拟场景统一使用固定平滑/正则化因子0.01，不再使用L-curve搜索。
-    fprintf('      [T2_process] 执行固定正则化T2反演 (regularization=0.01)...\n');
+    % 数值模拟场景统一使用固定平滑/正则化因子10000，不再使用L-curve搜索。
+    fprintf('      [T2_process] 执行固定正则化T2反演 (regularization=10000)...\n');
     [success, total_water, raw_spectrum_sum, calibration_factor] = run_t2_process_package_inversion( ...
         excel_file, output_dir, config, calibration_factor);
 end
@@ -127,7 +127,7 @@ function [success, total_water, raw_spectrum_sum, calibration_factor] = run_t2_p
         quote_cmd_arg(script_file), ...
         quote_cmd_arg(excel_file), ...
         quote_cmd_arg(output_dir), ...
-        0.01, ...
+        10000, ...
         1000.0);
 
     if ~isempty(calibration_factor) && isnumeric(calibration_factor) && isfinite(calibration_factor)

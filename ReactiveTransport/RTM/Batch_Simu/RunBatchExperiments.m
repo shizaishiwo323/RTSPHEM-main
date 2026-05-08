@@ -69,6 +69,14 @@ batchOutputOptions.saveFinalPlot = true;
 % true 时，每次导出 pore/solid DXF 后立即同步运行 COMSOL NMR + T2反演。
 % NMR路径、COMSOL模型、Python解释器、覆盖策略等在 ReactiveTransport/automation/AutomationConfig.m 中设置。
 batchOutputOptions.enableNMRSimulation = false;
+% true 时，使用 NMR-agent 图像替代模型预测归一化弛豫曲线，再做 T2 反演。
+% 与 enableNMRSimulation 互斥，二者最多只能打开一个。
+batchOutputOptions.enableNMRSurrogate = false;
+batchOutputOptions.nmrSurrogateModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
+batchOutputOptions.nmrSurrogateRoot = 'C:\Users\imgw\Documents\Codex\NMR-agent';
+batchOutputOptions.nmrSurrogatePythonExe = 'C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe';
+batchOutputOptions.nmrSurrogateResolution = 256;
+batchOutputOptions.nmrSurrogateDevice = 'auto';
 %% ===================== 批次实验参数设置 =====================
 % 是否使用手动定义的实验方案（与你的表格对应）
 useManualSchemes = true;
