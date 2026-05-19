@@ -33,6 +33,7 @@ cfg.initialMacroscaleTimeStepSize = getParam(params, 'initialMacroscaleTimeStepS
 cfg.maxTotalTimeSteps = getParam(params, 'maxTotalTimeSteps', []);
 cfg.porosityStepTarget = getParam(params, 'porosityStepTarget', []);
 cfg.porosityStepTolerance = getParam(params, 'porosityStepTolerance', []);
+cfg.porosityStepUpperFactor = getParam(params, 'porosityStepUpperFactor', []);
 cfg.adaptiveGrowthFactor = getParam(params, 'adaptiveGrowthFactor', []);
 cfg.adaptiveShrinkSafety = getParam(params, 'adaptiveShrinkSafety', []);
 cfg.adaptiveMinTimeStep = getParam(params, 'adaptiveMinTimeStep', []);

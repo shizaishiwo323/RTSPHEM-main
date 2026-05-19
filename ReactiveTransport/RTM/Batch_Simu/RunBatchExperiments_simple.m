@@ -31,7 +31,16 @@ batchOutputRoot = fullfile(projectRoot, 'outputs', 'rtm_batches');
 % 批次名。留空 '' 时自动使用 batch_时间戳。
 batchName = '';
 
-% 如需固定写入某个已有/指定目录，取消下一行注释。
+% 运行模式：
+%   'new'    - 新建一个 batch_时间戳目录，从 exp_001 开始。
+%   'resume' - 复用已有批次目录，自动跳过目录中已经存在的 exp_NNN。
+batchRunMode = 'resume';
+
+% 续跑时填写已有批次目录。例如：
+% resumeBatchResultsDir = fullfile(batchOutputRoot, 'batch_20260508_074936');
+resumeBatchResultsDir = 'C:\Users\imgw\Documents\Codex\RTSPHEM-main\outputs\rtm_batches\batch_20260508_074936';
+
+% 如需固定写入某个新目录，可设置 batchName，或取消下一行注释。
 % batchResultsDir = fullfile(batchOutputRoot, 'my_batch_test');
 
 %% ===================== 全局物理参数 =====================
@@ -117,12 +126,12 @@ timeControl.endTime = [];                          % adaptive_porosity 下仅作
 timeControl.timeStepperType = 'adaptive_porosity'; % 根据每步孔隙率增量动态调整下一步
 timeControl.maxTotalTimeSteps = 1000;              % 仅作异常保护/预分配，不作为目标步数
 timeControl.porosityStepTarget = 0.01;             % 目标：每个 RTM 步孔隙率约增加 1%
-timeControl.porosityStepTolerance = 0.0025;        % 允许约 0.75%-1.25% 的自然波动
-timeControl.adaptiveGrowthFactor = 1.4;            % 未达到目标时，下一步最多增长 40%
+timeControl.porosityStepTolerance = 0.0;           % 低于目标就继续增长；上限由 porosityStepUpperFactor 控制
+timeControl.porosityStepUpperFactor = 2.0;         % 允许最多约 2%/step，超过后才回调
+timeControl.adaptiveGrowthFactor = 2.0;            % 未达到目标时按 0.1,0.2,0.4,0.8... 指数增长
 timeControl.adaptiveShrinkSafety = 0.85;           % 超过目标时，按比例回缩并留安全余量
 timeControl.adaptiveMinTimeStep = 1e-5;            % 高 Da 快反应时允许更小的起始时间步
-timeControl.adaptiveMaxStepGrowthMultiple = 200;   % adaptiveMaxTimeStep = dt0 * 此倍率，再受 cap 限制
-timeControl.adaptiveMaxTimeStepCap = 30;           % [s] 只是增长上限，真正步长由孔隙率反馈决定
+timeControl.adaptiveMaxTimeStepCap = 60;           % [s] 只是增长上限，真正步长由孔隙率反馈决定
 timeControl.permeabilityRatioThreshold = 100;      % k/k0 达到该倍数后完成当前步并停止
 
 %% ===================== 网格与导出精度 =====================
@@ -166,7 +175,21 @@ if ~exist(batchOutputRoot, 'dir')
     mkdir(batchOutputRoot);
 end
 
-if exist('batchResultsDir', 'var') && strlength(string(batchResultsDir)) > 0
+isResumeMode = strcmpi(strtrim(string(batchRunMode)), "resume");
+existingExperimentIndices = [];
+lastExistingExperimentIdx = 0;
+
+if isResumeMode
+    if strlength(strtrim(string(resumeBatchResultsDir))) == 0
+        error('BatchSimple:MissingResumeDir', ...
+            'batchRunMode=''resume'' 时必须填写 resumeBatchResultsDir。');
+    end
+    batchResultsDir = char(resumeBatchResultsDir);
+    if ~exist(batchResultsDir, 'dir')
+        error('BatchSimple:ResumeDirNotFound', ...
+            '续跑目录不存在: %s', batchResultsDir);
+    end
+elseif exist('batchResultsDir', 'var') && strlength(string(batchResultsDir)) > 0
     batchResultsDir = char(batchResultsDir);
 elseif strlength(string(batchName)) > 0
     batchResultsDir = fullfile(batchOutputRoot, char(batchName));
@@ -176,6 +199,12 @@ else
 end
 if ~exist(batchResultsDir, 'dir')
     mkdir(batchResultsDir);
+end
+if isResumeMode
+    existingExperimentIndices = scanExistingExperimentIndices(batchResultsDir);
+    if ~isempty(existingExperimentIndices)
+        lastExistingExperimentIdx = max(existingExperimentIndices);
+    end
 end
 
 paramList = {};
@@ -311,16 +340,26 @@ end
 %% ===================== 打印预览 =====================
 fprintf('========================================\n');
 fprintf('精简批量 RTM/NMR 运行\n');
+fprintf('  运行模式: %s\n', char(batchRunMode));
 fprintf('  批次目录: %s\n', batchResultsDir);
 fprintf('  实验数量: %d\n', numel(paramList));
 fprintf('  跳过数量: %d (velocity limit)\n', numel(skippedParamList));
+if isResumeMode
+    fprintf('  已存在 exp_NNN 目录: %d 个', numel(existingExperimentIndices));
+    if ~isempty(existingExperimentIndices)
+        fprintf('，最大编号 exp_%03d，续跑将跳过这些编号', lastExistingExperimentIdx);
+    end
+    fprintf('\n');
+end
 fprintf('  sync NMR: %s\n', mat2str(batchOptions.enableNMRSimulation));
 fprintf('  surrogate NMR: %s\n', mat2str(batchOptions.enableNMRSurrogate));
 fprintf('  固定几何: %.0fx%.0f um | L=throat/avg spacing per geometry | c_in: %.4g mol/cm^3 | u_max: %.4g cm/s\n', ...
     fixedDesign.targetLengthX_um, fixedDesign.targetLengthY_um, ...
     fixedDesign.c_in, fixedDesign.maxInletVelocity);
-fprintf('  time-step mode: %s | target dPorosity/step ~= %.3f | guard steps <= %d\n', ...
-    timeControl.timeStepperType, timeControl.porosityStepTarget, timeControl.maxTotalTimeSteps);
+fprintf('  time-step mode: %s | target dPorosity/step %.3f-%.3f | guard steps <= %d\n', ...
+    timeControl.timeStepperType, timeControl.porosityStepTarget, ...
+    timeControl.porosityStepTarget * timeControl.porosityStepUpperFactor, ...
+    timeControl.maxTotalTimeSteps);
 fprintf('========================================\n\n');
 
 fprintf('%-5s %-20s %-8s %-8s %-8s %-9s %-10s %-8s %-9s %-9s %-8s %-10s %-8s %-10s %-8s\n', ...
@@ -347,13 +386,27 @@ if ~isempty(skippedDesignTable)
 end
 
 %% ===================== 执行批量实验 =====================
-summary = table();
+if isResumeMode
+    summary = readExistingSummaryTable(batchResultsDir);
+else
+    summary = table();
+end
 errorLogFile = fullfile(batchResultsDir, 'batch_error_log.txt');
-fid = fopen(errorLogFile, 'w');
-fprintf(fid, 'Batch error log - %s\n\n', char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
+if isResumeMode
+    fid = fopen(errorLogFile, 'a');
+    fprintf(fid, '\nResume batch error log - %s\n\n', char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
+else
+    fid = fopen(errorLogFile, 'w');
+    fprintf(fid, 'Batch error log - %s\n\n', char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
+end
 fclose(fid);
 
 for expIdx = 1:numel(paramList)
+    if isResumeMode && ismember(expIdx, existingExperimentIndices)
+        fprintf('跳过已存在实验 exp_%03d，保留已有结果。\n', expIdx);
+        continue;
+    end
+
     p = paramList{expIdx};
     [Pe, Da] = calcPeDa(p, physics);
     PeDa = Pe / Da;
@@ -438,7 +491,7 @@ for expIdx = 1:numel(paramList)
         'EndTime_s', 'EstimatedTotalTimeSteps', 'FinalPorosity', ...
         'InitialPerm_mD', 'FinalPerm_mD', 'PBTimeStep', 'PBTime_s', ...
         'Status', 'Message', 'ResultsDir'});
-    summary = [summary; newRow]; %#ok<AGROW>
+    summary = upsertSummaryRow(summary, newRow, expIdx);
 
     writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple_partial.xlsx'));
     writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple_partial.csv'));
@@ -449,7 +502,8 @@ writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple.xlsx'));
 writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple.csv'));
 save(fullfile(batchResultsDir, 'batch_workspace_simple.mat'), ...
     'paramList', 'skippedParamList', 'summary', 'designTable', 'skippedDesignTable', ...
-    'batchResultsDir', 'physics', ...
+    'batchResultsDir', 'batchRunMode', 'isResumeMode', ...
+    'existingExperimentIndices', 'lastExistingExperimentIdx', 'physics', ...
     'fixedDesign', 'peList', 'daCases', 'geometryCases', 'geometry', ...
     'timeControl', 'meshExport', 'batchOptions');
 
@@ -460,6 +514,64 @@ fprintf('总结表: %s\n', fullfile(batchResultsDir, 'batch_summary_simple.xlsx'
 fprintf('========================================\n');
 
 %% ===================== 本脚本辅助函数 =====================
+function expIndices = scanExistingExperimentIndices(batchResultsDir)
+% 扫描已有 exp_NNN 子目录。只用于跳过已有结果，不判断完成质量。
+items = dir(fullfile(batchResultsDir, 'exp_*'));
+expIndices = [];
+for i = 1:numel(items)
+    if ~items(i).isdir
+        continue;
+    end
+    token = regexp(items(i).name, '^exp_(\d+)$', 'tokens', 'once');
+    if isempty(token)
+        continue;
+    end
+    expIndices(end + 1) = str2double(token{1}); %#ok<AGROW>
+end
+expIndices = unique(sort(expIndices));
+end
+
+function summary = readExistingSummaryTable(batchResultsDir)
+summary = table();
+summaryCandidates = {
+    fullfile(batchResultsDir, 'batch_summary_simple_partial.xlsx')
+    fullfile(batchResultsDir, 'batch_summary_simple.xlsx')
+    fullfile(batchResultsDir, 'batch_summary_simple_partial.csv')
+    fullfile(batchResultsDir, 'batch_summary_simple.csv')
+};
+for i = 1:numel(summaryCandidates)
+    summaryPath = summaryCandidates{i};
+    if ~exist(summaryPath, 'file')
+        continue;
+    end
+    try
+        summary = readtable(summaryPath, 'TextType', 'string');
+        fprintf('已载入已有总结表: %s (%d 行)\n', summaryPath, height(summary));
+        return;
+    catch ME
+        warning('BatchSimple:ReadExistingSummaryFailed', ...
+            '读取已有总结表失败，将只记录本次新增实验: %s\n%s', summaryPath, ME.message);
+        summary = table();
+        return;
+    end
+end
+fprintf('未找到已有 batch_summary_simple，总结表将只包含本次新增实验。\n');
+end
+
+function summary = upsertSummaryRow(summary, newRow, expIdx)
+if ~isempty(summary) && ismember('ExpIdx', summary.Properties.VariableNames)
+    duplicateMask = summary.ExpIdx == expIdx;
+    if any(duplicateMask)
+        fprintf('更新已有总结记录 exp_%03d，覆盖旧路径/旧状态。\n', expIdx);
+        summary(duplicateMask, :) = [];
+    end
+end
+summary = [summary; newRow];
+if ismember('ExpIdx', summary.Properties.VariableNames)
+    summary = sortrows(summary, 'ExpIdx');
+end
+end
+
 function p = mergeStructs(p, extra)
 names = fieldnames(extra);
 for i = 1:numel(names)
@@ -666,17 +778,16 @@ function settings = estimateTimeStepSettings(p, physics, timeControl)
 
 defaultInitialStep = getStructValue(timeControl, 'initialMacroscaleTimeStepSize', 0.10);
 minStep = getStructValue(timeControl, 'adaptiveMinTimeStep', 1e-5);
-maxGrowthMultiple = getStructValue(timeControl, 'adaptiveMaxStepGrowthMultiple', 200);
-maxStepCap = getStructValue(timeControl, 'adaptiveMaxTimeStepCap', 30);
+maxStepCap = getStructValue(timeControl, 'adaptiveMaxTimeStepCap', 60);
 porosityStepTarget = getStructValue(timeControl, 'porosityStepTarget', 0.01);
 
 % 这里只估计自适应步长的上下界，不估计最终溶解时间。
-% Da 越大，第一步越小；之后是否增长由 PNM_beauty3 中每步孔隙率增量决定。
+% Da 越大，第一步越小；最大步长不再跟第一步绑定，避免低 Pe/高 Da 被 dtmax 卡死。
 referenceDa = 0.01;
 reactionScale = min(1, referenceDa / max(Da, eps));
 initialStep = min(defaultInitialStep, max(minStep, defaultInitialStep * reactionScale));
 
-adaptiveMaxStep = min(maxStepCap, max(initialStep, initialStep * maxGrowthMultiple));
+adaptiveMaxStep = max(maxStepCap, initialStep);
 adaptiveMaxStep = max(adaptiveMaxStep, initialStep);
 
 settings = struct();
