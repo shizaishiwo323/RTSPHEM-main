@@ -44,8 +44,9 @@ initialMacroscaleTimeStepSize = cfgget(config, 'initialMacroscaleTimeStepSize', 
 timeStepperType = char(cfgget(config, 'timeStepperType', 'expmax'));
 maxTotalTimeSteps = cfgget(config, 'maxTotalTimeSteps', []);
 porosityStepTarget = cfgget(config, 'porosityStepTarget', 0.01);
-porosityStepTolerance = cfgget(config, 'porosityStepTolerance', 0.0025);
-adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 1.4);
+porosityStepTolerance = cfgget(config, 'porosityStepTolerance', 0.0);
+porosityStepUpperFactor = cfgget(config, 'porosityStepUpperFactor', 2.0);
+adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 2.0);
 adaptiveShrinkSafety = cfgget(config, 'adaptiveShrinkSafety', 0.85);
 adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
 
@@ -449,9 +450,9 @@ switch (timeStepperType)
             nextStepSize = min(adaptiveMaxTimeStep, nextStepSize * adaptiveGrowthFactor);
         end
         endTime = timeSteps(end);
-        fprintf(['adaptive_porosity: target dPorosity=%.4g +/- %.4g, ', ...
+        fprintf(['adaptive_porosity: target dPorosity=[%.4g, %.4g], ', ...
             'dt0=%g s, dt range=[%g, %g] s, safety steps=%d\n'], ...
-            porosityStepTarget, porosityStepTolerance, initialMacroscaleTimeStepSize, ...
+            porosityStepTarget, porosityStepTarget * porosityStepUpperFactor, initialMacroscaleTimeStepSize, ...
             adaptiveMinTimeStep, adaptiveMaxTimeStep, numel(timeSteps)-1);
     otherwise
         error('Time stepper type not implemented.');
@@ -1129,6 +1130,7 @@ metadata.parameters = struct( ...
     'adaptiveMaxTimeStep_s', adaptiveMaxTimeStep, ...
     'porosityStepTarget', porosityStepTarget, ...
     'porosityStepTolerance', porosityStepTolerance, ...
+    'porosityStepUpperFactor', porosityStepUpperFactor, ...
     'adaptiveGrowthFactor', adaptiveGrowthFactor, ...
     'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
     'endTime_s', endTime, ...
@@ -1472,7 +1474,7 @@ while transportStepper.next
     t_layout = tiledlayout(3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
     
     % 添加总标题显示时间信息
-    title(t_layout, sprintf('Simulation at {\\itt} = %.1f s', currentTime), ...
+    title(t_layout, sprintf('Simulation at {\\itt} = %.2f s', currentTime), ...
           'FontSize', titleFontSize + 2, 'FontName', fontName, 'FontWeight', 'normal');
     
     % 获取浓度数据（三角形数据）
@@ -1756,7 +1758,7 @@ while transportStepper.next
     figSub1 = figure('Visible', 'off', 'Position', [100, 100, 800, 700]);
     trisurf(gridHyPHM.V0T, gridHyPHM.coordV(:,1), gridHyPHM.coordV(:,2), ...
             vertexConcentration, 'EdgeColor', 'none');
-    titleHandle1 = title(sprintf('Hydrogen concentration {\\itc} at {\\itt} = %.1f s (mol·cm^{-3})', currentTime), ...
+    titleHandle1 = title(sprintf('Hydrogen concentration {\\itc} at {\\itt} = %.2f s (mol·cm^{-3})', currentTime), ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     titleHandle1.Position(2) = titleHandle1.Position(2) * 1.35;  % 增加标题距离
     titleHandle1.Position(1) = titleHandle1.Position(1) - 0.01;  % 向左移动标题
@@ -1811,7 +1813,7 @@ while transportStepper.next
     contourf(X, Y, Z, [0,0], 'LineWidth', 2);
     hold on;
     contour(X, Y, Z, [0,0], 'k', 'LineWidth', 2);
-    titleHandle2 = title(sprintf('Mineral interface at {\\itt} = %.1f s — Porosity: %.2f%%', currentTime, porosityVal*100), ...
+    titleHandle2 = title(sprintf('Mineral interface at {\\itt} = %.2f s — Porosity: %.2f%%', currentTime, porosityVal*100), ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     titleHandle2.Position(2) = titleHandle2.Position(2) * 1.05;  % 增加标题距离
     xlabel('X (cm)', 'FontSize', fontSize, 'FontName', fontName);
@@ -1837,7 +1839,7 @@ while transportStepper.next
     axis equal tight;
     colormap(jet);
     cb3 = colorbar; cb3.FontSize = fontSize; cb3.FontName = fontName;
-    titleHandle3 = title(sprintf('Flow velocity field at {\\itt} = %.1f s ({\\bf\\itu}, cm·s^{-1})', currentTime), ...
+    titleHandle3 = title(sprintf('Flow velocity field at {\\itt} = %.2f s ({\\bf\\itu}, cm·s^{-1})', currentTime), ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     titleHandle3.Position(2) = titleHandle3.Position(2) * 1.05;  % 增加标题距离
     xlabel('X (cm)', 'FontSize', fontSize, 'FontName', fontName);
@@ -2093,8 +2095,8 @@ while transportStepper.next
 
         nextMacroscaleStepSize = adaptivePorosityStepSize( ...
             macroscaleTimeStepSize, porosityDeltaForStep, porosityStepTarget, ...
-            porosityStepTolerance, adaptiveGrowthFactor, adaptiveShrinkSafety, ...
-            adaptiveMinTimeStep, adaptiveMaxTimeStep);
+            porosityStepTolerance, porosityStepUpperFactor, adaptiveGrowthFactor, ...
+            adaptiveShrinkSafety, adaptiveMinTimeStep, adaptiveMaxTimeStep);
         transportStepper.setTimeStepSize(timeIterationStep + 1, nextMacroscaleStepSize);
         timeSteps = transportStepper.timepts(:)';
         fprintf(' Adaptive dt update: dPorosity=%s, next dt=%g s\n', ...
@@ -2653,24 +2655,25 @@ end
 end
 
 function nextStepSize = adaptivePorosityStepSize(currentStepSize, porosityDelta, targetDelta, ...
-    tolerance, growthFactor, shrinkSafety, minStepSize, maxStepSize)
+    tolerance, upperFactor, growthFactor, shrinkSafety, minStepSize, maxStepSize)
 targetDelta = max(eps, targetDelta);
 tolerance = max(0, tolerance);
+upperDelta = targetDelta * max(1, upperFactor);
 growthFactor = max(1.0, growthFactor);
 shrinkSafety = min(1.0, max(0.1, shrinkSafety));
+lowerDelta = max(0, targetDelta - tolerance);
 
 if isnan(porosityDelta)
-    proposedStepSize = currentStepSize;
+    proposedStepSize = currentStepSize * growthFactor;
 elseif porosityDelta <= eps
     proposedStepSize = currentStepSize * growthFactor;
-elseif porosityDelta > targetDelta + tolerance
-    shrinkFactor = max(0.05, shrinkSafety * targetDelta / porosityDelta);
-    proposedStepSize = currentStepSize * min(1.0, shrinkFactor);
-elseif porosityDelta < max(0, targetDelta - tolerance)
-    growFactor = min(growthFactor, max(1.05, shrinkSafety * targetDelta / porosityDelta));
-    proposedStepSize = currentStepSize * growFactor;
-else
+elseif porosityDelta < lowerDelta
+    proposedStepSize = currentStepSize * growthFactor;
+elseif porosityDelta <= upperDelta
     proposedStepSize = currentStepSize;
+else
+    shrinkFactor = max(0.05, shrinkSafety * upperDelta / porosityDelta);
+    proposedStepSize = currentStepSize * min(1.0, shrinkFactor);
 end
 
 nextStepSize = min(maxStepSize, max(minStepSize, proposedStepSize));
