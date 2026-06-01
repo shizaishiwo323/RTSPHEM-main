@@ -4,12 +4,16 @@
 %   1. 只修改本文件顶部的“用户可调参数”。
 %   2. 在 MATLAB 中运行本文件。
 %   3. geometryCases 定义几何尺寸，peList 定义每个几何要跑的 Pe regime。
-%   4. 如果 batchOptions.enableNMRSimulation=true，NMR 细节在
-%      ReactiveTransport/automation/AutomationConfig.m 中设置。
+%   4. NMR 路径统一在 ReactiveTransport/RTM/NMRSimulationConfig.m 中选择：
+%      none | comsol | surrogate | png_pixel_cpu | png_pixel_gpu | png_mesh。
+%      COMSOL 仍复用 AutomationConfig.m 的类结构，但常用覆盖参数集中写在
+%      NMRSimulationConfig.m，避免入口脚本里分散配置。
 %
 % 输出：
 %   outputs/rtm_batches/batch_YYYYMMDD_HHMMSS/
 %     exp_001/, exp_002/, ...
+%       png_nmr_results/      仅 enablePNGSimulation=true 时生成
+%       png_nmr_sync_log.csv  仅 enablePNGSimulation=true 时生成
 %     batch_summary_simple.xlsx
 %     batch_summary_simple.csv
 %     batch_error_log.txt
@@ -160,17 +164,22 @@ batchOptions.saveFinalPlot = true;
 batchOptions.maxExperimentWallSeconds = 6 * 3600;  % 单个实验超过 6 小时则完成当前步后跳过
 batchOptions.cleanupBetweenExperiments = true;     % 每个实验后关闭遗留图窗并触发轻量内存清理
 
-% false：只批量跑 RTM；true：每次导出 DXF 后同步跑 COMSOL NMR + T2 反演。
-batchOptions.enableNMRSimulation = false;
-
-% true：使用 NMR-agent 图像替代模型预测归一化弛豫曲线，再做 T2 反演。
-% 与 enableNMRSimulation 互斥，二者最多只能打开一个。
-batchOptions.enableNMRSurrogate = true;
-batchOptions.nmrSurrogateModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
-batchOptions.nmrSurrogateRoot = 'C:\Users\imgw\Documents\Codex\NMR-agent';
-batchOptions.nmrSurrogatePythonExe = 'C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe';
-batchOptions.nmrSurrogateResolution = 256;
-batchOptions.nmrSurrogateDevice = 'auto';
+% NMR 路径统一由 ReactiveTransport/RTM/NMRSimulationConfig.m 控制。
+% 在该配置文件中修改 cfg.nmr_method：
+%   none | comsol | surrogate | png_pixel_cpu | png_pixel_gpu | png_mesh
+nmrWorkflowConfig = NMRSimulationConfig();
+nmrOptions = ResolveNMRSimulationOptions(nmrWorkflowConfig);
+batchOptions.enableNMRSimulation = nmrOptions.enableNMRSimulation;
+batchOptions.enableNMRSurrogate = nmrOptions.enableNMRSurrogate;
+batchOptions.enablePNGSimulation = nmrOptions.enablePNGSimulation;
+batchOptions.pngNMRMethod = nmrOptions.pngNMRMethod;
+batchOptions.pngNMRConfig = nmrOptions.config;
+batchOptions.nmrSurrogateModelPath = nmrWorkflowConfig.nmrSurrogateModelPath;
+batchOptions.nmrSurrogateRoot = nmrWorkflowConfig.nmrSurrogateRoot;
+batchOptions.nmrSurrogatePythonExe = nmrWorkflowConfig.nmrSurrogatePythonExe;
+batchOptions.nmrSurrogateDatasetPath = nmrWorkflowConfig.nmrSurrogateDatasetPath;
+batchOptions.nmrSurrogateResolution = nmrWorkflowConfig.nmrSurrogateResolution;
+batchOptions.nmrSurrogateDevice = nmrWorkflowConfig.nmrSurrogateDevice;
 
 %% ===================== 由参数表构建实验列表 =====================
 if ~exist(batchOutputRoot, 'dir')
@@ -355,6 +364,8 @@ if isResumeMode
 end
 fprintf('  sync NMR: %s\n', mat2str(batchOptions.enableNMRSimulation));
 fprintf('  surrogate NMR: %s\n', mat2str(batchOptions.enableNMRSurrogate));
+fprintf('  NMR method: %s\n', nmrOptions.nmr_method);
+fprintf('  PNG NMR: %s (%s)\n', mat2str(batchOptions.enablePNGSimulation), batchOptions.pngNMRMethod);
 fprintf('  固定几何: %.0fx%.0f um | L=throat/avg spacing per geometry | c_in: %.4g mol/cm^3 | u_max: %.4g cm/s\n', ...
     fixedDesign.targetLengthX_um, fixedDesign.targetLengthY_um, ...
     fixedDesign.c_in, fixedDesign.maxInletVelocity);

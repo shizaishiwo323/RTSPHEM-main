@@ -90,9 +90,13 @@ cfg.saveFinalPlot = getParam(params, 'saveFinalPlot', true);
 cfg.maxExperimentWallSeconds = getParam(params, 'maxExperimentWallSeconds', Inf);
 cfg.enableNMRSimulation = getParam(params, 'enableNMRSimulation', false);
 cfg.enableNMRSurrogate = getParam(params, 'enableNMRSurrogate', false);
+cfg.enablePNGSimulation = getParam(params, 'enablePNGSimulation', false);
+cfg.pngNMRMethod = getParam(params, 'pngNMRMethod', getParam(params, 'pngMethod', ''));
+cfg.pngNMRConfig = getParam(params, 'pngNMRConfig', []);
 cfg.nmrSurrogateModelPath = getParam(params, 'nmrSurrogateModelPath', '');
 cfg.nmrSurrogateRoot = getParam(params, 'nmrSurrogateRoot', '');
 cfg.nmrSurrogatePythonExe = getParam(params, 'nmrSurrogatePythonExe', '');
+cfg.nmrSurrogateDatasetPath = getParam(params, 'nmrSurrogateDatasetPath', '');
 cfg.nmrSurrogateResolution = getParam(params, 'nmrSurrogateResolution', []);
 cfg.nmrSurrogateDevice = getParam(params, 'nmrSurrogateDevice', '');
 

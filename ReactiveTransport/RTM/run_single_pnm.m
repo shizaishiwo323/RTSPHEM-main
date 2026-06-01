@@ -3,10 +3,10 @@
 % 用法：
 %   1. 只修改本文件顶部的“用户可调参数”。
 %   2. 在 MATLAB 中运行本文件。
-%   3. 如果 enableNMRSimulation=true，NMR 的 COMSOL/Python 路径等细节在
-%      ReactiveTransport/automation/AutomationConfig.m 中设置。
-%   4. 如果 enableNMRSurrogate=true，则用 NMR-agent 训练好的图像替代模型预测
-%      归一化弛豫曲线，再沿用本项目 T2 反演流程。
+%   3. NMR 路径统一在 ReactiveTransport/RTM/NMRSimulationConfig.m 中选择：
+%      none | comsol | surrogate | png_pixel_cpu | png_pixel_gpu | png_mesh。
+%      COMSOL 仍复用 AutomationConfig.m 的类结构，但常用覆盖参数集中写在
+%      NMRSimulationConfig.m，避免入口脚本里分散配置。
 %
 % 输出：
 %   outputs/rtm_runs/<runName>/
@@ -16,6 +16,8 @@
 %     comsol_results/        仅 enableNMRSimulation=true 时生成
 %     inversion_results/     仅 enableNMRSimulation=true 时生成
 %     nmr_sync_log.csv       仅 enableNMRSimulation=true 时生成
+%     png_nmr_results/      仅 enablePNGSimulation=true 时生成
+%     png_nmr_sync_log.csv  仅 enablePNGSimulation=true 时生成
 %     surrogate_results/     仅 enableNMRSurrogate=true 时生成
 %     surrogate_inversion_results/ 仅 enableNMRSurrogate=true 时生成
 %     nmr_surrogate_sync_log.csv   仅 enableNMRSurrogate=true 时生成
@@ -78,7 +80,7 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
 % cfg.inletVelocity = 0.154;
-cfg.inletVelocity = 0.1;
+cfg.inletVelocity = 0.01;
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
 
@@ -144,23 +146,29 @@ cfg.saveMeshDiagnostics = true;
 cfg.showDebugFigures = false;
 
 %% ===================== 同步 NMR 模拟 =====================
-% false：只跑 RTM，后续再单独跑 NMR。
-% true ：每次导出 pore/solid DXF 后立即运行 COMSOL NMR + T2 反演。
-cfg.enableNMRSimulation = false;
+% 统一由 ReactiveTransport/RTM/NMRSimulationConfig.m 控制。
+% 在该配置文件中修改 cfg.nmr_method：
+%   none | comsol | surrogate | png_pixel_cpu | png_pixel_gpu | png_mesh
+nmrWorkflowConfig = NMRSimulationConfig();
+nmrOptions = ResolveNMRSimulationOptions(nmrWorkflowConfig);
+cfg.enableNMRSimulation = nmrOptions.enableNMRSimulation;
+cfg.enableNMRSurrogate = nmrOptions.enableNMRSurrogate;
+cfg.enablePNGSimulation = nmrOptions.enablePNGSimulation;
+cfg.pngNMRMethod = nmrOptions.pngNMRMethod;
+cfg.pngNMRConfig = nmrOptions.config;
 
-% 是否使用 NMR-agent 机器学习替代模型。
-% 与 enableNMRSimulation 同级互斥：二者最多只能打开一个。
-% true：每次生成界面图像后，用 U-Net 预测归一化 NMR 弛豫曲线，再做 T2 反演。
-cfg.enableNMRSurrogate = false;
-cfg.nmrSurrogateModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
-cfg.nmrSurrogateRoot = 'C:\Users\imgw\Documents\Codex\NMR-agent';
-cfg.nmrSurrogatePythonExe = 'C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe';
-cfg.nmrSurrogateResolution = 256;
-cfg.nmrSurrogateDevice = 'auto';
+% 下面这些字段保留在 cfg 顶层，方便旧代码和 run_metadata.json 读取；
+% 实际默认值来自 NMRSimulationConfig.m。
+cfg.nmrSurrogateModelPath = nmrWorkflowConfig.nmrSurrogateModelPath;
+cfg.nmrSurrogateRoot = nmrWorkflowConfig.nmrSurrogateRoot;
+cfg.nmrSurrogatePythonExe = nmrWorkflowConfig.nmrSurrogatePythonExe;
+cfg.nmrSurrogateDatasetPath = nmrWorkflowConfig.nmrSurrogateDatasetPath;
+cfg.nmrSurrogateResolution = nmrWorkflowConfig.nmrSurrogateResolution;
+cfg.nmrSurrogateDevice = nmrWorkflowConfig.nmrSurrogateDevice;
 
 % 注意：
-%   NMR 的 COMSOL 模型、Python解释器、是否覆盖已有结果、是否启用COMSOL/反演等
-%   在 ReactiveTransport/automation/AutomationConfig.m 中设置。
+%   NMR 方法选择、COMSOL 常用覆盖参数、NMR-agent surrogate 参数、
+%   PNG NMR 参数和 T2 反演参数统一在 ReactiveTransport/RTM/NMRSimulationConfig.m 中设置。
 
 %% ===================== 开始运行 =====================
 fprintf('========================================\n');
@@ -171,6 +179,8 @@ fprintf('  u_in   = %.6g cm/s\n', cfg.inletVelocity);
 fprintf('  c_in   = %.6g mol/cm^3\n', cfg.initialHydrogenConcentration);
 fprintf('  sync NMR = %s\n', mat2str(cfg.enableNMRSimulation));
 fprintf('  surrogate NMR = %s\n', mat2str(cfg.enableNMRSurrogate));
+fprintf('  NMR method = %s\n', nmrOptions.nmr_method);
+fprintf('  PNG NMR = %s (%s)\n', mat2str(cfg.enablePNGSimulation), cfg.pngNMRMethod);
 fprintf('========================================\n\n');
 
 result = PNM_beauty3(cfg);
