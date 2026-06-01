@@ -1428,18 +1428,6 @@ while transportStepper.next
         k0 = k_eff_mD;
     end
     
-    % --- 计算出口处平均 H+ 浓度 ---
-    % 获取当前时间步的浓度数据（三角形单元数据）
-    hydrogenDataCurrent = hydrogenTransport.U.getdata(max(0, timeIterationStep-1));
-    % 找到出口边界附近的三角形单元
-    outletTriangles = flowConfig.outletTrianglePredicate(gridHyPHM.baryT);
-    if any(outletTriangles)
-        outletHConc_now = mean(hydrogenDataCurrent(outletTriangles));
-    else
-        outletHConc_now = NaN;
-    end
-    OutletHConc(timeIterationStep+1) = outletHConc_now;
-
     % --- 迂曲度计算：τ = Σ|v| / Σv_flow，仅在孔隙空间节点上求和 ---
     % 方法见：基于流场的迂曲度计算.md （Duda et al. 2011 / Koponen et al.）
     velocityDataTau = StokesL.U.getdata(1);  % P2P2 节点速度，[numV+numE, 2]
@@ -1549,6 +1537,11 @@ while transportStepper.next
 
     hydrogenTransport.U.setdata(timeIterationStep-1, hydrogenTransport.U.getdata(timeIterationStep - 1)-Corrector(:, 1));
 
+    % --- 计算出口处平均 H+ 浓度：必须在输运求解之后读取当前步浓度 ---
+    hydrogenDataCurrent = hydrogenTransport.U.getdata(timeIterationStep);
+    outletTriangles = flowConfig.outletTrianglePredicate(gridHyPHM.baryT);
+    OutletHConc(timeIterationStep+1) = ComputeOutletConcentration(hydrogenDataCurrent, outletTriangles);
+
     Rate(timeIterationStep+1) = -((hydrogenTransport.Q.getdata(timeIterationStep) - initialHydrogenConcentration * inletVelocity) .* flowConfig.outletEdgePredicate(gridHyPHM.baryE))' * gridHyPHM.areaE / surfaceArea{1}(timeIterationStep);
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1591,20 +1584,17 @@ while transportStepper.next
     title(t_layout, sprintf('Simulation at {\\itt} = %.2f s', currentTime), ...
           'FontSize', titleFontSize + 2, 'FontName', fontName, 'FontWeight', 'normal');
     
-    % 获取浓度数据（三角形数据）
+    % 获取浓度数据（三角形 P0 数据），绘图时保持单元常数并屏蔽固体/界面单元。
     hydrogenConcentrationData = hydrogenTransport.U.getdata(timeIterationStep);
-    
-    % 将三角形数据转换为顶点数据
-    vertexConcentration = zeros(gridHyPHM.numV, 1);
-    for i = 1:gridHyPHM.numV
-        triIndices = VertexTriMatrix{i};
-        vertexConcentration(i) = mean(hydrogenConcentrationData(triIndices));
-    end
+    concentrationFaceData = PrepareConcentrationFaceData( ...
+        hydrogenConcentrationData, gridHyPHM.V0T, levelSet{1}(:, timeIterationStep + 1));
     
     % 绘制浓度分布
     ax1 = nexttile(1);
-    trisurf(gridHyPHM.V0T, gridHyPHM.coordV(:,1), gridHyPHM.coordV(:,2), ...
-            vertexConcentration, 'EdgeColor', 'none');
+    patch(ax1, 'Faces', gridHyPHM.V0T, ...
+        'Vertices', [gridHyPHM.coordV, zeros(gridHyPHM.numV, 1)], ...
+        'FaceVertexCData', concentrationFaceData, ...
+        'FaceColor', 'flat', 'EdgeColor', 'none');
     title(['Hydrogen concentration {\itc} (mol·cm^{-3})'], ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     set(gca, 'FontSize', fontSize, 'FontName', fontName, 'XTickLabel', []);
@@ -1620,7 +1610,7 @@ while transportStepper.next
     % 叠加初始界面轮廓线（始终显示在最上层）
     hold(ax1, 'on');
     % 设置较高的Z值，确保轮廓线覆盖在浓度云图上方
-    zBase = max(vertexConcentration);
+    zBase = max(concentrationFaceData, [], 'omitnan');
     if ~isfinite(zBase) || zBase <= 0
         zBase = 1;
     end
@@ -1870,8 +1860,11 @@ while transportStepper.next
     if doExportStep && saveIndividualPlots
     % 子图1：浓度分布
     figSub1 = figure('Visible', 'off', 'Position', [100, 100, 800, 700]);
-    trisurf(gridHyPHM.V0T, gridHyPHM.coordV(:,1), gridHyPHM.coordV(:,2), ...
-            vertexConcentration, 'EdgeColor', 'none');
+    axSub1 = axes(figSub1);
+    patch(axSub1, 'Faces', gridHyPHM.V0T, ...
+        'Vertices', [gridHyPHM.coordV, zeros(gridHyPHM.numV, 1)], ...
+        'FaceVertexCData', concentrationFaceData, ...
+        'FaceColor', 'flat', 'EdgeColor', 'none');
     titleHandle1 = title(sprintf('Hydrogen concentration {\\itc} at {\\itt} = %.2f s (mol·cm^{-3})', currentTime), ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     titleHandle1.Position(2) = titleHandle1.Position(2) * 1.35;  % 增加标题距离
@@ -1885,7 +1878,7 @@ while transportStepper.next
     % colormap(figSub1, 'viridis'); % 使用viridis映射
     % 叠加初始界面轮廓线
     hold on;
-    zBase = max(vertexConcentration);
+    zBase = max(concentrationFaceData, [], 'omitnan');
     if ~isfinite(zBase) || zBase <= 0
         zBase = 1;
     end
