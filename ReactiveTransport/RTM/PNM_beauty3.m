@@ -129,17 +129,21 @@ else
 end
 
 % === 同步 NMR 模拟 ===
-% 打开后，每当本 RTM 步骤导出一对 pore/solid DXF，就立即调用
-% ReactiveTransport/automation 中的 COMSOL + T2 反演流程。
-% COMSOL模型、Python解释器、覆盖策略等仍在 AutomationConfig.m 中设置。
-enableNMRSimulation = logical(cfgget(config, 'enableNMRSimulation', cfgget(config, 'syncNMRSimulation', false)));
-enableNMRSurrogate = logical(cfgget(config, 'enableNMRSurrogate', cfgget(config, 'enableNMRSurrogateModel', false)));
-if enableNMRSimulation && enableNMRSurrogate
-    error('MATLAB:PNMNMRMode', 'enableNMRSimulation 和 enableNMRSurrogate 不能同时为 true；请选择真实 COMSOL NMR 或机器学习替代模型。');
-end
+% NMRSimulationConfig.m 统一控制 COMSOL、NMR-agent surrogate 和 PNG NMR。
+nmrWorkflowConfig = loadNMRWorkflowConfig(rtmDir, config);
+nmrOptions = ResolveNMRSimulationOptions(nmrWorkflowConfig);
+enableNMRSimulation = nmrOptions.enableNMRSimulation;
+enableNMRSurrogate = nmrOptions.enableNMRSurrogate;
+enablePNGSimulation = nmrOptions.enablePNGSimulation;
+pngNMRConfig = nmrOptions.config;
+pngNMRConfig.method = char(cfgget(nmrOptions, 'pngNMRMethod', cfgget(pngNMRConfig, 'method', 'png_mesh')));
 if enableNMRSimulation && ~exportDXF
     warning('MATLAB:PNMNMRSync', 'enableNMRSimulation=true 需要导出 pore/solid DXF，已自动启用 exportDXF。');
     exportDXF = true;
+end
+if enablePNGSimulation && ~saveInterfaceMask
+    warning('MATLAB:PNMPNGNMRSync', 'enablePNGSimulation=true 需要 interface PNG，已自动启用 saveInterfaceMask。');
+    saveInterfaceMask = true;
 end
 nmrConfig = [];
 nmrComsolOutputDir = '';
@@ -152,6 +156,9 @@ nmrSurrogateInversionOutputDir = '';
 nmrSurrogateMaskDir = '';
 nmrSurrogateSyncLogFile = '';
 nmrSurrogateCalibrationFactor = [];
+pngNMROutputDir = '';
+pngNMRSyncLogFile = '';
+pngNMRRuntimeConfigFile = '';
  
 % 计算比例供参考
 minSpacingRatio = circleSpacing / circleRadius;      % square/hex 的最小孔喉相对半径
@@ -1160,12 +1167,16 @@ if ~exist(imageDir, 'dir');    mkdir(imageDir); end
 
 if enableNMRSimulation
     [nmrConfig, nmrComsolOutputDir, nmrInversionOutputDir, nmrSyncLogFile] = ...
-        initializeNMRSync(reactiveRoot, resultsDir);
+        initializeNMRSync(reactiveRoot, resultsDir, pngNMRConfig);
 end
 if enableNMRSurrogate
     [nmrSurrogateConfig, nmrSurrogateOutputDir, nmrSurrogateInversionOutputDir, ...
         nmrSurrogateMaskDir, nmrSurrogateSyncLogFile] = initializeNMRSurrogateSync( ...
-        reactiveRoot, resultsDir, config);
+        reactiveRoot, resultsDir, pngNMRConfig);
+end
+if enablePNGSimulation
+    [pngNMRConfig, pngNMROutputDir, pngNMRSyncLogFile, pngNMRRuntimeConfigFile] = ...
+        initializePNGNMRSync(rtmDir, reactiveRoot, resultsDir, pngNMRConfig);
 end
 
 % 创建单独子图保存文件夹
@@ -1252,16 +1263,26 @@ metadata.outputs = struct( ...
     'mesh_diagnostics_dir', string(meshDiagnosticsDir));
 metadata.nmr = struct( ...
     'enabled', enableNMRSimulation, ...
+    'method', string(nmrOptions.nmr_method), ...
     'trigger', "after_exported_pore_solid_dxf_pair", ...
     'config_source', string(fullfile(reactiveRoot, 'automation', 'AutomationConfig.m')), ...
+    'workflow_config_source', string(fullfile(rtmDir, 'NMRSimulationConfig.m')), ...
+    'comsol_mph_file', string(cfgget(pngNMRConfig, 'mph_file', '')), ...
+    'inversion_script', string(cfgget(pngNMRConfig, 'inversion_script', '')), ...
     'comsol_results_dir', string(nmrComsolOutputDir), ...
     'inversion_results_dir', string(nmrInversionOutputDir), ...
     'sync_log', string(nmrSyncLogFile), ...
     'surrogate_enabled', enableNMRSurrogate, ...
-    'surrogate_model_path', string(cfgget(config, 'nmrSurrogateModelPath', '')), ...
+    'surrogate_model_path', string(cfgget(pngNMRConfig, 'nmrSurrogateModelPath', '')), ...
     'surrogate_results_dir', string(nmrSurrogateOutputDir), ...
     'surrogate_inversion_results_dir', string(nmrSurrogateInversionOutputDir), ...
-    'surrogate_sync_log', string(nmrSurrogateSyncLogFile));
+    'surrogate_sync_log', string(nmrSurrogateSyncLogFile), ...
+    'png_enabled', enablePNGSimulation, ...
+    'png_method', string(cfgget(pngNMRConfig, 'method', 'png_mesh')), ...
+    'png_results_dir', string(pngNMROutputDir), ...
+    'png_sync_log', string(pngNMRSyncLogFile), ...
+    'png_runtime_config', string(pngNMRRuntimeConfigFile), ...
+    'png_config_source', string(fullfile(rtmDir, 'NMRSimulationConfig.m')));
 writeJsonFile(fullfile(resultsDir, 'run_metadata.json'), metadata);
 
 %% Time iteration
@@ -1995,7 +2016,7 @@ while transportStepper.next
 
 
     % 新建图窗口,绘制固液边界
-    if doExportStep && (exportDXF || saveInterfaceMask || enableNMRSurrogate)
+    if doExportStep && (exportDXF || saveInterfaceMask || enableNMRSurrogate || enablePNGSimulation)
     fig1 = figure('Visible', 'off');  % 可改为 'on' 调试查看
 
     [X, Y] = meshgrid(linspace(0, lengthXAxis, dxfResolutionX), linspace(0, lengthYAxis, dxfResolutionY));
@@ -2065,8 +2086,21 @@ while transportStepper.next
 
     % 保存图像
     if saveInterfaceMask
-        safeSaveAs(fig1, fullfile(imageDir, sprintf('timestep_%04d.png', timeIterationStep)), ...
+        interfacePngPath = fullfile(imageDir, sprintf('timestep_%04d.png', timeIterationStep));
+        safeSaveAs(fig1, interfacePngPath, ...
             sprintf('interface_mask_png (step=%d)', timeIterationStep));
+    end
+    if enablePNGSimulation
+        interfacePngPath = fullfile(imageDir, sprintf('timestep_%04d.png', timeIterationStep));
+        runSynchronousPNGNMRStep( ...
+            pngNMRConfig, ...
+            pngNMRRuntimeConfigFile, ...
+            resultsDir, ...
+            interfacePngPath, ...
+            timeIterationStep, ...
+            t_now, ...
+            porosityVal, ...
+            pngNMRSyncLogFile);
     end
     safeCloseFigure(fig1);
     % 输出进度信息
@@ -2424,7 +2458,216 @@ else
 end
 end
 
-function [nmrConfig, comsolOutputDir, inversionOutputDir, syncLogFile] = initializeNMRSync(reactiveRoot, resultsDir)
+function nmrConfig = loadNMRWorkflowConfig(rtmDir, userConfig)
+addpath(rtmDir);
+if exist('NMRSimulationConfig', 'file') == 2
+    nmrConfig = NMRSimulationConfig();
+else
+    nmrConfig = struct('nmr_method', 'none', 'enablePNGSimulation', false, 'method', 'png_mesh');
+end
+
+if isstruct(userConfig) && isfield(userConfig, 'pngNMRConfig') && isstruct(userConfig.pngNMRConfig)
+    nmrConfig = mergeConfigStructs(nmrConfig, userConfig.pngNMRConfig);
+end
+
+% Allow direct PNM_beauty3(config) callers to override the central file
+% without constructing cfg.pngNMRConfig by hand.
+nmrConfig = mergeTopLevelNMRFields(nmrConfig, userConfig);
+if isstruct(userConfig) && ~isfield(userConfig, 'nmr_method') && ~isfield(userConfig, 'nmrMethod')
+    if logical(cfgget(userConfig, 'enableNMRSimulation', false))
+        nmrConfig.nmr_method = 'comsol';
+    elseif logical(cfgget(userConfig, 'enableNMRSurrogate', false))
+        nmrConfig.nmr_method = 'surrogate';
+    elseif logical(cfgget(userConfig, 'enablePNGSimulation', false))
+        nmrConfig.nmr_method = char(cfgget(userConfig, 'pngNMRMethod', cfgget(userConfig, 'pngMethod', cfgget(userConfig, 'method', 'png_mesh'))));
+    end
+end
+end
+
+function out = mergeTopLevelNMRFields(base, userConfig)
+out = base;
+if ~isstruct(userConfig)
+    return;
+end
+fields = { ...
+    'nmr_method', 'nmrMethod', 'enableNMRSimulation', 'enableNMRSurrogate', ...
+    'enablePNGSimulation', 'pngNMRMethod', 'pngMethod', ...
+    'comsol_path', 'mph_file', 'comsol_python_exe', 'enable_comsol', 'enable_inversion', ...
+    'overwrite_existing', 'scale_factor', 'export_mph', 'inversion_script', ...
+    'nmrSurrogateModelPath', 'nmrSurrogateRoot', 'nmrSurrogatePythonExe', ...
+    'nmrSurrogateDatasetPath', 'nmrSurrogateResolution', 'nmrSurrogateDevice'};
+for iField = 1:numel(fields)
+    fieldName = fields{iField};
+    if isfield(userConfig, fieldName) && ~isempty(userConfig.(fieldName))
+        out.(fieldName) = userConfig.(fieldName);
+    end
+end
+end
+
+function out = mergeConfigStructs(base, extra)
+out = base;
+if ~isstruct(extra)
+    return;
+end
+names = fieldnames(extra);
+for iName = 1:numel(names)
+    name = names{iName};
+    if ~isempty(extra.(name))
+        out.(name) = extra.(name);
+    end
+end
+end
+
+function [pngConfig, outputDir, syncLogFile, runtimeConfigFile] = initializePNGNMRSync(rtmDir, reactiveRoot, resultsDir, pngConfig)
+driverPath = fullfile(rtmDir, 'png_nmr_driver.py');
+if ~exist(driverPath, 'file')
+    error('PNG NMR driver 不存在: %s', driverPath);
+end
+
+pythonExe = char(cfgget(pngConfig, 'python_exe', 'python'));
+advancedToolsDir = char(cfgget(pngConfig, 'advanced_tools_dir', ''));
+if isempty(advancedToolsDir) || ~exist(advancedToolsDir, 'dir')
+    error('PNG NMR advanced_tools_dir 不存在: %s', advancedToolsDir);
+end
+
+defaultT2Path = fullfile(reactiveRoot, 'T2_process');
+t2ProcessPath = char(cfgget(pngConfig, 't2_process_path', defaultT2Path));
+if isempty(t2ProcessPath) || ~exist(t2ProcessPath, 'dir')
+    error('PNG NMR t2_process_path 不存在: %s', t2ProcessPath);
+end
+
+method = char(cfgget(pngConfig, 'method', 'png_mesh'));
+outputRoot = char(cfgget(pngConfig, 'output_root', 'png_nmr_results'));
+if isAbsolutePath(outputRoot)
+    outputDir = outputRoot;
+else
+    outputDir = fullfile(resultsDir, outputRoot);
+end
+if ~exist(outputDir, 'dir'); mkdir(outputDir); end
+
+pngConfig.python_exe = pythonExe;
+pngConfig.driver_path = driverPath;
+pngConfig.advanced_tools_dir = advancedToolsDir;
+pngConfig.t2_process_path = t2ProcessPath;
+pngConfig.method = method;
+pngConfig.output_root = outputDir;
+runtimeConfigFile = fullfile(resultsDir, 'png_nmr_runtime_config.json');
+writeJsonFile(runtimeConfigFile, pngConfig);
+
+syncLogFile = fullfile(resultsDir, 'png_nmr_sync_log.csv');
+if ~exist(syncLogFile, 'file')
+    fid = fopen(syncLogFile, 'w');
+    if fid ~= -1
+        fprintf(fid, 'timestep,time_s,porosity,success,method,decay_csv,spectrum_mat,manifest,message\n');
+        fclose(fid);
+    else
+        warning('MATLAB:PNMPNGNMRSync', '无法创建PNG NMR同步日志: %s', syncLogFile);
+    end
+end
+
+fprintf('[PNG NMR] 已启用。方法: %s\n', method);
+fprintf('[PNG NMR] Python: %s\n', pythonExe);
+fprintf('[PNG NMR] advanced_tools: %s\n', advancedToolsDir);
+fprintf('[PNG NMR] 输出: %s\n', outputDir);
+end
+
+function runSynchronousPNGNMRStep(pngConfig, runtimeConfigFile, resultsDir, interfacePngPath, ...
+    timestep, timeSeconds, porosityValue, syncLogFile)
+
+method = char(cfgget(pngConfig, 'method', 'png_mesh'));
+success = false;
+message = "OK";
+decayCsv = "";
+spectrumMat = "";
+manifestPath = "";
+
+try
+    if ~exist(interfacePngPath, 'file')
+        message = "interface PNG未生成";
+        appendPNGNMRSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, success, ...
+            method, decayCsv, spectrumMat, manifestPath, message);
+        warning('MATLAB:PNMPNGNMRSync', 'PNG NMR跳过时间步 %04d: PNG不存在: %s', timestep, interfacePngPath);
+        return;
+    end
+
+    fprintf('[PNG NMR] 时间步 %04d: %s + T2反演\n', timestep, method);
+    cmd = sprintf('%s %s --exp-dir %s --png %s --timestep %d --time-s %.17g --porosity %.17g --config %s', ...
+        quoteSystemArg(pngConfig.python_exe), ...
+        quoteSystemArg(pngConfig.driver_path), ...
+        quoteSystemArg(resultsDir), ...
+        quoteSystemArg(interfacePngPath), ...
+        timestep, ...
+        timeSeconds, ...
+        porosityValue, ...
+        quoteSystemArg(runtimeConfigFile));
+
+    [status, cmdout] = system(cmd);
+    if ~isempty(strtrim(cmdout))
+        fprintf('%s\n', strtrim(cmdout));
+    end
+    result = parseResultJson(cmdout);
+    success = status == 0 && isfield(result, 'success') && logical(result.success);
+    if isfield(result, 'decay') && isfield(result.decay, 'curve_csv')
+        decayCsv = string(result.decay.curve_csv);
+    end
+    if isfield(result, 'inversion') && isfield(result.inversion, 'spectrum_mat')
+        spectrumMat = string(result.inversion.spectrum_mat);
+    end
+    if isfield(result, 'manifest_path')
+        manifestPath = string(result.manifest_path);
+    end
+    if ~success
+        if isfield(result, 'error')
+            message = string(result.error);
+        else
+            message = sprintf('PNG NMR退出码: %d', status);
+        end
+        warning('MATLAB:PNMPNGNMRSync', 'PNG NMR时间步 %04d 失败: %s', timestep, char(message));
+        if logical(cfgget(pngConfig, 'fail_on_error', false))
+            error('MATLAB:PNMPNGNMRSync', '%s', char(message));
+        end
+    end
+catch ME
+    message = string(ME.message);
+    warning('MATLAB:PNMPNGNMRSync', 'PNG NMR时间步 %04d 异常: %s', timestep, ME.message);
+    if logical(cfgget(pngConfig, 'fail_on_error', false))
+        rethrow(ME);
+    end
+end
+
+appendPNGNMRSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, success, ...
+    method, decayCsv, spectrumMat, manifestPath, message);
+end
+
+function appendPNGNMRSyncLog(syncLogFile, timestep, timeSeconds, porosityValue, success, ...
+    method, decayCsv, spectrumMat, manifestPath, message)
+fid = fopen(syncLogFile, 'a');
+if fid == -1
+    warning('MATLAB:PNMPNGNMRSync', '无法写入PNG NMR同步日志: %s', syncLogFile);
+    return;
+end
+cleaner = onCleanup(@() fclose(fid));
+
+method = strrep(char(method), '"', '""');
+decayCsv = strrep(char(decayCsv), '"', '""');
+spectrumMat = strrep(char(spectrumMat), '"', '""');
+manifestPath = strrep(char(manifestPath), '"', '""');
+message = strrep(char(message), '"', '""');
+fprintf(fid, '%d,%.6f,%.8f,%d,"%s","%s","%s","%s","%s"\n', ...
+    timestep, timeSeconds, porosityValue, logical(success), method, decayCsv, ...
+    spectrumMat, manifestPath, message);
+clear cleaner;
+end
+
+function tf = isAbsolutePath(pathValue)
+pathValue = char(pathValue);
+tf = numel(pathValue) >= 2 && pathValue(2) == ':';
+if ~tf && startsWith(pathValue, filesep)
+    tf = true;
+end
+end
+
+function [nmrConfig, comsolOutputDir, inversionOutputDir, syncLogFile] = initializeNMRSync(reactiveRoot, resultsDir, userConfig)
 automationDir = fullfile(reactiveRoot, 'automation');
 if ~exist(automationDir, 'dir')
     error('NMR自动化目录不存在: %s', automationDir);
@@ -2432,6 +2675,7 @@ end
 addpath(automationDir);
 
 nmrConfig = AutomationConfig();
+nmrConfig = applyAutomationConfigOverrides(nmrConfig, userConfig);
 comsolOutputDir = fullfile(resultsDir, 'comsol_results');
 inversionOutputDir = fullfile(resultsDir, 'inversion_results');
 if ~exist(comsolOutputDir, 'dir'); mkdir(comsolOutputDir); end
@@ -2449,8 +2693,39 @@ if ~exist(syncLogFile, 'file')
 end
 
 fprintf('[NMR同步] 已启用。参数来自: %s\n', fullfile(automationDir, 'AutomationConfig.m'));
+fprintf('[NMR同步] 覆盖配置来自: %s\n', fullfile(fileparts(reactiveRoot), 'ReactiveTransport', 'RTM', 'NMRSimulationConfig.m'));
 fprintf('[NMR同步] COMSOL输出: %s\n', comsolOutputDir);
 fprintf('[NMR同步] 反演输出: %s\n', inversionOutputDir);
+end
+
+function configObj = applyAutomationConfigOverrides(configObj, userConfig)
+if nargin < 2 || ~isstruct(userConfig)
+    return;
+end
+
+configObj = setAutomationProperty(configObj, 'comsol_path', cfgget(userConfig, 'comsol_path', []));
+configObj = setAutomationProperty(configObj, 'mph_file', cfgget(userConfig, 'mph_file', []));
+configObj = setAutomationProperty(configObj, 'python_exe', cfgget(userConfig, 'comsol_python_exe', []));
+configObj = setAutomationProperty(configObj, 'inversion_script', cfgget(userConfig, 'inversion_script', []));
+configObj = setAutomationProperty(configObj, 'enable_comsol', cfgget(userConfig, 'enable_comsol', []));
+configObj = setAutomationProperty(configObj, 'enable_inversion', cfgget(userConfig, 'enable_inversion', []));
+configObj = setAutomationProperty(configObj, 'overwrite_existing', cfgget(userConfig, 'overwrite_existing', []));
+configObj = setAutomationProperty(configObj, 'scale_factor', cfgget(userConfig, 'scale_factor', []));
+configObj = setAutomationProperty(configObj, 'export_mph', cfgget(userConfig, 'export_mph', []));
+configObj = setAutomationProperty(configObj, 'max_samples_per_folder', cfgget(userConfig, 'max_samples_per_folder', []));
+end
+
+function configObj = setAutomationProperty(configObj, propertyName, value)
+if isempty(value)
+    return;
+end
+try
+    if isprop(configObj, propertyName)
+        configObj.(propertyName) = value;
+    end
+catch ME
+    warning('MATLAB:NMRConfigOverride', '无法设置 AutomationConfig.%s: %s', propertyName, ME.message);
+end
 end
 
 function calibrationFactor = runSynchronousNMRStep(nmrConfig, poreDxfPath, solidDxfPath, ...
@@ -2525,6 +2800,7 @@ end
 addpath(automationDir);
 
 inversionConfig = AutomationConfig();
+inversionConfig = applyAutomationConfigOverrides(inversionConfig, userConfig);
 defaultModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
 modelPath = char(cfgget(userConfig, 'nmrSurrogateModelPath', defaultModelPath));
 if isempty(modelPath) || ~exist(modelPath, 'file')
