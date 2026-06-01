@@ -98,7 +98,7 @@ cfg.rateCoefficientTST = 1e-4;
 
 %% ===================== 时间步与终止条件 =====================
 % 初始宏观时间步 [s]
-cfg.initialMacroscaleTimeStepSize = 0.1;
+cfg.initialMacroscaleTimeStepSize = 0.01;
 
 % 最大时间步 [s]。如果留空 []，PNM_beauty3 会根据 Pe 自动估算。
 cfg.maximalStep = [];
@@ -111,7 +111,7 @@ cfg.permeabilityRatioThreshold = 1000;
 
 %% ===================== 网格与 DXF 导出精度 =====================
 % 微尺度网格分区数。越大越精细，也越慢。
-cfg.numPartitionsMicroscale = 1 * 96;
+cfg.numPartitionsMicroscale = 2 * 64;
 
 % RTM/HyPHM 三角网格密度控制，优先级：
 %   1) meshTargetElementSizeCm 非空时，按目标网格尺寸 [cm] 自动算 X/Y 分区数；
