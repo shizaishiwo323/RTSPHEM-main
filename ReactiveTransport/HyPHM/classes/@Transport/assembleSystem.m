@@ -288,7 +288,7 @@ printline(~isSlt*3, '                      ...done [%.3f sec]', toc(tAssembly)) 
         ret = 0.5 * ones(size(z));
         idx = find(z);
         h = z(idx);
-        ret(idx) = 0.5 * (1 + sign(h) * max([0, 1 - 2 ./ abs(h)]));
+        ret(idx) = 0.5 * (1 + sign(h) .* max(0, 1 - 2 ./ abs(h)));
     end
 
 end

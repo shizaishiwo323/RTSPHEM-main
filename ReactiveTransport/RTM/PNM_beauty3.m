@@ -66,6 +66,17 @@ porosityStepUpperFactor = cfgget(config, 'porosityStepUpperFactor', 2.0);
 adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 2.0);
 adaptiveShrinkSafety = cfgget(config, 'adaptiveShrinkSafety', 0.85);
 adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
+transportUpwindMode = char(cfgget(config, 'transportUpwindMode', 'full'));
+validUpwindModes = {'none', 'full', 'exp', 'alt'};
+if ~ismember(transportUpwindMode, validUpwindModes)
+    error('transportUpwindMode must be one of: none, full, exp, alt.');
+end
+enableHardCflLimit = logical(cfgget(config, 'enableHardCflLimit', false));
+hardCflLimitInitialGrid = logical(cfgget(config, 'hardCflLimitInitialGrid', false));
+advectiveCflSafety = cfgget(config, 'advectiveCflSafety', 0.3);
+reactiveCflSafety = cfgget(config, 'reactiveCflSafety', 0.2);
+hardCflMinTimeStep = cfgget(config, 'hardCflMinTimeStep', adaptiveMinTimeStep);
+hardCflMaxInitialSteps = cfgget(config, 'hardCflMaxInitialSteps', 50000);
 
 % ----------------------------------
 % 可调参数
@@ -528,13 +539,6 @@ switch (timeStepperType)
         error('Time stepper type not implemented.');
 end
 
-numTimeSlices = numel(timeSteps);
-levelSetEvolutionTime = NaN(numTimeSlices, 1);
-cellProblemTime = NaN(numTimeSlices, 1);
-
-fprintf('Total number of time steps: %d\n', numTimeSlices);
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %% Initialization of level set method variables
 
 % 自适应网格分块。可用 meshTargetElementSizeCm 或 meshNumPartitionsX/Y 显式控制。
@@ -550,6 +554,40 @@ microscaleGrid = FoldedCartesianGrid(dimension, ...
 
 coord = microscaleGrid.coordinates;
 coordCell = mat2cell(coord, ones(1, microscaleGrid.nodes), dimension);
+meshStatsForCfl = ComputeMeshDiagnostics(coord, microscaleGrid.triangles);
+meshMinLengthForCfl = meshStatsForCfl.edge_length_min;
+inletCflMaxStep = advectiveCflSafety * meshMinLengthForCfl / max(abs(inletVelocity), eps);
+hardCflInitialMaxStep = max(hardCflMinTimeStep, inletCflMaxStep);
+if hardCflLimitInitialGrid
+    oldNumTimeSteps = numel(timeSteps) - 1;
+    projectedNumTimeSteps = countLimitedTimeGridSteps(timeSteps, hardCflInitialMaxStep);
+    if projectedNumTimeSteps > hardCflMaxInitialSteps
+        warning('MATLAB:PNMHardCFLInitialGrid', ...
+            ['Hard CFL initial grid was skipped because it would create %d steps ', ...
+            '(limit hardCflMaxInitialSteps=%d). Use a shorter endTime, larger safety/min dt, ', ...
+            'or raise hardCflMaxInitialSteps if this is intentional.'], ...
+            projectedNumTimeSteps, hardCflMaxInitialSteps);
+    else
+        timeSteps = limitTimeGridByMaxStep(timeSteps, hardCflInitialMaxStep);
+        maximalStep = min(maximalStep, hardCflInitialMaxStep);
+        adaptiveMaxTimeStep = min(adaptiveMaxTimeStep, hardCflInitialMaxStep);
+        initialMacroscaleTimeStepSize = min(initialMacroscaleTimeStepSize, hardCflInitialMaxStep);
+        fprintf(['Hard CFL initial cap: dt <= %.6g s ', ...
+            '(h_min=%.6g cm, u_ref=%.6g cm/s, C_adv=%.3g, steps %d -> %d)\n'], ...
+            hardCflInitialMaxStep, meshMinLengthForCfl, abs(inletVelocity), ...
+            advectiveCflSafety, oldNumTimeSteps, numel(timeSteps)-1);
+    end
+else
+    fprintf(['Hard CFL initial grid cap disabled: candidate dt <= %.6g s ', ...
+        '(enable with hardCflLimitInitialGrid=true)\n'], hardCflInitialMaxStep);
+end
+
+numTimeSlices = numel(timeSteps);
+levelSetEvolutionTime = NaN(numTimeSlices, 1);
+cellProblemTime = NaN(numTimeSlices, 1);
+
+fprintf('Total number of time steps: %d\n', numTimeSlices);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % 初始水平集：如果使用外部几何，则用 TIF 的有符号距离；否则用原圆形示例
 if useExternalGeometry
@@ -1093,7 +1131,8 @@ hydrogenTransport.gF.setdata( ...
     @(t, x) -initialHydrogenConcentration * inletVelocity * double(flowConfig.inletPredicate(x)));
 hydrogenTransport.A.setdata(0, @(t, x) 1);
 hydrogenTransport.C.setdata(0, flow.getdata(1));
-hydrogenTransport.isUpwind = 'exp';
+hydrogenTransport.isUpwind = transportUpwindMode;
+fprintf('Transport upwinding mode: %s\n', hydrogenTransport.isUpwind);
 
 hydrogenDataOld = hydrogenConcentration.getdata(0);
 
@@ -1130,6 +1169,7 @@ logfile = fullfile(resultsDir, 'global_evolution_log.csv');
 xlsxFile = fullfile(resultsDir, 'global_evolution.xlsx'); % 新增：Excel 文件路径
 tortuositySegCsvFile = fullfile(resultsDir, 'tortuosity_segments_log.csv'); % 新增：分段迂曲度 CSV
 tortuositySegXlsxFile = fullfile(resultsDir, 'tortuosity_segments.xlsx');   % 新增：分段迂曲度 Excel
+stabilityDiagnosticsCsvFile = fullfile(resultsDir, 'stability_diagnostics_log.csv');
 if writeExcel && exist(xlsxFile, 'file'), delete(xlsxFile); end % 删除旧文件
 if writeExcel && exist(tortuositySegXlsxFile, 'file'), delete(tortuositySegXlsxFile); end % 删除旧文件
 
@@ -1142,6 +1182,15 @@ end
 if ~exist(tortuositySegCsvFile, 'file')
     fid = fopen(tortuositySegCsvFile, 'w');
     fprintf(fid, 'timestep,time_s,tortuosity_all,tortuosity_seg1,tortuosity_seg2,tortuosity_seg3,tortuosity_seg4,tortuosity_seg5\n');
+    fclose(fid);
+end
+
+if ~exist(stabilityDiagnosticsCsvFile, 'file')
+    fid = fopen(stabilityDiagnosticsCsvFile, 'w');
+    fprintf(fid, ['timestep,time_s,dt_s,c_min,c_max,total_mass_mol,mass_balance_residual_mol,', ...
+        'mass_balance_relative,local_u_max_cm_s,local_pe_max,advective_cfl,reaction_cfl,', ...
+        'normal_speed_max_cm_s,pore_components,largest_pore_component_fraction,porosity,permeability_mD,k_k0,', ...
+        'transport_upwind,diagnostic_flag\n']);
     fclose(fid);
 end
 
@@ -1244,6 +1293,15 @@ metadata.parameters = struct( ...
     'porosityStepUpperFactor', porosityStepUpperFactor, ...
     'adaptiveGrowthFactor', adaptiveGrowthFactor, ...
     'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
+    'transportUpwindMode', string(transportUpwindMode), ...
+    'enableHardCflLimit', enableHardCflLimit, ...
+    'hardCflLimitInitialGrid', hardCflLimitInitialGrid, ...
+    'advectiveCflSafety', advectiveCflSafety, ...
+    'reactiveCflSafety', reactiveCflSafety, ...
+    'hardCflMinTimeStep_s', hardCflMinTimeStep, ...
+    'hardCflMaxInitialSteps', hardCflMaxInitialSteps, ...
+    'hardCflInitialCandidateStep_s', hardCflInitialMaxStep, ...
+    'meshMinLengthForCfl_cm', meshMinLengthForCfl, ...
     'endTime_s', endTime, ...
     'maxTotalTimeSteps', maxTotalTimeSteps, ...
     'maxExperimentWallSeconds', maxExperimentWallSeconds, ...
@@ -1258,6 +1316,7 @@ metadata.outputs = struct( ...
     'global_evolution_csv', string(logfile), ...
     'tortuosity_segments', string(tortuositySegXlsxFile), ...
     'tortuosity_segments_csv', string(tortuositySegCsvFile), ...
+    'stability_diagnostics_csv', string(stabilityDiagnosticsCsvFile), ...
     'dxf_pore_dir', string(poreDXFDir), ...
     'dxf_solid_dir', string(solidDXFDir), ...
     'mesh_diagnostics_dir', string(meshDiagnosticsDir));
@@ -1715,6 +1774,42 @@ while transportStepper.next
         k_k0_now = NaN;
     end
     outletHConc_now = OutletHConc(timeIterationStep+1);
+
+    stabilityDiagnostics = computeStabilityDiagnostics( ...
+        gridHyPHM, levelSet{1}(:, timeIterationStep + 1), hydrogenData, ...
+        hydrogenDataCurrent, flow.getdata(1), StokesL.U.getdata(1), ...
+        diffusionCoefficient, meshMinLengthForCfl, macroscaleTimeStepSize, ...
+        SorceScale, rateCoefficientTST, thickness, initialHydrogenConcentration, ...
+        inletVelocity, flowConfig, normalSpeedMax, por_now, perm_now, ...
+        k_k0_now, hydrogenTransport.isUpwind);
+    nextHardCflStepSize = computeHardCflStepSize(stabilityDiagnostics, ...
+        meshMinLengthForCfl, advectiveCflSafety, reactiveCflSafety, hardCflMinTimeStep);
+
+    fprintf([' Stability: c=[%.3e, %.3e], mass_res=%.3e mol (rel %.3e), ', ...
+        'u_max=%.3e cm/s, Pe_max=%.3g, CFL_adv=%.3g, CFL_react=%.3g, pore_components=%d, flag=%s\n'], ...
+        stabilityDiagnostics.cMin, stabilityDiagnostics.cMax, ...
+        stabilityDiagnostics.massBalanceResidual, stabilityDiagnostics.massBalanceRelative, ...
+        stabilityDiagnostics.localVelocityMax, stabilityDiagnostics.localPeMax, ...
+        stabilityDiagnostics.advectiveCfl, stabilityDiagnostics.reactionCfl, ...
+        stabilityDiagnostics.poreComponents, stabilityDiagnostics.flag);
+
+    fidStab = fopen(stabilityDiagnosticsCsvFile, 'a');
+    if fidStab ~= -1
+        fprintf(fidStab, ['%d,%.6f,%.6f,%.12e,%.12e,%.12e,%.12e,%.12e,', ...
+            '%.12e,%.12e,%.12e,%.12e,%.12e,%d,%.12e,%.12e,%.12e,%.12e,"%s","%s"\n'], ...
+            timeIterationStep, t_now, macroscaleTimeStepSize, ...
+            stabilityDiagnostics.cMin, stabilityDiagnostics.cMax, ...
+            stabilityDiagnostics.totalMass, stabilityDiagnostics.massBalanceResidual, ...
+            stabilityDiagnostics.massBalanceRelative, stabilityDiagnostics.localVelocityMax, ...
+            stabilityDiagnostics.localPeMax, stabilityDiagnostics.advectiveCfl, ...
+            stabilityDiagnostics.reactionCfl, stabilityDiagnostics.normalSpeedMax, ...
+            stabilityDiagnostics.poreComponents, stabilityDiagnostics.largestPoreComponentFraction, ...
+            por_now, perm_now, k_k0_now, ...
+            char(hydrogenTransport.isUpwind), stabilityDiagnostics.flag);
+        fclose(fidStab);
+    else
+        warning('Cannot open stability diagnostics log file for writing: %s', stabilityDiagnosticsCsvFile);
+    end
     
     % 追加写入 CSV（每步一行）
     fid = fopen(logfile, 'a');
@@ -2239,21 +2334,38 @@ while transportStepper.next
         break;
     end
 
-    if useAdaptivePorositySteps && ~stopAfterThisStep && timeIterationStep < transportStepper.numsteps
+    if ~stopAfterThisStep && timeIterationStep < transportStepper.numsteps
+        plannedNextStepSize = transportStepper.timepts(timeIterationStep + 2) - ...
+            transportStepper.timepts(timeIterationStep + 1);
+        nextMacroscaleStepSize = plannedNextStepSize;
+        didUpdateNextStep = false;
+        porosityDeltaForStep = NaN;
+
+        if useAdaptivePorositySteps
         if isnan(adaptivePreviousPorosity)
             porosityDeltaForStep = NaN;
         else
             porosityDeltaForStep = max(0, porosityVal - adaptivePreviousPorosity);
         end
 
-        nextMacroscaleStepSize = adaptivePorosityStepSize( ...
+            nextMacroscaleStepSize = adaptivePorosityStepSize( ...
             macroscaleTimeStepSize, porosityDeltaForStep, porosityStepTarget, ...
             porosityStepTolerance, porosityStepUpperFactor, adaptiveGrowthFactor, ...
             adaptiveShrinkSafety, adaptiveMinTimeStep, adaptiveMaxTimeStep);
+            didUpdateNextStep = true;
+        end
+
+        if enableHardCflLimit && isfinite(nextHardCflStepSize) && nextHardCflStepSize > 0
+            nextMacroscaleStepSize = min(nextMacroscaleStepSize, nextHardCflStepSize);
+            didUpdateNextStep = true;
+        end
+
+        if didUpdateNextStep && abs(nextMacroscaleStepSize - plannedNextStepSize) > eps(plannedNextStepSize)
         transportStepper.setTimeStepSize(timeIterationStep + 1, nextMacroscaleStepSize);
         timeSteps = transportStepper.timepts(:)';
-        fprintf(' Adaptive dt update: dPorosity=%s, next dt=%g s\n', ...
-            formatAdaptiveDelta(porosityDeltaForStep), nextMacroscaleStepSize);
+            fprintf(' dt update: dPorosity=%s, next dt=%g s (CFL cap=%g s)\n', ...
+                formatAdaptiveDelta(porosityDeltaForStep), nextMacroscaleStepSize, nextHardCflStepSize);
+        end
     end
     adaptivePreviousPorosity = porosityVal;
     
@@ -3123,6 +3235,239 @@ end
 
 function tf = shouldExportStep(stepIndex, lastStepIndex, exportEvery, forceExport)
 tf = forceExport || stepIndex == 1 || stepIndex == lastStepIndex || mod(stepIndex, exportEvery) == 0;
+end
+
+function limitedTimeSteps = limitTimeGridByMaxStep(timeSteps, maxStep)
+if ~isfinite(maxStep) || maxStep <= 0
+    limitedTimeSteps = timeSteps;
+    return;
+end
+
+limitedTimeSteps = timeSteps(1);
+for iStep = 1:(numel(timeSteps) - 1)
+    t0 = timeSteps(iStep);
+    t1 = timeSteps(iStep + 1);
+    dt = t1 - t0;
+    if dt <= maxStep * (1 + 10 * eps)
+        limitedTimeSteps(end + 1) = t1; %#ok<AGROW>
+    else
+        numSubSteps = max(1, ceil(dt / maxStep));
+        subSteps = linspace(t0, t1, numSubSteps + 1);
+        limitedTimeSteps = [limitedTimeSteps, subSteps(2:end)]; %#ok<AGROW>
+    end
+end
+limitedTimeSteps = unique(limitedTimeSteps, 'stable');
+end
+
+function numSteps = countLimitedTimeGridSteps(timeSteps, maxStep)
+if ~isfinite(maxStep) || maxStep <= 0
+    numSteps = numel(timeSteps) - 1;
+    return;
+end
+
+numSteps = 0;
+for iStep = 1:(numel(timeSteps) - 1)
+    dt = timeSteps(iStep + 1) - timeSteps(iStep);
+    numSteps = numSteps + max(1, ceil(dt / maxStep));
+end
+end
+
+function diagnostics = computeStabilityDiagnostics(grid, levels, previousConcentration, currentConcentration, ...
+    flowData, stokesVelocityData, diffusionCoefficient, hMin, dt, sourceScale, ...
+    rateCoefficientTST, thickness, inletConcentration, inletVelocity, flowConfig, ...
+    normalSpeedMax, porosityValue, permeabilityValue, permeabilityRatio, upwindMode)
+
+fluidTriangles = any(levels(grid.V0T) < -eps, 2);
+cCurrent = currentConcentration(:);
+cPrevious = previousConcentration(:);
+
+diagnostics = struct();
+diagnostics.cMin = min(cCurrent, [], 'omitnan');
+diagnostics.cMax = max(cCurrent, [], 'omitnan');
+diagnostics.totalMass = computeTotalSoluteMass(grid, fluidTriangles, cCurrent, thickness);
+previousMass = computeTotalSoluteMass(grid, fluidTriangles, cPrevious, thickness);
+
+outletTriangles = flowConfig.outletTrianglePredicate(grid.baryT);
+outletConcentration = ComputeOutletConcentration(cCurrent, outletTriangles);
+outletEdges = flowConfig.outletEdgePredicate(grid.baryE);
+outletWaterFlux = sum(abs(flowData(outletEdges)) .* grid.areaE(outletEdges)) * thickness;
+inletMassFlux = inletConcentration * abs(inletVelocity) * flowConfig.crossSectionLength * thickness;
+outletMassFlux = max(outletConcentration, 0) * outletWaterFlux;
+
+reactionSink = 0;
+if numel(sourceScale) == grid.numT
+    reactionRate = max(sourceScale(:), 0) .* (rateCoefficientTST * 1000) .* max(cCurrent, 0);
+    reactionSink = sum(reactionRate(fluidTriangles) .* grid.areaT(fluidTriangles)) * thickness;
+end
+
+diagnostics.massBalanceResidual = diagnostics.totalMass - previousMass - ...
+    dt * (inletMassFlux - outletMassFlux - reactionSink);
+massScale = max([abs(previousMass), abs(diagnostics.totalMass), abs(dt * inletMassFlux), eps]);
+diagnostics.massBalanceRelative = abs(diagnostics.massBalanceResidual) / massScale;
+
+[diagnostics.localVelocityMax, diagnostics.localPeMax] = computeLocalVelocityStats( ...
+    grid, levels, flowData, stokesVelocityData, diffusionCoefficient, hMin);
+diagnostics.advectiveCfl = diagnostics.localVelocityMax * dt / max(hMin, eps);
+diagnostics.reactionCfl = normalSpeedMax * dt / max(hMin, eps);
+diagnostics.normalSpeedMax = normalSpeedMax;
+[diagnostics.poreComponents, diagnostics.largestPoreComponentFraction] = ...
+    computePoreConnectivity(grid, fluidTriangles);
+diagnostics.porosity = porosityValue;
+diagnostics.permeability = permeabilityValue;
+diagnostics.permeabilityRatio = permeabilityRatio;
+diagnostics.upwindMode = char(upwindMode);
+diagnostics.flag = joinDiagnosticFlags(diagnostics, inletConcentration);
+end
+
+function totalMass = computeTotalSoluteMass(grid, fluidTriangles, concentration, thickness)
+if isempty(concentration)
+    totalMass = NaN;
+    return;
+end
+valid = fluidTriangles & isfinite(concentration);
+totalMass = sum(concentration(valid) .* grid.areaT(valid)) * thickness;
+end
+
+function [localVelocityMax, localPeMax] = computeLocalVelocityStats(grid, levels, flowData, ...
+    stokesVelocityData, diffusionCoefficient, hMin)
+fluidTriangles = any(levels(grid.V0T) < -eps, 2);
+localSpeed = NaN(grid.numT, 1);
+try
+    flowP0P0 = RT0.RT0toP0P0slice(grid, flowData);
+    localSpeed = sqrt(sum(flowP0P0.^2, 2));
+catch
+end
+
+stokesVelocityMax = NaN;
+nP2 = grid.numV + grid.numE;
+if size(stokesVelocityData, 2) == 2 && size(stokesVelocityData, 1) == nP2
+    vx = stokesVelocityData(:, 1);
+    vy = stokesVelocityData(:, 2);
+elseif size(stokesVelocityData, 2) == 1 && length(stokesVelocityData) == 2 * nP2
+    vx = stokesVelocityData(1:nP2);
+    vy = stokesVelocityData(nP2+1:end);
+else
+    vx = [];
+    vy = [];
+end
+if ~isempty(vx)
+    lsEdgeMid = 0.5 * (levels(grid.V0E(:,1)) + levels(grid.V0E(:,2)));
+    poreP2 = [levels; lsEdgeMid] < -eps;
+    p2Speed = sqrt(vx.^2 + vy.^2);
+    if any(poreP2)
+        stokesVelocityMax = max(p2Speed(poreP2), [], 'omitnan');
+    end
+end
+
+if any(fluidTriangles) && any(isfinite(localSpeed(fluidTriangles)))
+    rt0VelocityMax = max(localSpeed(fluidTriangles), [], 'omitnan');
+else
+    rt0VelocityMax = NaN;
+end
+localVelocityMax = max([rt0VelocityMax, stokesVelocityMax], [], 'omitnan');
+if isempty(localVelocityMax) || ~isfinite(localVelocityMax)
+    localVelocityMax = 0;
+end
+
+if any(fluidTriangles) && any(isfinite(localSpeed(fluidTriangles)))
+    localPeMax = max(localSpeed(fluidTriangles) * hMin ./ max(2 * diffusionCoefficient, eps), [], 'omitnan');
+else
+    localPeMax = localVelocityMax * hMin / max(2 * diffusionCoefficient, eps);
+end
+end
+
+function [numComponents, largestFraction] = computePoreConnectivity(grid, fluidTriangles)
+fluidIds = find(fluidTriangles);
+numFluid = numel(fluidIds);
+if numFluid == 0
+    numComponents = 0;
+    largestFraction = 0;
+    return;
+end
+
+fluidMap = zeros(grid.numT, 1);
+fluidMap(fluidIds) = 1:numFluid;
+neighbors = cell(numFluid, 1);
+for iEdge = 1:grid.numE
+    adjacent = grid.T0E(iEdge, :);
+    adjacent = adjacent(adjacent > 0);
+    if numel(adjacent) == 2 && fluidTriangles(adjacent(1)) && fluidTriangles(adjacent(2))
+        a = fluidMap(adjacent(1));
+        b = fluidMap(adjacent(2));
+        neighbors{a}(end + 1) = b; %#ok<AGROW>
+        neighbors{b}(end + 1) = a; %#ok<AGROW>
+    end
+end
+
+visited = false(numFluid, 1);
+componentSizes = [];
+for iFluid = 1:numFluid
+    if visited(iFluid)
+        continue;
+    end
+    stack = iFluid;
+    visited(iFluid) = true;
+    count = 0;
+    while ~isempty(stack)
+        node = stack(end);
+        stack(end) = [];
+        count = count + 1;
+        nextNodes = neighbors{node};
+        for iNext = 1:numel(nextNodes)
+            nextNode = nextNodes(iNext);
+            if ~visited(nextNode)
+                visited(nextNode) = true;
+                stack(end + 1) = nextNode; %#ok<AGROW>
+            end
+        end
+    end
+    componentSizes(end + 1) = count; %#ok<AGROW>
+end
+
+numComponents = numel(componentSizes);
+largestFraction = max(componentSizes) / numFluid;
+end
+
+function nextStepSize = computeHardCflStepSize(diagnostics, hMin, advectiveSafety, reactiveSafety, minStep)
+advectiveLimit = Inf;
+reactiveLimit = Inf;
+if diagnostics.localVelocityMax > 0
+    advectiveLimit = advectiveSafety * hMin / diagnostics.localVelocityMax;
+end
+if diagnostics.normalSpeedMax > 0
+    reactiveLimit = reactiveSafety * hMin / diagnostics.normalSpeedMax;
+end
+nextStepSize = max(minStep, min(advectiveLimit, reactiveLimit));
+end
+
+function flagText = joinDiagnosticFlags(diagnostics, inletConcentration)
+flags = {};
+if ~isfinite(diagnostics.cMin) || ~isfinite(diagnostics.cMax)
+    flags{end + 1} = 'nonfinite_c'; %#ok<AGROW>
+end
+if diagnostics.cMin < -max(1e-12, 1e-6 * max(abs(inletConcentration), eps))
+    flags{end + 1} = 'negative_c'; %#ok<AGROW>
+end
+if diagnostics.cMax > max(10 * abs(inletConcentration), abs(inletConcentration) + 1e-12)
+    flags{end + 1} = 'overshoot_c'; %#ok<AGROW>
+end
+if diagnostics.advectiveCfl > 1
+    flags{end + 1} = 'advective_cfl_gt_1'; %#ok<AGROW>
+end
+if diagnostics.reactionCfl > 1
+    flags{end + 1} = 'reaction_cfl_gt_1'; %#ok<AGROW>
+end
+if diagnostics.poreComponents > 1
+    flags{end + 1} = 'disconnected_pores'; %#ok<AGROW>
+end
+if diagnostics.massBalanceRelative > 0.25
+    flags{end + 1} = 'mass_balance_drift'; %#ok<AGROW>
+end
+if isempty(flags)
+    flagText = 'ok';
+else
+    flagText = strjoin(flags, ';');
+end
 end
 
 function plotEvolutionSummary(timeValues, rateValues, porosityValues, permeabilityValues, ...

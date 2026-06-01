@@ -81,7 +81,7 @@ cfg = struct();
 %       直接在 PNG 像素网格上运行 GPU 数值 NMR。
 %   'png_mesh':
 %       从 PNG 生成三角网格后运行数值 NMR。
-cfg.nmr_method = 'png_mesh';
+cfg.nmr_method = 'none';
 
 % 下面三个 enable* 字段由 cfg.nmr_method 派生，保留是为了兼容
 % PNM_beauty3.m 旧接口和 run_metadata.json 记录。通常不需要手动修改。
