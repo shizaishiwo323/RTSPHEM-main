@@ -73,14 +73,14 @@ cfg.externalDxfSolidLayerNames = {'calcite'};
 cfg.externalDxfReferenceLength = 1500;
 cfg.externalDxfReferenceLengthCm = 0.15;
 % DXF 导入方向：as_is, rotate90_cw, rotate90_ccw, rotate180, flip_x, flip_y。
-cfg.externalDxfImportDirection = 'as_is';
+cfg.externalDxfImportDirection = 'rotate90_cw';
 
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
-cfg.inletVelocity = 0.154;
-
+% cfg.inletVelocity = 0.154;
+cfg.inletVelocity = 0.1;
 % 流体方向：left_to_right 或 bottom_to_top。
-cfg.flowDirection = 'bottom_to_top';
+cfg.flowDirection = 'left_to_right';
 
 % 入口 H+ 浓度 [mol/cm^3]
 cfg.initialHydrogenConcentration = 1.37e-5;
@@ -96,26 +96,26 @@ cfg.rateCoefficientTST = 1e-4;
 
 %% ===================== 时间步与终止条件 =====================
 % 初始宏观时间步 [s]
-cfg.initialMacroscaleTimeStepSize = 0.10;
+cfg.initialMacroscaleTimeStepSize = 0.1;
 
 % 最大时间步 [s]。如果留空 []，PNM_beauty3 会根据 Pe 自动估算。
 cfg.maximalStep = [];
 
 % 结束时间 [s]。如果留空 []，PNM_beauty3 会根据流速等参数自动估算。
-cfg.endTime = [];
+cfg.endTime =[];
 
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 1000;
 
 %% ===================== 网格与 DXF 导出精度 =====================
 % 微尺度网格分区数。越大越精细，也越慢。
-cfg.numPartitionsMicroscale = 2 * 64;
+cfg.numPartitionsMicroscale = 1 * 96;
 
 % RTM/HyPHM 三角网格密度控制，优先级：
 %   1) meshTargetElementSizeCm 非空时，按目标网格尺寸 [cm] 自动算 X/Y 分区数；
 %   2) meshNumPartitionsX/Y 非空时，直接指定 X/Y 方向分区数；
 %   3) 否则沿用 numPartitionsMicroscale。
-cfg.meshTargetElementSizeCm = [];
+cfg.meshTargetElementSizeCm =  [];
 cfg.meshNumPartitionsX = [];
 cfg.meshNumPartitionsY = [];
 
@@ -151,7 +151,7 @@ cfg.enableNMRSimulation = false;
 % 是否使用 NMR-agent 机器学习替代模型。
 % 与 enableNMRSimulation 同级互斥：二者最多只能打开一个。
 % true：每次生成界面图像后，用 U-Net 预测归一化 NMR 弛豫曲线，再做 T2 反演。
-cfg.enableNMRSurrogate = true;
+cfg.enableNMRSurrogate = false;
 cfg.nmrSurrogateModelPath = 'C:\Users\imgw\Documents\Codex\NMR-agent\runs\IMGW_256_300_20260507-130311_3a583275\latest_model.pt';
 cfg.nmrSurrogateRoot = 'C:\Users\imgw\Documents\Codex\NMR-agent';
 cfg.nmrSurrogatePythonExe = 'C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe';
