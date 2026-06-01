@@ -80,7 +80,7 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
 % cfg.inletVelocity = 0.154;
-cfg.inletVelocity = 0.01;
+cfg.inletVelocity = 0.1;
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
 
@@ -104,7 +104,7 @@ cfg.initialMacroscaleTimeStepSize = 0.1;
 cfg.maximalStep = [];
 
 % 结束时间 [s]。如果留空 []，PNM_beauty3 会根据流速等参数自动估算。
-cfg.endTime =[];
+cfg.endTime =3600 * 4.5;
 
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 1000;
