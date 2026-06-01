@@ -157,6 +157,8 @@ batchOptions.saveRealtimePlot = false;
 batchOptions.saveFigureFiles = false;
 batchOptions.writeExcel = true;
 batchOptions.saveFinalPlot = true;
+batchOptions.maxExperimentWallSeconds = 6 * 3600;  % 单个实验超过 6 小时则完成当前步后跳过
+batchOptions.cleanupBetweenExperiments = true;     % 每个实验后关闭遗留图窗并触发轻量内存清理
 
 % false：只批量跑 RTM；true：每次导出 DXF 后同步跑 COMSOL NMR + T2 反演。
 batchOptions.enableNMRSimulation = false;
@@ -429,13 +431,24 @@ for expIdx = 1:numel(paramList)
         Pe, Da, p.daCategory, p.Time_stepmax, p.endTime, p.estimatedTotalTimeSteps);
     fprintf('########################################\n');
 
+    experimentStartedAt = datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss');
+    experimentTimer = tic;
     try
         if isfield(p, 'randomSeed') && ~isnan(p.randomSeed)
             rng(p.randomSeed);
         end
         result = PNM_batch(p, batchResultsDir, expIdx, timeControl.permeabilityRatioThreshold);
-        status = "Success";
-        message = "";
+        if isfield(result, 'timedOut') && result.timedOut
+            status = "SkippedTimeout";
+            if isfield(result, 'timeoutMessage')
+                message = string(result.timeoutMessage);
+            else
+                message = "Experiment exceeded maxExperimentWallSeconds.";
+            end
+        else
+            status = "Success";
+            message = "";
+        end
         resultsDir = string(result.resultsDir);
         finalPorosity = result.finalPorosity;
         initialPerm = result.initialPermeability;
@@ -462,6 +475,12 @@ for expIdx = 1:numel(paramList)
         end
         warning('BatchSimple:ExperimentFailed', '实验 %d 失败: %s', expIdx, ME.message);
     end
+    experimentFinishedAt = datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss');
+    runtimeWallSeconds = toc(experimentTimer);
+    runtimeWallMinutes = runtimeWallSeconds / 60;
+    fprintf('实验 exp_%03d 墙钟耗时 %.2f 秒 (%.2f 分钟)\n', ...
+        expIdx, runtimeWallSeconds, runtimeWallMinutes);
+    cleanupBetweenBatchExperiments(batchOptions);
 
     newRow = table(expIdx, string(p.geometryCase), string(p.shapeFamily), string(p.layoutType), ...
         p.geometryFactor, p.randomSeed, string(p.daCase), string(p.daCategory), ...
@@ -476,6 +495,8 @@ for expIdx = 1:numel(paramList)
         p.Time_stepmax, p.initialMacroscaleTimeStepSize, p.adaptiveMaxTimeStep, ...
         p.porosityStepTarget, p.endTime, p.estimatedTotalTimeSteps, ...
         finalPorosity, initialPerm, finalPerm, pbStep, pbTime, ...
+        string(experimentStartedAt), string(experimentFinishedAt), ...
+        runtimeWallSeconds, runtimeWallMinutes, ...
         status, message, resultsDir, ...
         'VariableNames', {'ExpIdx', 'GeometryCase', 'ShapeFamily', 'SolverLayout', ...
         'GeometryFactor', 'RandomSeed', 'DaCase', 'DaCategory', ...
@@ -490,8 +511,10 @@ for expIdx = 1:numel(paramList)
         'AdaptiveMaxTimeStep_s', 'PorosityStepTarget', ...
         'EndTime_s', 'EstimatedTotalTimeSteps', 'FinalPorosity', ...
         'InitialPerm_mD', 'FinalPerm_mD', 'PBTimeStep', 'PBTime_s', ...
+        'StartedAt', 'FinishedAt', 'RuntimeWallSeconds', 'RuntimeWallMinutes', ...
         'Status', 'Message', 'ResultsDir'});
     summary = upsertSummaryRow(summary, newRow, expIdx);
+    appendRuntimeLog(batchResultsDir, newRow);
 
     writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple_partial.xlsx'));
     writetable(summary, fullfile(batchResultsDir, 'batch_summary_simple_partial.csv'));
@@ -566,9 +589,81 @@ if ~isempty(summary) && ismember('ExpIdx', summary.Properties.VariableNames)
         summary(duplicateMask, :) = [];
     end
 end
+summary = alignTablesForAppend(summary, newRow);
 summary = [summary; newRow];
 if ismember('ExpIdx', summary.Properties.VariableNames)
     summary = sortrows(summary, 'ExpIdx');
+end
+end
+
+function appendRuntimeLog(batchResultsDir, newRow)
+runtimeLogPath = fullfile(batchResultsDir, 'batch_runtime_log.csv');
+runtimeVars = {'ExpIdx', 'GeometryCase', 'DaCase', 'Pe_target', 'StartedAt', ...
+    'FinishedAt', 'RuntimeWallSeconds', 'RuntimeWallMinutes', 'Status', ...
+    'Message', 'ResultsDir'};
+runtimeRow = newRow(:, runtimeVars);
+if exist(runtimeLogPath, 'file')
+    try
+        runtimeLog = readtable(runtimeLogPath, 'TextType', 'string');
+        runtimeLog = alignTablesForAppend(runtimeLog, runtimeRow);
+        runtimeLog = [runtimeLog; runtimeRow];
+    catch ME
+        warning('BatchSimple:ReadRuntimeLogFailed', ...
+            '读取已有耗时日志失败，将重新写入当前记录: %s', ME.message);
+        runtimeLog = runtimeRow;
+    end
+else
+    runtimeLog = runtimeRow;
+end
+writetable(runtimeLog, runtimeLogPath);
+end
+
+function existing = alignTablesForAppend(existing, incoming)
+if isempty(existing)
+    return;
+end
+existingVars = existing.Properties.VariableNames;
+incomingVars = incoming.Properties.VariableNames;
+for i = 1:numel(incomingVars)
+    name = incomingVars{i};
+    if ~ismember(name, existingVars)
+        existing.(name) = missingColumnLike(incoming.(name), height(existing));
+    end
+end
+existing = existing(:, incoming.Properties.VariableNames);
+end
+
+function values = missingColumnLike(referenceValues, nRows)
+if isstring(referenceValues)
+    values = strings(nRows, 1);
+    values(:) = missing;
+elseif iscellstr(referenceValues)
+    values = repmat({''}, nRows, 1);
+elseif islogical(referenceValues)
+    values = false(nRows, 1);
+elseif isdatetime(referenceValues)
+    values = NaT(nRows, 1);
+else
+    values = NaN(nRows, 1);
+end
+end
+
+function cleanupBetweenBatchExperiments(batchOptions)
+if ~isfield(batchOptions, 'cleanupBetweenExperiments') || ~batchOptions.cleanupBetweenExperiments
+    return;
+end
+try
+    close all hidden;
+catch ME
+    warning('BatchSimple:CleanupFiguresFailed', '实验后关闭图窗失败: %s', ME.message);
+end
+try
+    drawnow limitrate;
+catch
+end
+try
+    java.lang.System.gc();
+catch
 end
 end
 
