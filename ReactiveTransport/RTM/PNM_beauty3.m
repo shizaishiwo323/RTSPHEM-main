@@ -34,10 +34,27 @@ EPS = eps;
 simulationTimer = tic;
 
 %% 新增：外部几何输入设置
-useExternalGeometry = cfgget(config, 'useExternalGeometry', false); % 使用外部几何
+useExternalGeometry = logical(cfgget(config, 'useExternalGeometry', false)); % 使用外部几何
+externalGeometryType = char(cfgget(config, 'externalGeometryType', 'tif'));
+useExternalDxfGeometry = logical(cfgget(config, 'useExternalDxfGeometry', false)) || ...
+    (useExternalGeometry && strcmpi(externalGeometryType, 'dxf'));
+useExternalGeometry = useExternalGeometry || useExternalDxfGeometry;
+useExternalTifGeometry = useExternalGeometry && ~useExternalDxfGeometry;
 % tifPath = '/Users/wangbin/Desktop/pore copy-1-2.tif'; % TIF 路径
 tifPath = cfgget(config, 'tifPath', "");
+externalDxfPath = cfgget(config, 'externalDxfPath', cfgget(config, 'dxfPath', ""));
+externalDxfDomainLayerNames = cfgget(config, 'externalDxfDomainLayerNames', {'domin', 'domain', 'DOMAIN'});
+externalDxfSolidLayerNames = cfgget(config, 'externalDxfSolidLayerNames', {'calcite'});
+externalDxfReferenceLength = cfgget(config, 'externalDxfReferenceLength', 1500);
+externalDxfReferenceLengthCm = cfgget(config, 'externalDxfReferenceLengthCm', 0.15);
+externalDxfScaleCmPerUnit = cfgget(config, 'externalDxfScaleCmPerUnit', []);
+externalDxfOutsideDomainIsSolid = cfgget(config, 'externalDxfOutsideDomainIsSolid', true);
+externalDxfImportDirection = cfgget(config, 'externalDxfImportDirection', ...
+    cfgget(config, 'dxfImportDirection', 'as_is'));
 numPartitionsMicroscale = cfgget(config, 'numPartitionsMicroscale', 2 * 64); % Number of partitions
+meshNumPartitionsX = cfgget(config, 'meshNumPartitionsX', []);
+meshNumPartitionsY = cfgget(config, 'meshNumPartitionsY', []);
+meshTargetElementSizeCm = cfgget(config, 'meshTargetElementSizeCm', []);
 
 % 时间步长控制参数（maximalStep 将根据 Pe 自动设置）
 initialMacroscaleTimeStepSize = cfgget(config, 'initialMacroscaleTimeStepSize', 0.10); % 初始宏观时间步长 [s]
@@ -100,6 +117,16 @@ writeExcel = cfgget(config, 'writeExcel', true);
 saveFinalPlot = cfgget(config, 'saveFinalPlot', true);
 permeabilityRatioThreshold = cfgget(config, 'permeabilityRatioThreshold', 100);
 showDebugFigures = cfgget(config, 'showDebugFigures', false);
+saveMeshDiagnostics = logical(cfgget(config, 'saveMeshDiagnostics', true));
+maxExperimentWallSeconds = cfgget(config, 'maxExperimentWallSeconds', Inf);
+if isempty(maxExperimentWallSeconds) || ~isnumeric(maxExperimentWallSeconds)
+    maxExperimentWallSeconds = Inf;
+else
+    maxExperimentWallSeconds = maxExperimentWallSeconds(1);
+    if isnan(maxExperimentWallSeconds) || maxExperimentWallSeconds <= 0
+        maxExperimentWallSeconds = Inf;
+    end
+end
 
 % === 同步 NMR 模拟 ===
 % 打开后，每当本 RTM 步骤导出一对 pore/solid DXF，就立即调用
@@ -205,11 +232,15 @@ spaceScaleFactor = 1; % spaceScaleFactor [length of Y] = 1 [cm]
 % Parameters in dm and s
 pixelSizeMicron = 1; % 每个像素对应的实际长度（微米，例：1 μm/px）
 pixelSizeCm = pixelSizeMicron * 1e-4; % 将微米转换为厘米（1 μm = 1e-4 cm）
+externalGeometryXCenters = [];
+externalGeometryYCenters = [];
+externalDxfGeometry = [];
 
 diffusionCoefficient = cfgget(config, 'diffusionCoefficient', 1e-5); % [ cm^2 s^(-1) ]
 molarVolume = cfgget(config, 'molarVolume', 36.9); % [ cm^3 mol^(-1) ]
 rateCoefficientTST = cfgget(config, 'rateCoefficientTST', 10^(-4)); % [ mol dm^(-2) s^(-1) ]
 inletVelocity = cfgget(config, 'inletVelocity', 0.01); % [ cm s^(-1) ]
+flowDirection = cfgget(config, 'flowDirection', 'left_to_right');
 initialHydrogenConcentration = cfgget(config, 'initialHydrogenConcentration', 1e-4); % [ mol cm^(-3) ]
 
 dissolutionReactionRate = @(cHydrogen) ...
@@ -247,8 +278,38 @@ fprintf('dissolutionReactionRate: %s\n', dissolutionReactionRate(initialHydrogen
 fprintf('================================================\n');    
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Simulation and discretization parameters (comment for convergence tests)
-% 读取 TIF 并构造初始水平集（signed distance，固体为正，孔隙为负）
-if useExternalGeometry
+% 读取外部几何并构造初始水平集（signed distance，固体为正，孔隙为负）
+if useExternalDxfGeometry
+    dxfOptions = struct();
+    dxfOptions.domainLayerNames = externalDxfDomainLayerNames;
+    dxfOptions.solidLayerNames = externalDxfSolidLayerNames;
+    dxfOptions.referenceLengthDxf = externalDxfReferenceLength;
+    dxfOptions.referenceLengthCm = externalDxfReferenceLengthCm;
+    dxfOptions.scaleCmPerDxfUnit = externalDxfScaleCmPerUnit;
+    dxfOptions.resolutionX = dxfResolutionX;
+    dxfOptions.resolutionY = dxfResolutionY;
+    dxfOptions.outsideDomainIsSolid = externalDxfOutsideDomainIsSolid;
+    dxfOptions.smoothingSigmaPixels = cfgget(config, 'externalDxfSmoothingSigmaPixels', 1.5);
+    dxfOptions.importDirection = externalDxfImportDirection;
+
+    externalDxfGeometry = ReadLayeredDxfGeometry(char(externalDxfPath), dxfOptions);
+    phi_cm = externalDxfGeometry.phiCm;
+    BW_solid = externalDxfGeometry.solidMask;
+    [ny_img, nx_img] = size(BW_solid);
+    lengthXAxis = externalDxfGeometry.lengthXAxis; % [cm]
+    lengthYAxis = externalDxfGeometry.lengthYAxis; % [cm]
+    externalGeometryXCenters = externalDxfGeometry.xCentersCm;
+    externalGeometryYCenters = externalDxfGeometry.yCentersCm;
+    pixelSizeCm = mean([lengthXAxis / nx_img, lengthYAxis / ny_img]);
+
+    fprintf('DXF geometry: %s\n', char(externalDxfPath));
+    fprintf('DXF domain layer: %s, solid layers: %s\n', ...
+        externalDxfGeometry.domainLayer, strjoin(cellstr(externalDxfGeometry.solidLayers), ', '));
+    fprintf('DXF scale: %.8g cm/unit\n', externalDxfGeometry.scaleCmPerDxfUnit);
+    fprintf('DXF import direction: %s\n', externalDxfGeometry.importDirection);
+    fprintf('DXF raster size: %d x %d\n', nx_img, ny_img);
+    fprintf('Length X Axis: %.6f cm, Length Y Axis: %.6f cm\n', lengthXAxis, lengthYAxis);
+elseif useExternalTifGeometry
     Iraw = imread(tifPath);
     if size(Iraw, 3) == 3
         Iraw = rgb2gray(Iraw);
@@ -274,6 +335,8 @@ if useExternalGeometry
     [ny_img, nx_img] = size(BW_solid);
     lengthXAxis = nx_img * pixelSizeCm; % [cm]
     lengthYAxis = ny_img * pixelSizeCm; % [cm]
+    externalGeometryXCenters = (0.5:1:(nx_img-0.5)) * pixelSizeCm; % [cm]
+    externalGeometryYCenters = (0.5:1:(ny_img-0.5)) * pixelSizeCm; % [cm] bottom-up after flip
     fprintf('Image size (pixels): %d x %d\n', nx_img, ny_img);
     fprintf('Length X Axis: %.4f cm, Length Y Axis: %.4f cm\n', lengthXAxis, lengthYAxis);
 else
@@ -467,12 +530,12 @@ fprintf('Total number of time steps: %d\n', numTimeSlices);
 
 %% Initialization of level set method variables
 
-% 自适应网格分块（保持与原结构一致：分辨率基于 numPartitionsMicroscale 和长宽比）
-aspect = max(1, round(lengthXAxis / lengthYAxis));
-nxParts = numPartitionsMicroscale * aspect;
-nyParts = numPartitionsMicroscale;
+% 自适应网格分块。可用 meshTargetElementSizeCm 或 meshNumPartitionsX/Y 显式控制。
+[nxParts, nyParts, meshPartitionMode] = ResolveMeshPartitions(lengthXAxis, lengthYAxis, ...
+    numPartitionsMicroscale, meshNumPartitionsX, meshNumPartitionsY, meshTargetElementSizeCm);
 nxNodes = nxParts + 1;
 nyNodes = nyParts + 1;
+fprintf('Mesh partitions: nx=%d, ny=%d (%s)\n', nxParts, nyParts, meshPartitionMode);
 
 microscaleGrid = FoldedCartesianGrid(dimension, ...
     [0, lengthXAxis, 0, lengthYAxis], ...
@@ -484,8 +547,13 @@ coordCell = mat2cell(coord, ones(1, microscaleGrid.nodes), dimension);
 % 初始水平集：如果使用外部几何，则用 TIF 的有符号距离；否则用原圆形示例
 if useExternalGeometry
     % 用像素中心构造插值器
-    xCenters = (0.5:1:(nx_img-0.5)) * pixelSizeCm; % [cm]
-    yCenters = (0.5:1:(ny_img-0.5)) * pixelSizeCm; % [cm] bottom-up after flip
+    if isempty(externalGeometryXCenters) || isempty(externalGeometryYCenters)
+        xCenters = (0.5:1:(nx_img-0.5)) * pixelSizeCm; % [cm]
+        yCenters = (0.5:1:(ny_img-0.5)) * pixelSizeCm; % [cm] bottom-up after flip
+    else
+        xCenters = externalGeometryXCenters;
+        yCenters = externalGeometryYCenters;
+    end
     % 注意 griddedInterpolant 需要 V(i,j) 对应 x(i), y(j)，因此需要转置
     Fphi = griddedInterpolant({xCenters, yCenters}, phi_cm', 'linear', 'nearest');
     phi_at_nodes = Fphi(coord(:,1), coord(:,2));
@@ -893,6 +961,17 @@ while kC < size(C0_initContour, 2)
     kC = kC + numPts + 1;
 end
 
+meshDiagnosticsDir = fullfile(resultsDir, 'mesh_diagnostics');
+if saveMeshDiagnostics
+    try
+        WriteMeshDiagnostics(meshDiagnosticsDir, coord, microscaleGrid.triangles, ...
+            initialLevelSetDataCells{1}, initInterfaceSegments, lengthXAxis, lengthYAxis);
+        fprintf('Mesh diagnostics saved to: %s\n', meshDiagnosticsDir);
+    catch ME
+        warning('MATLAB:MeshDiagnostics', 'Failed to write mesh diagnostics: %s', ME.message);
+    end
+end
+
 % assemble HyPHM grid and label outer edges
 gridHyPHM = Grid(coord, microscaleGrid.triangles);
 
@@ -918,6 +997,8 @@ for i = 1:gridHyPHM.numE
 end
 
 macroCoordCell = mat2cell(gridHyPHM.baryT, ones(gridHyPHM.numT, 1), 2);
+flowConfig = GetFlowBoundaryConfig(flowDirection, lengthXAxis, lengthYAxis, nxParts, nyParts);
+fprintf('Flow direction: %s\n', flowConfig.direction);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -964,8 +1045,8 @@ StokesVelocity.setdata(0, @(t, x) 0.0);
 
 StokesL = StokesLEVEL(gridHyPHM, flowStepper, 'Stokes problem');
 StokesL.L.setdata(levelSet{1}(:, 1))
-StokesL.id2D = {4, 3, 1};
-StokesL.uD.setdata(@(t, x) inletVelocity*(x(1) < EPS)*[1; 0]);
+StokesL.id2D = num2cell(flowConfig.stokesDirichletIds);
+StokesL.uD.setdata(@(t, x) double(flowConfig.inletPredicate(x)) .* flowConfig.velocityVector(inletVelocity));
 StokesL.F.setdata(@(t, x) 0);
 StokesL.U = StokesVelocity;
 StokesL.P = phead;
@@ -997,12 +1078,12 @@ hydrogenConcentration = Variable(gridHyPHM, transportStepper, ...
 % hydrogenConcentration.setdata(0, @(t, x) initialHydrogenConcentration);
 hydrogenConcentration.setdata(0, @(t, x) 0);
 hydrogenTransport = TransportLEVEL(gridHyPHM, transportStepper, 'H^+ Transport');
-hydrogenTransport.id2N = {1, 2, 3};
-hydrogenTransport.id2F = {4};
+hydrogenTransport.id2N = num2cell(flowConfig.transportNeumannIds);
+hydrogenTransport.id2F = num2cell(flowConfig.transportFluxIds);
 hydrogenTransport.U = hydrogenConcentration;
 hydrogenTransport.D.setdata(diffusionCoefficient*eye(2));
 hydrogenTransport.gF.setdata( ...
-    @(t, x) -initialHydrogenConcentration*inletVelocity*(x(1) < EPS));
+    @(t, x) -initialHydrogenConcentration * inletVelocity * double(flowConfig.inletPredicate(x)));
 hydrogenTransport.A.setdata(0, @(t, x) 1);
 hydrogenTransport.C.setdata(0, flow.getdata(1));
 hydrogenTransport.isUpwind = 'exp';
@@ -1057,13 +1138,13 @@ if ~exist(tortuositySegCsvFile, 'file')
     fclose(fid);
 end
 
-% 新增：预计算分段边界（沿 X 从左到右平均 5 段）
-tortuositySegEdges = linspace(0, lengthXAxis, numTortuositySegments + 1);
+% 新增：预计算分段边界（沿主流方向平均 5 段）
+tortuositySegEdges = flowConfig.segmentEdges;
 
 % 边界索引缓存（避免在每步重复计算）
-edgesRightCache = gridHyPHM.baryE(:,1) > (lengthXAxis - eps);
-leftNodesCache  = gridHyPHM.coordV(:,1) < eps;
-rightNodesCache = gridHyPHM.coordV(:,1) > (lengthXAxis - eps);
+edgesRightCache = flowConfig.outletEdgePredicate(gridHyPHM.baryE);
+leftNodesCache  = flowConfig.inletNodePredicate(gridHyPHM.coordV);
+rightNodesCache = flowConfig.outletNodePredicate(gridHyPHM.coordV);
 % ----------------------------------------------
 
 
@@ -1104,6 +1185,24 @@ metadata.created_at = string(datestr(now, 'yyyy-mm-dd HH:MM:SS'));
 metadata.results_dir = string(resultsDir);
 metadata.layoutType = string(layoutType);
 metadata.useExternalGeometry = useExternalGeometry;
+metadata.externalGeometry = struct( ...
+    'type', string(externalGeometryType), ...
+    'useExternalDxfGeometry', useExternalDxfGeometry, ...
+    'dxfPath', string(externalDxfPath), ...
+    'dxfDomainLayerNames', string(externalDxfDomainLayerNames), ...
+    'dxfSolidLayerNames', string(externalDxfSolidLayerNames), ...
+    'dxfReferenceLength', externalDxfReferenceLength, ...
+    'dxfReferenceLengthCm', externalDxfReferenceLengthCm, ...
+    'dxfImportDirection', string(externalDxfImportDirection));
+if useExternalDxfGeometry && ~isempty(externalDxfGeometry)
+    metadata.externalGeometry.dxfScaleCmPerUnit = externalDxfGeometry.scaleCmPerDxfUnit;
+    metadata.externalGeometry.dxfDomainLayer = externalDxfGeometry.domainLayer;
+    metadata.externalGeometry.dxfSolidLayers = externalDxfGeometry.solidLayers;
+    metadata.externalGeometry.dxfDomainBoundsRaw = externalDxfGeometry.domainBoundsRaw;
+    metadata.externalGeometry.dxfResolutionX = externalDxfGeometry.resolutionX;
+    metadata.externalGeometry.dxfResolutionY = externalDxfGeometry.resolutionY;
+    metadata.externalGeometry.dxfImportDirectionApplied = externalDxfGeometry.importDirection;
+end
 metadata.parameters = struct( ...
     'Da', DamkohlerNumber, ...
     'Pe', pecletNumber, ...
@@ -1120,6 +1219,7 @@ metadata.parameters = struct( ...
     'randomParticleRadiusMax_cm', randomParticleRadiusMax, ...
     'targetInitialPorosity', targetInitialPorosity, ...
     'inletVelocity_cm_s', inletVelocity, ...
+    'flowDirection', string(flowConfig.direction), ...
     'initialHydrogenConcentration_mol_cm3', initialHydrogenConcentration, ...
     'diffusionCoefficient_cm2_s', diffusionCoefficient, ...
     'molarVolume_cm3_mol', molarVolume, ...
@@ -1135,14 +1235,21 @@ metadata.parameters = struct( ...
     'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
     'endTime_s', endTime, ...
     'maxTotalTimeSteps', maxTotalTimeSteps, ...
-    'numPartitionsMicroscale', numPartitionsMicroscale);
+    'maxExperimentWallSeconds', maxExperimentWallSeconds, ...
+    'numPartitionsMicroscale', numPartitionsMicroscale, ...
+    'meshNumPartitionsX', nxParts, ...
+    'meshNumPartitionsY', nyParts, ...
+    'meshPartitionMode', string(meshPartitionMode), ...
+    'meshTargetElementSizeCm', meshTargetElementSizeCm, ...
+    'saveMeshDiagnostics', saveMeshDiagnostics);
 metadata.outputs = struct( ...
     'global_evolution', string(xlsxFile), ...
     'global_evolution_csv', string(logfile), ...
     'tortuosity_segments', string(tortuositySegXlsxFile), ...
     'tortuosity_segments_csv', string(tortuositySegCsvFile), ...
     'dxf_pore_dir', string(poreDXFDir), ...
-    'dxf_solid_dir', string(solidDXFDir));
+    'dxf_solid_dir', string(solidDXFDir), ...
+    'mesh_diagnostics_dir', string(meshDiagnosticsDir));
 metadata.nmr = struct( ...
     'enabled', enableNMRSimulation, ...
     'trigger', "after_exported_pore_solid_dxf_pair", ...
@@ -1160,6 +1267,8 @@ writeJsonFile(fullfile(resultsDir, 'run_metadata.json'), metadata);
 %% Time iteration
 useAdaptivePorositySteps = strcmpi(timeStepperType, 'adaptive_porosity');
 adaptivePreviousPorosity = NaN;
+timedOut = false;
+timeoutMessage = "";
 while transportStepper.next
     timeIterationStep = transportStepper.curstep;
     macroscaleTimeStepSize = transportStepper.curtau;
@@ -1286,17 +1395,17 @@ while transportStepper.next
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
     % --- 新增：基于边界流量与压降估算等效渗透率（cm^2） ---
-    edgesRight = (gridHyPHM.baryE(:,1) > (lengthXAxis - eps));
+    edgesRight = flowConfig.outletEdgePredicate(gridHyPHM.baryE);
     edgeFlux = flow.getdata(1);                     % per-edge flux or normal velocity
     Q = sum(edgeFlux .* gridHyPHM.areaE .* double(edgesRight));  % [cm^3/s]
 
     pData = phead.getdata(1);
-    leftNodes  = gridHyPHM.coordV(:,1) < eps;
-    rightNodes = gridHyPHM.coordV(:,1) > (lengthXAxis - eps);
+    leftNodes = flowConfig.inletNodePredicate(gridHyPHM.coordV);
+    rightNodes = flowConfig.outletNodePredicate(gridHyPHM.coordV);
     dp = mean(pData(leftNodes)) - mean(pData(rightNodes));
 
-    A = lengthYAxis * thickness;                    % [cm^2]
-    L = lengthXAxis;                                % [cm]
+    A = flowConfig.crossSectionLength * thickness;  % [cm^2]
+    L = flowConfig.flowLength;                      % [cm]
 
     if abs(dp) < EPS
         k_eff_cm2 = NaN;
@@ -1322,8 +1431,8 @@ while transportStepper.next
     % --- 计算出口处平均 H+ 浓度 ---
     % 获取当前时间步的浓度数据（三角形单元数据）
     hydrogenDataCurrent = hydrogenTransport.U.getdata(max(0, timeIterationStep-1));
-    % 找到出口边界附近的三角形单元（右边界 x ≈ lengthXAxis）
-    outletTriangles = gridHyPHM.baryT(:,1) > (lengthXAxis - 2*lengthXAxis/nxParts);
+    % 找到出口边界附近的三角形单元
+    outletTriangles = flowConfig.outletTrianglePredicate(gridHyPHM.baryT);
     if any(outletTriangles)
         outletHConc_now = mean(hydrogenDataCurrent(outletTriangles));
     else
@@ -1331,7 +1440,7 @@ while transportStepper.next
     end
     OutletHConc(timeIterationStep+1) = outletHConc_now;
 
-    % --- 迂曲度计算：τ = Σ|v| / Σvx，仅在孔隙空间节点上求和 ---
+    % --- 迂曲度计算：τ = Σ|v| / Σv_flow，仅在孔隙空间节点上求和 ---
     % 方法见：基于流场的迂曲度计算.md （Duda et al. 2011 / Koponen et al.）
     velocityDataTau = StokesL.U.getdata(1);  % P2P2 节点速度，[numV+numE, 2]
     nP2 = gridHyPHM.numV + gridHyPHM.numE;
@@ -1355,15 +1464,20 @@ while transportStepper.next
         % 孔隙节点掩膜（levelSet < 0 为孔隙）
         poreMask_p2 = ls_p2 < 0;
         sum_speed_pore = sum(sqrt(vx_p2(poreMask_p2).^2 + vy_p2(poreMask_p2).^2));
-        sum_vx_pore   = sum(vx_p2(poreMask_p2));
-        if sum_vx_pore > EPS
-            tau_now = sum_speed_pore / sum_vx_pore;
+        if flowConfig.axisIndex == 1
+            v_axis_p2 = vx_p2;
+        else
+            v_axis_p2 = vy_p2;
+        end
+        sum_vaxis_pore = sum(v_axis_p2(poreMask_p2));
+        if sum_vaxis_pore > EPS
+            tau_now = sum_speed_pore / sum_vaxis_pore;
         else
             tau_now = NaN;
         end
 
-        % --- 新增：5 段分区迂曲度（从左到右等分）---
-        x_p2 = [gridHyPHM.coordV(:,1); gridHyPHM.baryE(:,1)];
+        % --- 新增：5 段分区迂曲度（沿主流方向等分）---
+        x_p2 = flowConfig.axisCoordinate([gridHyPHM.coordV; gridHyPHM.baryE]);
         for iSeg = 1:numTortuositySegments
             xL = tortuositySegEdges(iSeg);
             xR = tortuositySegEdges(iSeg + 1);
@@ -1375,9 +1489,9 @@ while transportStepper.next
             poreSegMask = poreMask_p2 & segMask;
 
             sum_speed_seg = sum(sqrt(vx_p2(poreSegMask).^2 + vy_p2(poreSegMask).^2));
-            sum_vx_seg   = sum(vx_p2(poreSegMask));
-            if sum_vx_seg > EPS
-                TortuositySegments(iSeg, timeIterationStep+1) = sum_speed_seg / sum_vx_seg;
+            sum_vaxis_seg = sum(v_axis_p2(poreSegMask));
+            if sum_vaxis_seg > EPS
+                TortuositySegments(iSeg, timeIterationStep+1) = sum_speed_seg / sum_vaxis_seg;
             else
                 TortuositySegments(iSeg, timeIterationStep+1) = NaN;
             end
@@ -1435,7 +1549,7 @@ while transportStepper.next
 
     hydrogenTransport.U.setdata(timeIterationStep-1, hydrogenTransport.U.getdata(timeIterationStep - 1)-Corrector(:, 1));
 
-    Rate(timeIterationStep+1) = -((hydrogenTransport.Q.getdata(timeIterationStep) - initialHydrogenConcentration * inletVelocity) .* (gridHyPHM.baryE(:, 1) > (lengthXAxis - eps)))' * gridHyPHM.areaE / surfaceArea{1}(timeIterationStep);
+    Rate(timeIterationStep+1) = -((hydrogenTransport.Q.getdata(timeIterationStep) - initialHydrogenConcentration * inletVelocity) .* flowConfig.outletEdgePredicate(gridHyPHM.baryE))' * gridHyPHM.areaE / surfaceArea{1}(timeIterationStep);
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % ---------------- 每步输出并记录全局量 ----------------
@@ -1454,7 +1568,7 @@ while transportStepper.next
     vol_now = Volume(timeIterationStep+1);
 
     % 计算 PV
-    inletFlux = inletVelocity * lengthYAxis * thickness; % [cm^3/s]
+    inletFlux = inletVelocity * flowConfig.crossSectionLength * thickness; % [cm^3/s]
     cumulativeVolume = inletFlux * t_now; % [cm^3]
     % InitialPoreVolume 是面积 [cm^2]，乘以 thickness [cm] 得到体积
     currentPV = cumulativeVolume / (InitialPoreVolume * thickness);
@@ -2086,6 +2200,18 @@ while transportStepper.next
     safeCloseFigure(rtFig);
     end
 
+    elapsedWallSeconds = toc(simulationTimer);
+    if elapsedWallSeconds > maxExperimentWallSeconds
+        timedOut = true;
+        timeoutMessage = sprintf(['Experiment exceeded maxExperimentWallSeconds=%.0f s ' ...
+            'after step %d; partial outputs were kept and the batch will continue.'], ...
+            maxExperimentWallSeconds, timeIterationStep);
+        fprintf('\n========================================\n');
+        fprintf('>>> %s\n', timeoutMessage);
+        fprintf('========================================\n\n');
+        break;
+    end
+
     if useAdaptivePorositySteps && ~stopAfterThisStep && timeIterationStep < transportStepper.numsteps
         if isnan(adaptivePreviousPorosity)
             porosityDeltaForStep = NaN;
@@ -2183,6 +2309,8 @@ result.initialPermeability = initialPermeability;
 result.finalPermeability = validPermeability(end);
 result.finalTortuosity = validTortuosity(end);
 result.finalPorosity = validPorosity(end);
+result.timedOut = timedOut;
+result.timeoutMessage = timeoutMessage;
 
 metadata.final = struct( ...
     'PBTimeStep', PBTimeStep, ...
@@ -2191,7 +2319,10 @@ metadata.final = struct( ...
     'initialPermeability_mD', initialPermeability, ...
     'finalPermeability_mD', result.finalPermeability, ...
     'finalPorosity', result.finalPorosity, ...
-    'finalTortuosity', result.finalTortuosity);
+    'finalTortuosity', result.finalTortuosity, ...
+    'runtimeWallSeconds', toc(simulationTimer), ...
+    'timedOut', timedOut, ...
+    'timeoutMessage', timeoutMessage);
 writeJsonFile(fullfile(resultsDir, 'run_metadata.json'), metadata);
 
 disp('All results (incl. porosity, permeability & tortuosity) saved in results folder');

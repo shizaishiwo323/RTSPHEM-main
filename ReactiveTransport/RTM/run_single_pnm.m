@@ -43,7 +43,7 @@ cfg.runName = '';
 %   'random' 随机颗粒；characteristicLength 表示目标平均孔喉
 %   'hex'    六角排布；characteristicLength 表示最小孔喉
 %   'square' 方形排布；characteristicLength 表示最小孔喉
-cfg.layoutType = 'hex';
+cfg.layoutType = 'external_dxf';
 
 % 特征长度/孔喉尺度 [cm]
 cfg.characteristicLength = 0.001;
@@ -63,12 +63,27 @@ cfg.geometrySaveFile = '';
 cfg.useExternalGeometry = false;
 cfg.tifPath = "";
 
+% 外部 DXF 几何。domain 多段线和 calcite 实体/边缘需要放在不同图层。
+% 这里按 1500 DXF 单位 = 0.15 cm 换算到模拟长度。
+cfg.useExternalDxfGeometry = true;
+cfg.externalGeometryType = 'dxf';
+cfg.externalDxfPath = "C:\Users\imgw\Documents\Codex\论文复现\pore-scale-simulation-reproduction\organized_gpu_ac3d_reproduction_20260527\data\dissolution_results-Da_40.4424_Pe_4.1640_L_0.1200_square\validation-domin.dxf";
+cfg.externalDxfDomainLayerNames = {'domin', 'DOMAIN'};
+cfg.externalDxfSolidLayerNames = {'calcite'};
+cfg.externalDxfReferenceLength = 1500;
+cfg.externalDxfReferenceLengthCm = 0.15;
+% DXF 导入方向：as_is, rotate90_cw, rotate90_ccw, rotate180, flip_x, flip_y。
+cfg.externalDxfImportDirection = 'as_is';
+
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
-cfg.inletVelocity = 0.01;
+cfg.inletVelocity = 0.154;
+
+% 流体方向：left_to_right 或 bottom_to_top。
+cfg.flowDirection = 'bottom_to_top';
 
 % 入口 H+ 浓度 [mol/cm^3]
-cfg.initialHydrogenConcentration = 1e-4;
+cfg.initialHydrogenConcentration = 1.37e-5;
 
 % 扩散系数 [cm^2/s]
 cfg.diffusionCoefficient = 1e-5;
@@ -96,6 +111,14 @@ cfg.permeabilityRatioThreshold = 1000;
 % 微尺度网格分区数。越大越精细，也越慢。
 cfg.numPartitionsMicroscale = 2 * 64;
 
+% RTM/HyPHM 三角网格密度控制，优先级：
+%   1) meshTargetElementSizeCm 非空时，按目标网格尺寸 [cm] 自动算 X/Y 分区数；
+%   2) meshNumPartitionsX/Y 非空时，直接指定 X/Y 方向分区数；
+%   3) 否则沿用 numPartitionsMicroscale。
+cfg.meshTargetElementSizeCm = [];
+cfg.meshNumPartitionsX = [];
+cfg.meshNumPartitionsY = [];
+
 % DXF/掩膜导出的规则网格分辨率。越大 DXF 越细，也越慢。
 cfg.dxfResolutionX = 200;
 cfg.dxfResolutionY = 100;
@@ -115,6 +138,7 @@ cfg.saveRealtimePlot = false;
 cfg.saveFigureFiles = false;
 cfg.writeExcel = true;
 cfg.saveFinalPlot = true;
+cfg.saveMeshDiagnostics = true;
 
 % 是否显示调试图。批量数据生成通常保持 false。
 cfg.showDebugFigures = false;

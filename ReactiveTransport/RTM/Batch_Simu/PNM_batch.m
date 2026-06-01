@@ -87,6 +87,7 @@ cfg.saveRealtimePlot = getParam(params, 'saveRealtimePlot', false);
 cfg.saveFigureFiles = getParam(params, 'saveFigureFiles', false);
 cfg.writeExcel = getParam(params, 'writeExcel', true);
 cfg.saveFinalPlot = getParam(params, 'saveFinalPlot', true);
+cfg.maxExperimentWallSeconds = getParam(params, 'maxExperimentWallSeconds', Inf);
 cfg.enableNMRSimulation = getParam(params, 'enableNMRSimulation', false);
 cfg.enableNMRSurrogate = getParam(params, 'enableNMRSurrogate', false);
 cfg.nmrSurrogateModelPath = getParam(params, 'nmrSurrogateModelPath', '');
