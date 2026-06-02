@@ -104,6 +104,51 @@ Remove-Item "C:\path\to\file.txt"
 - 自动化配置：查看 `ReactiveTransport/automation/AutomationConfig.m`。
 - T2 反演：查看 `ReactiveTransport/automation/run_python_inversion.m` 和 `ReactiveTransport/automation/inversionBatch_matlab.py`。
 
+## GitHub MCP 连接器
+
+GitHub MCP 服务器已配置在本地，AI agent 可直接通过自然语言读取 GitHub 仓库内容。
+
+### 配置位置
+
+- Antigravity IDE：`C:\Users\imgw\.gemini\antigravity\mcp_config.json`
+- Gemini CLI：`C:\Users\imgw\.gemini\config\mcp_config.json`
+- 认证方式：Classic PAT（账号级别访问，所有仓库）
+
+### 重点仓库
+
+| 仓库 | 用途 |
+|------|------|
+| `shizaishiwo323/RTSPHEM-main` | 本地工作仓库（反应输运模拟 + 数据准备） |
+| `shizaishiwo323/NMR-agent` | 下游训练仓库，重点分支 `IMGW-local-gpu-training` |
+
+### 唤醒方式（快捷指令）
+
+在 Antigravity 对话框中，直接用自然语言提问即可触发 GitHub 工具：
+
+```
+# 读取文件
+"读取 shizaishiwo323/NMR-agent IMGW-local-gpu-training 分支的 README"
+"查看 NMR-agent 仓库的目录结构"
+
+# 查看提交历史
+"NMR-agent 最近 5 次 commits 是什么？"
+"RTSPHEM-main 上周有哪些改动？"
+
+# 查看 Issues / PR
+"NMR-agent 有哪些 open Issues？"
+"查看 NMR-agent 的所有 Pull Requests"
+
+# 代码搜索
+"在 NMR-agent 仓库中搜索 T2_inversion 相关代码"
+```
+
+### 注意事项
+
+- PAT 存储于本地配置文件，不要提交到版本控制或共享给他人。
+- MCP 服务器首次运行时会通过 npx 自动下载（需联网），后续会缓存。
+- 如 PAT 过期需重新生成，更新两个 `mcp_config.json` 中的 `GITHUB_PERSONAL_ACCESS_TOKEN` 字段。
+- 在 Antigravity IDE 中刷新 MCP 服务器：点击右上角 `...` → MCP Servers → Manage → Refresh。
+
 ## 交付给用户时
 
 说明本次改动影响了哪些数据准备阶段，例如：

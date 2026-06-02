@@ -79,6 +79,34 @@ else
 end
 assert(isequal(size(dataD), [numT, 4]), 'HyPHM kernel: Some strange things happen here.')
 
+%% Pe-based artificial diffusion (inspired by GeoChemFoam bounded transport)
+if isfinite(this.PeTarget) && this.PeTarget > 0
+    % Convert RT0 flow data to P0P0 velocity magnitude per triangle
+    dataC_P0P0 = RT0.RT0toP0P0slice(this.grid, dataC);
+    uMagT = sqrt(sum(dataC_P0P0.^2, 2));  % [numT x 1] velocity magnitude
+
+    % Triangle length scale: sqrt(area)
+    hT = sqrt(this.grid.areaT);  % [numT x 1]
+
+    % Physical diffusion (diagonal of D tensor, take max component)
+    Dphys = max(dataD(:, 1), dataD(:, 4));  % [numT x 1]
+
+    % Artificial diffusion: D_art = max(0, u*h/PeTarget - D_phys)
+    Dart = max(0, uMagT .* hT ./ this.PeTarget - Dphys);
+
+    % Apply: D_eff = D_phys + D_art (isotropic addition to diagonal)
+    dataD(:, 1) = dataD(:, 1) + Dart;
+    dataD(:, 4) = dataD(:, 4) + Dart;
+
+    numStabilized = sum(Dart > 0);
+    if numStabilized > 0
+        printline(~isSlt*2, 'Pe-stabilization: %d/%d triangles stabilized (PeTarget=%.1f, max Dart=%.3e)', ...
+            numStabilized, numT, this.PeTarget, max(Dart));
+    end
+
+    % Mark D as instationary since we modified it
+    isDstationary = false;
+end
 
 dataE = this.E.getdata(st.curstep);
 dataF = this.F.getdata(st.curstep);

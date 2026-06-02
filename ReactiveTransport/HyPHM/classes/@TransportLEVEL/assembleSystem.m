@@ -126,9 +126,6 @@ dataCET = dataC(idxE) .* g.sigE0T(:, :);
 alphas = alpha(sign(dataCET(:, :)).*Pe(:));
 
 marknonneumE = ~markNeumE(g.E0T(:, :));
-if size(marknonneumE, 1) >= 500
-    marknonneumE(500, 1:2) = 0;
-end
 kEs = zeros(3*numT, 1);
 kTs = zeros(3*numT, 1);
 ads = zeros(3*numT, 1);

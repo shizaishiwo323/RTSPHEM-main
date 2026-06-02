@@ -184,6 +184,7 @@ classdef TransportLEVEL < AbstractProblem
         balanceU
         %> Upwind flag: 'none' (<i>default</i>), 'full', 'exp' (exponential upwinding), 'alt' (exponential upwinding if local Pe number > 2)
         isUpwind
+        PeTarget = Inf;  %> Pe-based artificial diffusion target. Set to finite value (e.g. 8) to enable.
     end
 
     % Edge type definition (set to default in constructor)

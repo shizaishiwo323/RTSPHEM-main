@@ -2,7 +2,6 @@
 """Draw Nature-style T2 spectrum sequence heatmaps for each scenario."""
 
 from __future__ import annotations
-
 import argparse
 import json
 import os

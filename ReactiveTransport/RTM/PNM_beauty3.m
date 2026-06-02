@@ -67,6 +67,7 @@ adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 2.0);
 adaptiveShrinkSafety = cfgget(config, 'adaptiveShrinkSafety', 0.85);
 adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
 transportUpwindMode = char(cfgget(config, 'transportUpwindMode', 'full'));
+transportPeTarget = cfgget(config, 'transportPeTarget', Inf);  % Pe-based artificial diffusion target
 validUpwindModes = {'none', 'full', 'exp', 'alt'};
 if ~ismember(transportUpwindMode, validUpwindModes)
     error('transportUpwindMode must be one of: none, full, exp, alt.');
@@ -76,6 +77,9 @@ hardCflLimitInitialGrid = logical(cfgget(config, 'hardCflLimitInitialGrid', fals
 advectiveCflSafety = cfgget(config, 'advectiveCflSafety', 0.3);
 reactiveCflSafety = cfgget(config, 'reactiveCflSafety', 0.2);
 hardCflMinTimeStep = cfgget(config, 'hardCflMinTimeStep', adaptiveMinTimeStep);
+enableConcentrationCflLimit = logical(cfgget(config, 'enableConcentrationCflLimit', true));
+concentrationOvershootThreshold = cfgget(config, 'concentrationOvershootThreshold', 1.05);
+concentrationShrinkFactor = cfgget(config, 'concentrationShrinkFactor', 0.5);
 hardCflMaxInitialSteps = cfgget(config, 'hardCflMaxInitialSteps', 50000);
 
 % ----------------------------------
@@ -1132,6 +1136,8 @@ hydrogenTransport.gF.setdata( ...
 hydrogenTransport.A.setdata(0, @(t, x) 1);
 hydrogenTransport.C.setdata(0, flow.getdata(1));
 hydrogenTransport.isUpwind = transportUpwindMode;
+    % Pe-based artificial diffusion (inspired by GeoChemFoam bounded transport)
+    hydrogenTransport.PeTarget = transportPeTarget;
 fprintf('Transport upwinding mode: %s\n', hydrogenTransport.isUpwind);
 
 hydrogenDataOld = hydrogenConcentration.getdata(0);
@@ -2358,6 +2364,18 @@ while transportStepper.next
         if enableHardCflLimit && isfinite(nextHardCflStepSize) && nextHardCflStepSize > 0
             nextMacroscaleStepSize = min(nextMacroscaleStepSize, nextHardCflStepSize);
             didUpdateNextStep = true;
+        end
+
+        % Concentration-based time step reduction (inspired by GeoChemFoam setDeltaT.H + deltaEpsMax.H)
+        if enableConcentrationCflLimit && isfield(stabilityDiagnostics, 'cMax')
+            overshootRatio = stabilityDiagnostics.cMax / max(initialHydrogenConcentration, eps);
+            if overshootRatio > concentrationOvershootThreshold
+                concentrationLimitedStep = nextMacroscaleStepSize * concentrationShrinkFactor;
+                nextMacroscaleStepSize = max(adaptiveMinTimeStep, concentrationLimitedStep);
+                didUpdateNextStep = true;
+                fprintf(' [ConcCFL] Overshoot ratio=%.3f > %.3f, reducing next dt to %g s\n', ...
+                    overshootRatio, concentrationOvershootThreshold, nextMacroscaleStepSize);
+            end
         end
 
         if didUpdateNextStep && abs(nextMacroscaleStepSize - plannedNextStepSize) > eps(plannedNextStepSize)

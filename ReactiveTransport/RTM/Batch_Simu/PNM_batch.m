@@ -100,6 +100,9 @@ cfg.nmrSurrogateDatasetPath = getParam(params, 'nmrSurrogateDatasetPath', '');
 cfg.nmrSurrogateResolution = getParam(params, 'nmrSurrogateResolution', []);
 cfg.nmrSurrogateDevice = getParam(params, 'nmrSurrogateDevice', '');
 
+cfg.transportPeTarget = getParam(params, 'transportPeTarget', Inf);
+cfg.enableConcentrationCflLimit = getParam(params, 'enableConcentrationCflLimit', true);
+
 result = PNM_beauty3(cfg);
 end
 

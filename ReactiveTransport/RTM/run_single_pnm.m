@@ -81,6 +81,8 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 % 入口流速 [cm/s]
 % cfg.inletVelocity = 0.154;
 cfg.inletVelocity = 0.1;
+cfg.transportPeTarget = 8;  % <== 在这里加上这一行
+
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
 
@@ -88,7 +90,7 @@ cfg.flowDirection = 'left_to_right';
 cfg.initialHydrogenConcentration = 1.37e-5;
 
 % 扩散系数 [cm^2/s]
-cfg.diffusionCoefficient = 1e-5;
+cfg.diffusionCoefficient = 5e-5;
 
 % 碳酸钙摩尔体积 [cm^3/mol]
 cfg.molarVolume = 36.9;
@@ -104,14 +106,14 @@ cfg.initialMacroscaleTimeStepSize = 0.01;
 cfg.maximalStep = [];
 
 % 结束时间 [s]。如果留空 []，PNM_beauty3 会根据流速等参数自动估算。
-% cfg.endTime = 3600 * 4.5;
-cfg.endTime = 10;
+cfg.endTime = 3600 * 4.5;
+% cfg.endTime = 10;
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
-cfg.permeabilityRatioThreshold = 1000;
+cfg.permeabilityRatioThreshold = 10000000;
 
 %% ===================== 网格与 DXF 导出精度 =====================
 % 微尺度网格分区数。越大越精细，也越慢。
-cfg.numPartitionsMicroscale = 20 * 64;
+cfg.numPartitionsMicroscale = 2 * 64;
 
 % RTM/HyPHM 三角网格密度控制，优先级：
 %   1) meshTargetElementSizeCm 非空时，按目标网格尺寸 [cm] 自动算 X/Y 分区数；

@@ -81,7 +81,26 @@ for i = 1:numTransportVariables
 
     transport = transportVariablesHyPHM{i};
     transport.Q.setdata(transport.stepper.curstep, Q{i});
-    transport.U.setdata(transport.stepper.curstep, max(U{i}, eps)); % concentrations regularization
+
+    % --- Concentration bounding (inspired by GeoChemFoam YiEqn.H: Yi = max(Yi, 0*Yi)) ---
+    Ui = U{i};
+    cMin_i = min(Ui);
+    cMax_i = max(Ui);
+
+    % Non-negative clamp (GeoChemFoam pattern)
+    numNegative = sum(Ui < 0);
+    if numNegative > 0
+        fprintf('  [BoundCheck] Species %d: %d cells with negative concentration (min=%.3e), clamping to 0\n', ...
+            i, numNegative, cMin_i);
+        Ui = max(Ui, 0);
+    end
+
+    % Overshoot diagnostic (no hard clamp on upper bound to preserve conservation)
+    if cMax_i > 0
+        fprintf('  [BoundCheck] Species %d: c in [%.3e, %.3e]\n', i, max(cMin_i, 0), cMax_i);
+    end
+
+    transport.U.setdata(transport.stepper.curstep, Ui);
 
 end
 
