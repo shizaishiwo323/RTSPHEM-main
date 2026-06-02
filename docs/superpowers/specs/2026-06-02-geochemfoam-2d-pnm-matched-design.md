@@ -8,16 +8,16 @@ The workflow must preserve the existing PNM data and outputs, place all new file
 
 ## New Directory
 
-All new simulation assets will be placed under:
+All new simulation assets will be placed under the user-requested external root:
 
 ```text
-ReactiveTransport/GeoChemFoam2D/
+C:\Users\imgw\Documents\Codex\geochemfoam
 ```
 
 Planned subdirectories:
 
 ```text
-ReactiveTransport/GeoChemFoam2D/
+C:\Users\imgw\Documents\Codex\geochemfoam\
   README.md
   docker/
   scripts/
@@ -59,7 +59,7 @@ The new case will combine these ideas:
 The workflow will use Docker as the execution environment. The local machine currently has Docker installed, but the Docker Desktop Linux engine was not running during discovery. The implementation will therefore include:
 
 - A Docker build script.
-- A Docker run wrapper that mounts `ReactiveTransport/GeoChemFoam2D/` into the container.
+- A Docker run wrapper that mounts `C:\Users\imgw\Documents\Codex\geochemfoam` into the container.
 - Environment checks that report Docker availability before compilation or simulation.
 - Logs for build, solver compilation, mesh creation, and case execution.
 
@@ -135,6 +135,10 @@ Expected outputs:
 - `logs/geochemfoam_compile.log`
 - `logs/create_mesh.log`
 - `logs/reactive_transport.log`
+- `outputs/process_images/velocity/velocity_t*.png`
+- `outputs/process_images/concentration/concentration_t*.png`
+- `outputs/process_images/interface/interface_t*.png`
+- `outputs/process_images/combined/combined_t*.png`
 - OpenFOAM time directories in the case folder if the solver runs successfully.
 
 The implementation will not overwrite PNM `.mat`, `.mph`, DXF, Excel, COMSOL, or inversion outputs.
@@ -149,6 +153,7 @@ Before claiming the workflow is complete, the implementation must check:
 - Geometry conversion produced a non-empty STL.
 - The case has `frontandback` patches with `empty`.
 - Mesh generation produced `constant/polyMesh`.
+- If solver time directories exist, the process-image script can generate velocity, concentration, interface, and combined process PNGs similar in purpose to `outputs/rtm_runs/rtm_20260602_184459_192_external_dxf/timestep_0001.png`.
 - The case manifest records PNM parameters, converted OpenFOAM parameters, geometry source, script version, creation date, and success/failure status.
 
 If Docker Desktop is not running, the implementation can still generate the directory, scripts, case templates, geometry converter, and manifests, but must clearly report that solver compilation and simulation were not run.
