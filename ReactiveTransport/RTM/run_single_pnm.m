@@ -104,14 +104,14 @@ cfg.initialMacroscaleTimeStepSize = 0.01;
 cfg.maximalStep = [];
 
 % 结束时间 [s]。如果留空 []，PNM_beauty3 会根据流速等参数自动估算。
-cfg.endTime =3600 * 4.5;
-
+% cfg.endTime = 3600 * 4.5;
+cfg.endTime = 10;
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 1000;
 
 %% ===================== 网格与 DXF 导出精度 =====================
 % 微尺度网格分区数。越大越精细，也越慢。
-cfg.numPartitionsMicroscale = 2 * 64;
+cfg.numPartitionsMicroscale = 20 * 64;
 
 % RTM/HyPHM 三角网格密度控制，优先级：
 %   1) meshTargetElementSizeCm 非空时，按目标网格尺寸 [cm] 自动算 X/Y 分区数；
