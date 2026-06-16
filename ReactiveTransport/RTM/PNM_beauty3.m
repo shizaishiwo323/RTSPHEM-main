@@ -126,6 +126,46 @@ end
 loadExistingGeometry = cfgget(config, 'loadExistingGeometry', true);  % true=加载已有几何, false=生成新随机几何
 geometrySaveFile = cfgget(config, 'geometrySaveFile', ""); % 随机几何配置保存路径（仅 random 模式有效）
 geometryLoadFile = cfgget(config, 'geometryLoadFile', geometrySaveFile); % 随机几何配置加载路径
+loadedRandomGeometry = [];
+randomGeometryPreloadAttempted = false;
+if ~useExternalGeometry && strcmp(layoutType, 'random') && loadExistingGeometry && ...
+        ~isempty(strtrim(char(geometryLoadFile))) && exist(char(geometryLoadFile), 'file') == 2
+    randomGeometryPreloadAttempted = true;
+    geometryDefaults = struct( ...
+        'circleRadius', circleRadius, ...
+        'circleSpacing', circleSpacing, ...
+        'targetAvgSpacing', targetAvgSpacing, ...
+        'minThroatRandom', minThroatRandom, ...
+        'targetLengthYAxis', targetLengthYAxis, ...
+        'targetAspectRatio', targetAspectRatio, ...
+        'useRandomParticleRadii', useRandomParticleRadii, ...
+        'randomParticleRadiusMin', randomParticleRadiusMin, ...
+        'randomParticleRadiusMax', randomParticleRadiusMax, ...
+        'targetInitialPorosity', targetInitialPorosity);
+    try
+        [loadedRandomGeometry, loadedGeometryParams] = LoadRandomGeometryConfig(geometryLoadFile, geometryDefaults);
+        circleRadius = loadedGeometryParams.circleRadius;
+        circleSpacing = loadedGeometryParams.circleSpacing;
+        targetAvgSpacing = loadedGeometryParams.targetAvgSpacing;
+        minThroatRandom = loadedGeometryParams.minThroatRandom;
+        targetLengthYAxis = loadedGeometryParams.targetLengthYAxis;
+        targetAspectRatio = loadedGeometryParams.targetAspectRatio;
+        useRandomParticleRadii = loadedGeometryParams.useRandomParticleRadii;
+        randomParticleRadiusMin = loadedGeometryParams.randomParticleRadiusMin;
+        randomParticleRadiusMax = loadedGeometryParams.randomParticleRadiusMax;
+        if isfield(loadedGeometryParams, 'targetInitialPorosity')
+            targetInitialPorosity = loadedGeometryParams.targetInitialPorosity;
+        end
+        fprintf('=== 已预加载随机几何配置，几何尺寸和颗粒参数以配置文件为准 ===\n');
+        fprintf('  文件: %s\n', geometryLoadFile);
+        fprintf('  lengthXAxis = %.6f cm, lengthYAxis = %.6f cm\n', ...
+            loadedGeometryParams.lengthXAxis, loadedGeometryParams.lengthYAxis);
+        fprintf('  circleRadius = %.6f cm\n', circleRadius);
+        fprintf('============================================================\n');
+    catch ME
+        warning('MATLAB:GeometryLoad', '加载几何配置失败: %s', ME.message);
+    end
+end
 
 % === DXF 导出分辨率控制 ===
 dxfResolutionX = cfgget(config, 'dxfResolutionX', 200);   % DXF 导出 X 方向网格点数
@@ -694,57 +734,35 @@ else
             
             % === 检查是否加载已有几何 ===
             geometryLoaded = false;
-            if loadExistingGeometry && exist(geometryLoadFile, 'file')
-                try
-                    fprintf('=== 加载已有随机几何配置 ===\n');
-                    loadedData = load(geometryLoadFile);
-                    
-                    % 验证关键参数是否匹配：半径和尺寸必须匹配
-                    radiusMatch = abs(loadedData.circleRadius - circleRadius) < 1e-10;
-                    sizeMatch = abs(loadedData.lengthXAxis - lengthXAxis) < 1e-6 && ...
-                                abs(loadedData.lengthYAxis - lengthYAxis) < 1e-6;
-                    
-                    % 对于平均孔喙，检查保存的实际平均孔喙是否在允许范围内
-                    spacingTolerance = 0.3;  % 允许30%的偏差
-                    if isfield(loadedData, 'finalAvgSpacing')
-                        savedAvgSpacing = loadedData.finalAvgSpacing;
-                    else
-                        savedAvgSpacing = loadedData.targetAvgSpacing;
-                    end
-                    spacingMatch = abs(savedAvgSpacing - targetAvgSpacing) / max(targetAvgSpacing, 1e-10) < spacingTolerance;
-                    
-                    if radiusMatch && sizeMatch && spacingMatch
-                        
-                        circleCenters = loadedData.circleCenters;
-                        if isfield(loadedData, 'circleRadii')
-                            circleRadii = loadedData.circleRadii;
-                        else
-                            circleRadii = repmat(circleRadius, size(circleCenters, 1), 1);
-                        end
-                        geometryLoaded = true;
-                        
-                        actualAvgSpacing = calculateAverageSpacing(circleCenters, circleRadius);
-                        fprintf('✓ 成功加载几何配置\n');
-                        fprintf('  颗粒数: %d\n', size(circleCenters,1));
-                        fprintf('  保存的平均孔喉: %.4f cm\n', savedAvgSpacing);
-                        fprintf('  实际平均孔喉: %.4f cm (%.2f×R)\n', actualAvgSpacing, actualAvgSpacing/circleRadius);
-                        fprintf('  文件: %s\n', geometryLoadFile);
-                    elseif radiusMatch && sizeMatch
-                        % 半径和尺寸匹配但孔喉偏差较大
-                        warning('平均孔喉偏差较大 (>30%%)，将生成新的随机几何');
-                        fprintf('  保存的平均孔喉: %.4f cm\n', savedAvgSpacing);
-                        fprintf('  目标平均孔喉: %.4f cm\n', targetAvgSpacing);
-                    else
-                        warning('参数不匹配，将生成新的随机几何');
-                        fprintf('  已保存 - 半径: %.4f, 尺寸: %.4f×%.4f, 平均孔喉: %.4f\n', ...
-                                loadedData.circleRadius, loadedData.lengthXAxis, ...
-                                loadedData.lengthYAxis, savedAvgSpacing);
-                        fprintf('  当前值 - 半径: %.4f, 尺寸: %.4f×%.4f, 目标孔喉: %.4f\n', ...
-                                circleRadius, lengthXAxis, lengthYAxis, targetAvgSpacing);
-                    end
-                catch ME
-                    warning('MATLAB:GeometryLoad', '加载几何配置失败: %s', ME.message);
+            if loadExistingGeometry && ~isempty(loadedRandomGeometry)
+                fprintf('=== 使用已加载随机几何配置 ===\n');
+                loadedData = loadedRandomGeometry;
+                circleCenters = loadedData.circleCenters;
+                if isfield(loadedData, 'circleRadii')
+                    circleRadii = loadedData.circleRadii(:);
+                else
+                    circleRadii = repmat(circleRadius, size(circleCenters, 1), 1);
                 end
+                geometryLoaded = true;
+
+                if isfield(loadedData, 'finalAvgSpacing')
+                    savedAvgSpacing = loadedData.finalAvgSpacing;
+                elseif isfield(loadedData, 'targetAvgSpacing')
+                    savedAvgSpacing = loadedData.targetAvgSpacing;
+                else
+                    savedAvgSpacing = NaN;
+                end
+                spacingRadius = mean(circleRadii);
+                actualAvgSpacing = calculateAverageSpacing(circleCenters, spacingRadius);
+                fprintf('✓ 成功加载几何配置\n');
+                fprintf('  颗粒数: %d\n', size(circleCenters,1));
+                fprintf('  几何尺寸: %.6f × %.6f cm\n', lengthXAxis, lengthYAxis);
+                fprintf('  保存的平均孔喉: %.4f cm\n', savedAvgSpacing);
+                fprintf('  实际平均孔喉: %.4f cm (%.2f×R_mean)\n', ...
+                    actualAvgSpacing, actualAvgSpacing / spacingRadius);
+                fprintf('  文件: %s\n', geometryLoadFile);
+            elseif loadExistingGeometry && randomGeometryPreloadAttempted
+                fprintf('未使用已有随机几何，将生成新的随机几何。\n');
             elseif loadExistingGeometry
                 warning('MATLAB:GeometryLoad', '未找到几何配置文件，将生成新的随机几何: %s', geometryLoadFile);
             end

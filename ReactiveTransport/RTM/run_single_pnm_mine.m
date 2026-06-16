@@ -66,7 +66,7 @@ cfg.targetAspectRatio = 0.6 / 0.4;
 %   false 每次生成新随机几何
 %   true  尝试读取 geometryLoadFile；为空时使用结果目录中的 random_geometry_config.mat
 cfg.loadExistingGeometry = true;
-cfg.geometrySaveFile = "C:\Users\imgw\Documents\Codex\RTSPHEM-main\Data\T2single-RI\dissolution_results-Da_0.0369_Pe_0.1000_L_0.0010_lengthXAxis_0.060000_lengthYAxis_0.040000_random\random_geometry_config.mat";
+cfg.geometrySaveFile = "C:\Users\imgw\Documents\MATLAB\RTSPHEM-main\ReactiveTransport\Analysis\孔隙耦合参数\original_data\T2lm-single\dissolution_results-Da_0.0369_Pe_0.1000_L_0.0010_lengthXAxis_0.060000_lengthYAxis_0.040000_random\random_geometry_config.mat";
 cfg.geometryLoadFile = cfg.geometrySaveFile;
 
 % 外部 TIF 几何。通常保持 false。
