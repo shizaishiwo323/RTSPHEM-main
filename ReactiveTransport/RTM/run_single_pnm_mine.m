@@ -88,7 +88,6 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
 cfg.inletVelocity = 0.01;
-cfg.transportPeTarget = Inf;
 
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';

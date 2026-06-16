@@ -78,12 +78,6 @@ if targetSliceSettings.enabled
     maxTotalTimeSteps = targetSliceSettings.maxTotalTimeSteps;
     porosityStepTarget = targetSliceSettings.porosityStepTarget;
 end
-transportUpwindMode = char(cfgget(config, 'transportUpwindMode', 'full'));
-transportPeTarget = cfgget(config, 'transportPeTarget', Inf);  % Pe-based artificial diffusion target
-validUpwindModes = {'none', 'full', 'exp', 'alt'};
-if ~ismember(transportUpwindMode, validUpwindModes)
-    error('transportUpwindMode must be one of: none, full, exp, alt.');
-end
 enableHardCflLimit = logical(cfgget(config, 'enableHardCflLimit', false));
 hardCflLimitInitialGrid = logical(cfgget(config, 'hardCflLimitInitialGrid', false));
 advectiveCflSafety = cfgget(config, 'advectiveCflSafety', 0.3);
@@ -1176,17 +1170,15 @@ hydrogenConcentration = Variable(gridHyPHM, transportStepper, ...
 % hydrogenConcentration.setdata(0, @(t, x) initialHydrogenConcentration);
 hydrogenConcentration.setdata(0, @(t, x) 0);
 hydrogenTransport = TransportLEVEL(gridHyPHM, transportStepper, 'H^+ Transport');
-hydrogenTransport.id2N = num2cell(flowConfig.transportNeumannIds);
-hydrogenTransport.id2F = num2cell(flowConfig.transportFluxIds);
+hydrogenTransport.id2N = {1, 2, 3};
+hydrogenTransport.id2F = {4};
 hydrogenTransport.U = hydrogenConcentration;
 hydrogenTransport.D.setdata(diffusionCoefficient*eye(2));
 hydrogenTransport.gF.setdata( ...
-    @(t, x) -initialHydrogenConcentration * inletVelocity * double(flowConfig.inletPredicate(x)));
+    @(t, x) -initialHydrogenConcentration*inletVelocity*(x(1) < EPS));
 hydrogenTransport.A.setdata(0, @(t, x) 1);
 hydrogenTransport.C.setdata(0, flow.getdata(1));
-hydrogenTransport.isUpwind = transportUpwindMode;
-    % Pe-based artificial diffusion (inspired by GeoChemFoam bounded transport)
-    hydrogenTransport.PeTarget = transportPeTarget;
+hydrogenTransport.isUpwind = 'exp';
 fprintf('Transport upwinding mode: %s\n', hydrogenTransport.isUpwind);
 
 hydrogenDataOld = hydrogenConcentration.getdata(0);
@@ -1352,7 +1344,7 @@ metadata.parameters = struct( ...
     'porosityStepUpperFactor', porosityStepUpperFactor, ...
     'adaptiveGrowthFactor', adaptiveGrowthFactor, ...
     'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
-    'transportUpwindMode', string(transportUpwindMode), ...
+    'transportUpwindMode', string(hydrogenTransport.isUpwind), ...
     'enableHardCflLimit', enableHardCflLimit, ...
     'hardCflLimitInitialGrid', hardCflLimitInitialGrid, ...
     'advectiveCflSafety', advectiveCflSafety, ...

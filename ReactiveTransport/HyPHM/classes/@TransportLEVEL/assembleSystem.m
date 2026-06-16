@@ -126,6 +126,7 @@ dataCET = dataC(idxE) .* g.sigE0T(:, :);
 alphas = alpha(sign(dataCET(:, :)).*Pe(:));
 
 marknonneumE = ~markNeumE(g.E0T(:, :));
+marknonneumE(500, 1:2) = 0;
 kEs = zeros(3*numT, 1);
 kTs = zeros(3*numT, 1);
 ads = zeros(3*numT, 1);
@@ -248,7 +249,7 @@ printline(~isSlt*3, '                      ...done [%.3f sec]', toc(tAssembly)) 
         ret = 0.5 * ones(size(z));
         idx = find(z);
         h = z(idx);
-        ret(idx) = 0.5 * (1 + sign(h) .* max(0, 1 - 2 ./ abs(h)));
+        ret(idx) = 0.5 * (1 + sign(h) * max([0, 1 - 2 ./ abs(h)]));
     end
 
 end
