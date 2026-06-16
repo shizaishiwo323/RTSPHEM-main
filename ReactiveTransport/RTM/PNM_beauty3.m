@@ -5,6 +5,7 @@ function result = PNM_beauty3(config)
 %   config (optional struct) overrides the defaults below. Important fields:
 %     outputRoot, resultsDir, runName, layoutType, characteristicLength,
 %     inletVelocity, initialHydrogenConcentration, exportEvery,
+%     targetDissolutionSlices,
 %     saveMainPlot, saveIndividualPlots, exportDXF, saveRealtimePlot,
 %     enableNMRSimulation, enableNMRSurrogate.
 %
@@ -60,12 +61,23 @@ meshTargetElementSizeCm = cfgget(config, 'meshTargetElementSizeCm', []);
 initialMacroscaleTimeStepSize = cfgget(config, 'initialMacroscaleTimeStepSize', 0.10); % 初始宏观时间步长 [s]
 timeStepperType = char(cfgget(config, 'timeStepperType', 'expmax'));
 maxTotalTimeSteps = cfgget(config, 'maxTotalTimeSteps', []);
+targetDissolutionSlices = cfgget(config, 'targetDissolutionSlices', []);
+targetDissolutionSliceSafetyFactor = cfgget(config, 'targetDissolutionSliceSafetyFactor', 2.0);
+targetDissolutionSliceMinExtraSteps = cfgget(config, 'targetDissolutionSliceMinExtraSteps', 20);
 porosityStepTarget = cfgget(config, 'porosityStepTarget', 0.01);
 porosityStepTolerance = cfgget(config, 'porosityStepTolerance', 0.0);
 porosityStepUpperFactor = cfgget(config, 'porosityStepUpperFactor', 2.0);
 adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 2.0);
 adaptiveShrinkSafety = cfgget(config, 'adaptiveShrinkSafety', 0.85);
 adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
+targetSliceSettings = ResolveTargetDissolutionSlices( ...
+    targetDissolutionSlices, NaN, maxTotalTimeSteps, porosityStepTarget, ...
+    targetDissolutionSliceSafetyFactor, targetDissolutionSliceMinExtraSteps);
+if targetSliceSettings.enabled
+    timeStepperType = 'adaptive_porosity';
+    maxTotalTimeSteps = targetSliceSettings.maxTotalTimeSteps;
+    porosityStepTarget = targetSliceSettings.porosityStepTarget;
+end
 transportUpwindMode = char(cfgget(config, 'transportUpwindMode', 'full'));
 transportPeTarget = cfgget(config, 'transportPeTarget', Inf);  % Pe-based artificial diffusion target
 validUpwindModes = {'none', 'full', 'exp', 'alt'};
@@ -122,6 +134,12 @@ dxfResolutionY = cfgget(config, 'dxfResolutionY', 100);   % DXF 导出 Y 方向�
 
 % === 输出控制：提高效率时可降低导出频率或关闭重型图形 ===
 exportEvery = max(1, cfgget(config, 'exportEvery', 1));
+if targetSliceSettings.enabled && exportEvery ~= 1
+    warning('MATLAB:PNMTargetDissolutionSlicesExportEvery', ...
+        'targetDissolutionSlices controls exported process slices, so exportEvery was set from %d to 1.', ...
+        exportEvery);
+    exportEvery = 1;
+end
 saveMainPlot = cfgget(config, 'saveMainPlot', true);
 saveIndividualPlots = cfgget(config, 'saveIndividualPlots', true);
 saveInterfaceMask = cfgget(config, 'saveInterfaceMask', true);
@@ -1073,6 +1091,19 @@ for i = 1:numberOfSlices
     end
 end
 
+initialPorosityForTargetSlices = InitialPoreVolume / max(lengthXAxis * lengthYAxis, eps);
+targetSliceSettings = ResolveTargetDissolutionSlices( ...
+    targetDissolutionSlices, initialPorosityForTargetSlices, maxTotalTimeSteps, ...
+    porosityStepTarget, targetDissolutionSliceSafetyFactor, targetDissolutionSliceMinExtraSteps);
+if targetSliceSettings.enabled
+    porosityStepTarget = targetSliceSettings.porosityStepTarget;
+    maxTotalTimeSteps = targetSliceSettings.maxTotalTimeSteps;
+    fprintf(['targetDissolutionSlices=%d: initial porosity=%.4f, ', ...
+        'target dPorosity per exported RTM step=%.4g, safety steps=%d\n'], ...
+        targetSliceSettings.targetSliceCount, initialPorosityForTargetSlices, ...
+        porosityStepTarget, maxTotalTimeSteps);
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Initialization of HyPHM variables (cont.)
@@ -1294,6 +1325,10 @@ metadata.parameters = struct( ...
     'initialMacroscaleTimeStepSize_s', initialMacroscaleTimeStepSize, ...
     'maximalStep_s', maximalStep, ...
     'adaptiveMaxTimeStep_s', adaptiveMaxTimeStep, ...
+    'targetDissolutionSlices', targetDissolutionSlices, ...
+    'targetDissolutionSliceSafetyFactor', targetDissolutionSliceSafetyFactor, ...
+    'targetDissolutionSliceMinExtraSteps', targetDissolutionSliceMinExtraSteps, ...
+    'initialPorosityForTargetSlices', initialPorosityForTargetSlices, ...
     'porosityStepTarget', porosityStepTarget, ...
     'porosityStepTolerance', porosityStepTolerance, ...
     'porosityStepUpperFactor', porosityStepUpperFactor, ...

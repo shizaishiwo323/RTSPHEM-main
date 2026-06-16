@@ -115,12 +115,6 @@ cfg.maximalStep = [];
 % 结束时间 [s]。如果留空 []，PNM_beauty3 会根据流速等参数自动估算。
 cfg.endTime = [];
 % cfg.endTime = 10;
-
-% 目标溶解过程切片数。设置为 100 时，会自动按溶解进度调整时间步，
-% 预计从初始结构到接近完全溶解约导出 100 个 RTM/DXF 过程切片。
-% 留空 [] 时沿用 timeStepperType/exportEvery 的原始行为。
-cfg.targetDissolutionSlices = 100;
-
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 10000000;
 
@@ -193,9 +187,6 @@ fprintf('  L      = %.6g cm\n', cfg.characteristicLength);
 fprintf('  u_in   = %.6g cm/s\n', cfg.inletVelocity);
 fprintf('  D      = %.6g cm^2/s\n', cfg.diffusionCoefficient);
 fprintf('  c_in   = %.6g mol/cm^3\n', cfg.initialHydrogenConcentration);
-if ~isempty(cfg.targetDissolutionSlices)
-    fprintf('  target dissolution slices = %d\n', cfg.targetDissolutionSlices);
-end
 if strcmpi(cfg.layoutType, 'random') && cfg.loadExistingGeometry
     fprintf('  random geometry = %s\n', cfg.geometryLoadFile);
 end
