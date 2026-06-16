@@ -1,0 +1,2 @@
+﻿signal_name,best_regularization,best_index,best_residual_norm,best_roughness_norm,best_slope_reciprocal,used_range_filter,raw_points,trimmed_points,lcurve_figure
+col_2,2.8480358684358048e-05,2,5.128251101890723,97171.40053940972,0.2912254128847777,True,1604,1586,c:\Users\imgw\python\research\bnmr_mcmc-main\T2反演方法验证\T2_process\outputs_standard_demo\lcurve\SimulationDecay__lcurve_figures\col_2__lcurve.png

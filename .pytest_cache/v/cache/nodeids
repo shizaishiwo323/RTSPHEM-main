@@ -1,0 +1,18 @@
+[
+  "ReactiveTransport/RTM/tests/test_png_nmr_driver.py::PngNmrDriverTests::test_empty_matlab_array_is_optional_int_none",
+  "ReactiveTransport/RTM/tests/test_png_nmr_driver.py::PngNmrDriverTests::test_inversion_plot_uses_raw_spectrum_amplitude",
+  "ReactiveTransport/RTM/tests/test_png_nmr_driver.py::PngNmrDriverTests::test_outside_boundary_modes_are_configurable",
+  "ReactiveTransport/RTM/tests/test_png_nmr_driver.py::PngNmrDriverTests::test_pixel_size_uses_nonwhite_bbox",
+  "ReactiveTransport/RTM/tests/test_png_nmr_driver.py::PngNmrDriverTests::test_png_mesh_maps_to_triangular_solver",
+  "ReactiveTransport/diffusion_inverse/tests/test_evaluate_interface_trajectory.py::EvaluateInterfaceTrajectoryTests::test_identical_images_have_zero_image_error_and_matching_metrics",
+  "ReactiveTransport/diffusion_inverse/tests/test_evaluate_interface_trajectory.py::EvaluateInterfaceTrajectoryTests::test_monotonicity_counts_forward_and_backward_violations",
+  "ReactiveTransport/diffusion_inverse/tests/test_interface_evolution_dataset.py::InterfaceEvolutionDatasetTests::test_build_dataset_crops_white_border_filters_porosity_and_pairs_both_directions",
+  "ReactiveTransport/diffusion_inverse/tests/test_interface_evolution_dataset.py::InterfaceEvolutionDatasetTests::test_group_split_keeps_experiments_in_only_one_split",
+  "ReactiveTransport/diffusion_inverse/tests/test_make_test_case_comparisons.py::TestCaseComparisonBinarizationTests::test_binarize_phase_image_maps_noise_to_pure_red_and_yellow",
+  "ReactiveTransport/diffusion_inverse/tests/test_make_test_case_comparisons.py::TestCaseComparisonBinarizationTests::test_binarize_phase_image_removes_isolated_phase_speckles",
+  "ReactiveTransport/diffusion_inverse/tests/test_make_test_case_comparisons.py::TestCaseComparisonBinarizationTests::test_create_figures_writes_raw_and_binarized_comparison_grids",
+  "ReactiveTransport/diffusion_inverse/tests/test_make_test_case_comparisons.py::TestCaseComparisonBinarizationTests::test_label_lines_include_porosity_and_time_for_real_and_generated",
+  "ReactiveTransport/diffusion_inverse/tests/test_make_test_case_comparisons.py::TestCaseComparisonBinarizationTests::test_phase_porosity_uses_red_pore_fraction",
+  "ReactiveTransport/diffusion_inverse/tests/test_retrieval_baseline_and_figures.py::RetrievalBaselineAndFigureTests::test_train_predict_and_plot_outputs",
+  "ReactiveTransport/diffusion_inverse/tests/test_time_estimator.py::TimeEstimatorTests::test_fit_save_load_and_predict_positive_time"
+]

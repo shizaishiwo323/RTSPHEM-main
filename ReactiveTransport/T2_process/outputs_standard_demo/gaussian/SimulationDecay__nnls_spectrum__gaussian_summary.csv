@@ -1,0 +1,4 @@
+﻿signal_name,peak_id,height,position_ms,width_log10,area,area_fraction,objective_value,gaussian_figure
+col_2,1,237.21557722206282,2.210616624158912,0.4063152849358761,100.2325684533723,0.027285033376976606,1133.6606306366614,c:\Users\imgw\python\research\bnmr_mcmc-main\T2反演方法验证\T2_process\outputs_standard_demo\gaussian\SimulationDecay__nnls_spectrum__gaussian_figures\col_2__gaussian.png
+col_2,2,1419.0619089056006,361.1337837693689,0.7291562188977503,1101.4212173346712,0.2998258464369981,1133.6606306366614,c:\Users\imgw\python\research\bnmr_mcmc-main\T2反演方法验证\T2_process\outputs_standard_demo\gaussian\SimulationDecay__nnls_spectrum__gaussian_figures\col_2__gaussian.png
+col_2,3,4328.445047733726,1652.0227960668476,0.5366551229553871,2471.882803613734,0.6728891201860252,1133.6606306366614,c:\Users\imgw\python\research\bnmr_mcmc-main\T2反演方法验证\T2_process\outputs_standard_demo\gaussian\SimulationDecay__nnls_spectrum__gaussian_figures\col_2__gaussian.png
