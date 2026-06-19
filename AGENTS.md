@@ -104,6 +104,16 @@ Remove-Item "C:\path\to\file.txt"
 - 自动化配置：查看 `ReactiveTransport/automation/AutomationConfig.m`。
 - T2 反演：查看 `ReactiveTransport/automation/run_python_inversion.m` 和 `ReactiveTransport/automation/inversionBatch_matlab.py`。
 
+## NMR 运行环境选择
+
+本机 NMR 方法对 Python 环境有明确分工。运行或排查 NMR 模拟前，优先按下面的环境选择，不要只依赖当前终端的 `python` 或 `conda` PATH。
+
+- `png_pixel_cpu` / `png_pixel_gpu`：优先使用 `C:\Users\imgw\.conda\envs\ml\python.exe`。该环境已验证可导入 `cupy`、`torch`，CUDA 可用，GPU 识别为 `NVIDIA GeForce RTX 4070 Ti SUPER`，适合 pixel CPU/GPU 数值校准。
+- `png_mesh`：优先使用带 `pygimli` 的 Python，例如 `C:\Python314\python.exe`。当前 Conda `ml` 环境没有 `pygimli`，不适合直接跑三角网格版本。
+- `surrogate`：优先使用 NMR-agent 自己的虚拟环境 `C:\Users\imgw\Documents\Codex\NMR-agent\.venv\Scripts\python.exe`。该环境已验证可用 `torch` 和 CUDA，适合运行 `ReactiveTransport/automation/run_nmr_surrogate_prediction.py`。
+- 不建议用 Conda `ml` 环境运行 surrogate。该环境曾因 `torch`/`numpy` 组合在 `torch.from_numpy` 处报错：`expected np.ndarray (got numpy.ndarray)`；遇到这个错误时，切换到 NMR-agent `.venv`，不要先改 Conda 包。
+- COMSOL 路径仍依赖 MATLAB LiveLink 和本地 `comsolmphserver`。若 `mphstart` 报 `Connection refused`，先确认 `C:\Program Files\COMSOL\COMSOL63\Multiphysics\bin\win64\comsolmphserver.exe` 是否已在监听端口，例如 2036。
+
 ## GitHub MCP 连接器
 
 GitHub MCP 服务器已配置在本地，AI agent 可直接通过自然语言读取 GitHub 仓库内容。

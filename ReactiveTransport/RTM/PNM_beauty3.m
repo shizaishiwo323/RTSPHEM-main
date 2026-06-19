@@ -61,14 +61,18 @@ meshTargetElementSizeCm = cfgget(config, 'meshTargetElementSizeCm', []);
 initialMacroscaleTimeStepSize = cfgget(config, 'initialMacroscaleTimeStepSize', 0.10); % 初始宏观时间步长 [s]
 timeStepperType = char(cfgget(config, 'timeStepperType', 'expmax'));
 maxTotalTimeSteps = cfgget(config, 'maxTotalTimeSteps', []);
+hasExplicitMaxTotalTimeSteps = isstruct(config) && isfield(config, 'maxTotalTimeSteps') && ...
+    ~isempty(config.maxTotalTimeSteps);
 targetDissolutionSlices = cfgget(config, 'targetDissolutionSlices', []);
 targetDissolutionSliceSafetyFactor = cfgget(config, 'targetDissolutionSliceSafetyFactor', 2.0);
 targetDissolutionSliceMinExtraSteps = cfgget(config, 'targetDissolutionSliceMinExtraSteps', 20);
 porosityStepTarget = cfgget(config, 'porosityStepTarget', 0.01);
 porosityStepTolerance = cfgget(config, 'porosityStepTolerance', 0.0);
-porosityStepUpperFactor = cfgget(config, 'porosityStepUpperFactor', 2.0);
-adaptiveGrowthFactor = cfgget(config, 'adaptiveGrowthFactor', 2.0);
+adaptivePorosityDefaults = ResolveAdaptivePorosityStepSettings(config);
+porosityStepUpperFactor = adaptivePorosityDefaults.porosityStepUpperFactor;
+adaptiveGrowthFactor = adaptivePorosityDefaults.adaptiveGrowthFactor;
 adaptiveShrinkSafety = cfgget(config, 'adaptiveShrinkSafety', 0.85);
+targetSliceStepBoundaryFactor = cfgget(config, 'targetSliceStepBoundaryFactor', 0.95);
 adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
 targetSliceSettings = ResolveTargetDissolutionSlices( ...
     targetDissolutionSlices, NaN, maxTotalTimeSteps, porosityStepTarget, ...
@@ -85,6 +89,7 @@ reactiveCflSafety = cfgget(config, 'reactiveCflSafety', 0.2);
 hardCflMinTimeStep = cfgget(config, 'hardCflMinTimeStep', adaptiveMinTimeStep);
 enableConcentrationCflLimit = logical(cfgget(config, 'enableConcentrationCflLimit', true));
 concentrationOvershootThreshold = cfgget(config, 'concentrationOvershootThreshold', 1.05);
+concentrationHardOvershootThreshold = cfgget(config, 'concentrationHardOvershootThreshold', 10.0);
 concentrationShrinkFactor = cfgget(config, 'concentrationShrinkFactor', 0.5);
 hardCflMaxInitialSteps = cfgget(config, 'hardCflMaxInitialSteps', 50000);
 
@@ -1115,6 +1120,11 @@ if targetSliceSettings.enabled
         targetSliceSettings.targetSliceCount, initialPorosityForTargetSlices, ...
         porosityStepTarget, maxTotalTimeSteps);
 end
+allowAdaptiveTimeGridExtension = targetSliceSettings.enabled && ~hasExplicitMaxTotalTimeSteps;
+targetExportEnabled = targetSliceSettings.enabled;
+targetExportInitialPorosity = initialPorosityForTargetSlices;
+targetExportLastIndex = 0;
+targetExportCount = 0;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -1338,15 +1348,21 @@ metadata.parameters = struct( ...
     'targetDissolutionSlices', targetDissolutionSlices, ...
     'targetDissolutionSliceSafetyFactor', targetDissolutionSliceSafetyFactor, ...
     'targetDissolutionSliceMinExtraSteps', targetDissolutionSliceMinExtraSteps, ...
+    'allowAdaptiveTimeGridExtension', allowAdaptiveTimeGridExtension, ...
     'initialPorosityForTargetSlices', initialPorosityForTargetSlices, ...
     'porosityStepTarget', porosityStepTarget, ...
     'porosityStepTolerance', porosityStepTolerance, ...
     'porosityStepUpperFactor', porosityStepUpperFactor, ...
     'adaptiveGrowthFactor', adaptiveGrowthFactor, ...
     'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
+    'targetSliceStepBoundaryFactor', targetSliceStepBoundaryFactor, ...
     'transportUpwindMode', string(hydrogenTransport.isUpwind), ...
     'enableHardCflLimit', enableHardCflLimit, ...
     'hardCflLimitInitialGrid', hardCflLimitInitialGrid, ...
+    'enableConcentrationCflLimit', enableConcentrationCflLimit, ...
+    'concentrationOvershootThreshold', concentrationOvershootThreshold, ...
+    'concentrationHardOvershootThreshold', concentrationHardOvershootThreshold, ...
+    'concentrationShrinkFactor', concentrationShrinkFactor, ...
     'advectiveCflSafety', advectiveCflSafety, ...
     'reactiveCflSafety', reactiveCflSafety, ...
     'hardCflMinTimeStep_s', hardCflMinTimeStep, ...
@@ -1697,7 +1713,7 @@ while transportStepper.next
     % InitialPoreVolume 是面积 [cm^2]，乘以 thickness [cm] 得到体积
     currentPV = cumulativeVolume / (InitialPoreVolume * thickness);
     PV_injected(timeIterationStep+1) = currentPV;
-    doExportStep = shouldExportStep(timeIterationStep, numel(timeSteps)-1, exportEvery, stopAfterThisStep);
+    doExportStep = false;
 
     %% 在每个时间步骤输出结果的图（保持原结构）
     tic;
@@ -1817,6 +1833,19 @@ while transportStepper.next
 
     % 更新 por_now 使用刚计算的 porosityVal
     por_now = porosityVal;
+
+    if targetExportEnabled
+        [doExportStep, nextTargetExportIndex] = ShouldExportTargetDissolutionSlice( ...
+            timeIterationStep, porosityVal, targetExportInitialPorosity, ...
+            targetSliceSettings.targetSliceCount, targetExportLastIndex, stopAfterThisStep);
+        if doExportStep
+            targetExportLastIndex = nextTargetExportIndex;
+            targetExportCount = targetExportCount + 1;
+        end
+    else
+        doExportStep = shouldExportStep(timeIterationStep, transportStepper.numsteps, ...
+            exportEvery, stopAfterThisStep);
+    end
 
     % 计算 k/k0 渗透率比值
     if ~isnan(k0) && k0 > 0
@@ -2385,9 +2414,14 @@ while transportStepper.next
         break;
     end
 
-    if ~stopAfterThisStep && timeIterationStep < transportStepper.numsteps
-        plannedNextStepSize = transportStepper.timepts(timeIterationStep + 2) - ...
-            transportStepper.timepts(timeIterationStep + 1);
+    if ~stopAfterThisStep
+        hasPlannedNextStep = timeIterationStep < transportStepper.numsteps;
+        if hasPlannedNextStep
+            plannedNextStepSize = transportStepper.timepts(timeIterationStep + 2) - ...
+                transportStepper.timepts(timeIterationStep + 1);
+        else
+            plannedNextStepSize = macroscaleTimeStepSize;
+        end
         nextMacroscaleStepSize = plannedNextStepSize;
         didUpdateNextStep = false;
         porosityDeltaForStep = NaN;
@@ -2406,6 +2440,20 @@ while transportStepper.next
             didUpdateNextStep = true;
         end
 
+        if targetExportEnabled && useAdaptivePorositySteps
+            [nextMacroscaleStepSize, wasTargetBoundaryLimited, nextTargetBoundaryPorosity] = ...
+                LimitTargetDissolutionStepSize( ...
+                nextMacroscaleStepSize, macroscaleTimeStepSize, porosityDeltaForStep, ...
+                porosityVal, targetExportInitialPorosity, targetExportLastIndex, ...
+                targetSliceSettings.targetSliceCount, adaptiveMinTimeStep, ...
+                adaptiveMaxTimeStep, targetSliceStepBoundaryFactor);
+            if wasTargetBoundaryLimited
+                didUpdateNextStep = true;
+                fprintf(' target_slice_dt: limiting next dt to %g s for porosity boundary %.5f\n', ...
+                    nextMacroscaleStepSize, nextTargetBoundaryPorosity);
+            end
+        end
+
         if enableHardCflLimit && isfinite(nextHardCflStepSize) && nextHardCflStepSize > 0
             nextMacroscaleStepSize = min(nextMacroscaleStepSize, nextHardCflStepSize);
             didUpdateNextStep = true;
@@ -2413,19 +2461,53 @@ while transportStepper.next
 
         % Concentration-based time step reduction (inspired by GeoChemFoam setDeltaT.H + deltaEpsMax.H)
         if enableConcentrationCflLimit && isfield(stabilityDiagnostics, 'cMax')
-            overshootRatio = stabilityDiagnostics.cMax / max(initialHydrogenConcentration, eps);
-            if overshootRatio > concentrationOvershootThreshold
-                concentrationLimitedStep = nextMacroscaleStepSize * concentrationShrinkFactor;
-                nextMacroscaleStepSize = max(adaptiveMinTimeStep, concentrationLimitedStep);
+            [nextMacroscaleStepSize, wasConcentrationLimited, overshootRatio, activeConcentrationThreshold] = ...
+                ResolveConcentrationLimitedStep( ...
+                nextMacroscaleStepSize, stabilityDiagnostics.cMax, ...
+                initialHydrogenConcentration, concentrationOvershootThreshold, ...
+                concentrationHardOvershootThreshold, concentrationShrinkFactor, ...
+                adaptiveMinTimeStep, targetExportEnabled);
+            if wasConcentrationLimited
                 didUpdateNextStep = true;
                 fprintf(' [ConcCFL] Overshoot ratio=%.3f > %.3f, reducing next dt to %g s\n', ...
-                    overshootRatio, concentrationOvershootThreshold, nextMacroscaleStepSize);
+                    overshootRatio, activeConcentrationThreshold, nextMacroscaleStepSize);
+            elseif targetExportEnabled && overshootRatio > concentrationOvershootThreshold
+                fprintf(' [ConcCFL] Mild overshoot ratio=%.3f ignored in target-slice mode (hard threshold %.3f)\n', ...
+                    overshootRatio, activeConcentrationThreshold);
             end
         end
 
-        if didUpdateNextStep && abs(nextMacroscaleStepSize - plannedNextStepSize) > eps(plannedNextStepSize)
-        transportStepper.setTimeStepSize(timeIterationStep + 1, nextMacroscaleStepSize);
-        timeSteps = transportStepper.timepts(:)';
+        remainingTime = endTime - currentTime;
+        if remainingTime > EPS
+            nextMacroscaleStepSize = min(nextMacroscaleStepSize, remainingTime);
+        end
+
+        shouldApplyNextStep = didUpdateNextStep && ...
+            (abs(nextMacroscaleStepSize - plannedNextStepSize) > eps(plannedNextStepSize) || ...
+            (~hasPlannedNextStep && allowAdaptiveTimeGridExtension && remainingTime > EPS));
+        if shouldApplyNextStep
+            if hasPlannedNextStep
+                transportStepper.setTimeStepSize(timeIterationStep + 1, nextMacroscaleStepSize);
+            elseif allowAdaptiveTimeGridExtension && remainingTime > EPS
+                transportStepper.appendTimeStepSize(nextMacroscaleStepSize);
+                extendTransportVariablesToStepper(hydrogenTransport);
+                newNumTimePoints = numel(transportStepper.timepts);
+                for iSlice = 1:numberOfSlices
+                    levelSet{iSlice}(:, newNumTimePoints) = NaN;
+                    surfaceArea{iSlice}(newNumTimePoints) = NaN;
+                end
+                Rate(newNumTimePoints) = NaN;
+                Volume(newNumTimePoints) = NaN;
+                Porosity(newNumTimePoints) = NaN;
+                Permeability(newNumTimePoints) = NaN;
+                PV_injected(newNumTimePoints) = NaN;
+                OutletHConc(newNumTimePoints) = NaN;
+                Tortuosity(newNumTimePoints) = NaN;
+                TortuositySegments(:, newNumTimePoints) = NaN;
+                fprintf(' adaptive_porosity: extended internal time grid to %d steps.\n', ...
+                    transportStepper.numsteps);
+            end
+            timeSteps = transportStepper.timepts(:)';
             fprintf(' dt update: dPorosity=%s, next dt=%g s (CFL cap=%g s)\n', ...
                 formatAdaptiveDelta(porosityDeltaForStep), nextMacroscaleStepSize, nextHardCflStepSize);
         end
@@ -2513,6 +2595,7 @@ result.finalTortuosity = validTortuosity(end);
 result.finalPorosity = validPorosity(end);
 result.timedOut = timedOut;
 result.timeoutMessage = timeoutMessage;
+result.exportedDissolutionSlices = targetExportCount;
 
 metadata.final = struct( ...
     'PBTimeStep', PBTimeStep, ...
@@ -2522,6 +2605,7 @@ metadata.final = struct( ...
     'finalPermeability_mD', result.finalPermeability, ...
     'finalPorosity', result.finalPorosity, ...
     'finalTortuosity', result.finalTortuosity, ...
+    'exportedDissolutionSlices', targetExportCount, ...
     'runtimeWallSeconds', toc(simulationTimer), ...
     'timedOut', timedOut, ...
     'timeoutMessage', timeoutMessage);
@@ -3243,7 +3327,8 @@ if isnan(porosityDelta)
 elseif porosityDelta <= eps
     proposedStepSize = currentStepSize * growthFactor;
 elseif porosityDelta < lowerDelta
-    proposedStepSize = currentStepSize * growthFactor;
+    targetGrowthFactor = max(1.0, targetDelta / porosityDelta);
+    proposedStepSize = currentStepSize * min(growthFactor, targetGrowthFactor);
 elseif porosityDelta <= upperDelta
     proposedStepSize = currentStepSize;
 else
@@ -3259,6 +3344,17 @@ if isnan(porosityDelta)
     text = 'n/a';
 else
     text = sprintf('%.4g', porosityDelta);
+end
+end
+
+function extendTransportVariablesToStepper(transportProblem)
+variableFields = {'Q', 'U', 'A', 'B', 'C', 'D', 'E', 'F', ...
+    'uD', 'gF', 'uR', 'rob', 'L'};
+for iField = 1:numel(variableFields)
+    fieldName = variableFields{iField};
+    if isprop(transportProblem, fieldName) && ~isempty(transportProblem.(fieldName))
+        ExtendHyPHMVariableToStepper(transportProblem.(fieldName), 'copy_previous');
+    end
 end
 end
 

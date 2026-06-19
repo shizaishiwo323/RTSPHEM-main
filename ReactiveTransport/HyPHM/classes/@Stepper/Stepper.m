@@ -128,6 +128,18 @@ classdef Stepper < handle
             end
         end
 
+        %% Append TimeStepSize
+        % Extend the time grid by one additional step.
+        function [] = appendTimeStepSize(this, val)
+            assert(val > 0, 'HyPHM: Time step size must be positive.')
+
+            newEndTime = this.timepts(end) + val;
+            this.timepts(end+1, 1) = newEndTime;
+            this.numsteps = this.numsteps + 1;
+            this.stepvec(end+1, 1) = val;
+            this.endtime = newEndTime;
+        end
+
         %% DE-ITERATE TIMER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %> De-iterate stepper, i.e., go to the previous step.
         function bool = prev(this)

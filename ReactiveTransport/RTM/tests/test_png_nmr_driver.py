@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import math
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +93,208 @@ class PngNmrDriverTests(unittest.TestCase):
         self.assertEqual(driver.boundary_kind_for_pixel_side(15, 40, 15, 41, bbox, custom), "gas")
         self.assertEqual(driver.boundary_kind_for_pixel_side(10, 35, 9, 35, bbox, custom), "gas")
         self.assertEqual(driver.boundary_kind_for_pixel_side(20, 35, 21, 35, bbox, custom), "solid")
+
+    def test_triangular_mesh_area_excludes_solid_holes(self):
+        advanced_tools_parent = Path(r"C:\Users\imgw\Documents\Codex\NMR模拟")
+        if not advanced_tools_parent.exists():
+            self.skipTest("advanced_tools directory is not available")
+        sys.path.insert(0, str(advanced_tools_parent))
+        try:
+            import advanced_tools.png_phase_nmr_decay as png_decay
+        except Exception as exc:
+            self.skipTest(f"advanced_tools triangular meshing dependencies are not available: {exc}")
+
+        labels = np.full((16, 20), png_decay.OUTSIDE, dtype=np.uint8)
+        labels[2:14, 3:17] = png_decay.WATER
+        labels[6:10, 8:12] = png_decay.SOLID
+        params = png_decay.SimulationParams(
+            pixel_size_x_um=1.0,
+            pixel_size_y_um=1.0,
+            diffusion_um2_per_ms=2.0,
+            bulk_t2_ms=3000.0,
+            rho_solid_um_per_ms=0.05,
+            rho_gas_um_per_ms=0.0,
+            dt_ms=5.0,
+            t_max_ms=10.0,
+            max_grid_size=None,
+            solver="triangular",
+            mesh_bulk_size_um=2.0,
+            mesh_boundary_size_um=1.0,
+            mesh_max_points=5000,
+        )
+
+        mesh = png_decay.build_triangular_water_mesh(labels, params)
+        mesh_area = sum(
+            triangle_area(mesh["points"][tri])
+            for tri in mesh["triangles"]
+        )
+        expected_area = float(np.sum(labels == png_decay.WATER))
+
+        self.assertTrue(math.isclose(mesh_area, expected_area, rel_tol=0.15))
+
+    def test_triangular_mesh_area_matches_real_rtm_interface_png(self):
+        sample_png = (
+            Path(__file__).resolve().parents[3]
+            / "outputs"
+            / "rtm_runs"
+            / "rtm_20260616_145657_219_random"
+            / "interface_images"
+            / "timestep_0001.png"
+        )
+        if not sample_png.exists():
+            self.skipTest("real RTM interface PNG fixture is not available")
+
+        advanced_tools_parent = Path(r"C:\Users\imgw\Documents\Codex\NMR模拟")
+        if not advanced_tools_parent.exists():
+            self.skipTest("advanced_tools directory is not available")
+        sys.path.insert(0, str(advanced_tools_parent))
+        try:
+            import advanced_tools.png_phase_nmr_decay as png_decay
+        except Exception as exc:
+            self.skipTest(f"advanced_tools triangular meshing dependencies are not available: {exc}")
+
+        labels = png_decay.classify_png(np.asarray(Image.open(sample_png).convert("RGB")))
+        params = png_decay.SimulationParams(
+            pixel_size_x_um=0.42674253200568985,
+            pixel_size_y_um=0.4250797024442083,
+            diffusion_um2_per_ms=2.0,
+            bulk_t2_ms=3000.0,
+            rho_solid_um_per_ms=0.05,
+            rho_gas_um_per_ms=0.0,
+            dt_ms=5.0,
+            t_max_ms=10.0,
+            max_grid_size=None,
+            solver="triangular",
+            mesh_bulk_size_um=16.0,
+            mesh_boundary_size_um=5.0,
+            mesh_max_points=50000,
+        )
+
+        mesh = png_decay.build_triangular_water_mesh(labels, params)
+        mesh_area = sum(
+            triangle_area(mesh["points"][tri])
+            for tri in mesh["triangles"]
+        )
+        expected_area = float(
+            np.sum(labels == png_decay.WATER)
+            * params.pixel_size_x_um
+            * params.pixel_size_y_um
+        )
+
+        self.assertTrue(math.isclose(mesh_area, expected_area, rel_tol=0.05))
+
+    def test_triangular_mesh_area_matches_late_rtm_interface_with_slender_solid_holes(self):
+        sample_png = (
+            Path(__file__).resolve().parents[3]
+            / "outputs"
+            / "rtm_runs"
+            / "rtm_20260616_151605_582_random"
+            / "interface_images"
+            / "timestep_0047.png"
+        )
+        if not sample_png.exists():
+            self.skipTest("late RTM interface PNG fixture is not available")
+
+        advanced_tools_parent = Path(r"C:\Users\imgw\Documents\Codex\NMR模拟")
+        if not advanced_tools_parent.exists():
+            self.skipTest("advanced_tools directory is not available")
+        sys.path.insert(0, str(advanced_tools_parent))
+        try:
+            import advanced_tools.png_phase_nmr_decay as png_decay
+        except Exception as exc:
+            self.skipTest(f"advanced_tools triangular meshing dependencies are not available: {exc}")
+
+        labels = png_decay.classify_png(np.asarray(Image.open(sample_png).convert("RGB")))
+        params = png_decay.SimulationParams(
+            pixel_size_x_um=0.42674253200568985,
+            pixel_size_y_um=0.4250797024442083,
+            diffusion_um2_per_ms=2.0,
+            bulk_t2_ms=3000.0,
+            rho_solid_um_per_ms=0.05,
+            rho_gas_um_per_ms=0.0,
+            dt_ms=5.0,
+            t_max_ms=10.0,
+            max_grid_size=None,
+            solver="triangular",
+            mesh_bulk_size_um=16.0,
+            mesh_boundary_size_um=5.0,
+            mesh_max_points=50000,
+        )
+
+        mesh = png_decay.build_triangular_water_mesh(labels, params)
+        mesh_area = sum(
+            triangle_area(mesh["points"][tri])
+            for tri in mesh["triangles"]
+        )
+        expected_area = float(
+            np.sum(labels == png_decay.WATER)
+            * params.pixel_size_x_um
+            * params.pixel_size_y_um
+        )
+
+        self.assertTrue(math.isclose(mesh_area, expected_area, rel_tol=0.05))
+
+    def test_triangular_mesh_area_matches_initial_rtm_interface_after_region_filtering(self):
+        sample_png = (
+            Path(__file__).resolve().parents[3]
+            / "outputs"
+            / "rtm_runs"
+            / "rtm_20260616_160439_321_random"
+            / "interface_images"
+            / "timestep_0001.png"
+        )
+        if not sample_png.exists():
+            self.skipTest("new RTM interface PNG fixture is not available")
+
+        advanced_tools_parent = Path(r"C:\Users\imgw\Documents\Codex\NMR模拟")
+        if not advanced_tools_parent.exists():
+            self.skipTest("advanced_tools directory is not available")
+        sys.path.insert(0, str(advanced_tools_parent))
+        try:
+            import advanced_tools.png_phase_nmr_decay as png_decay
+        except Exception as exc:
+            self.skipTest(f"advanced_tools triangular meshing dependencies are not available: {exc}")
+
+        labels = png_decay.classify_png(np.asarray(Image.open(sample_png).convert("RGB")))
+        params = png_decay.SimulationParams(
+            pixel_size_x_um=0.42674253200568985,
+            pixel_size_y_um=0.4250797024442083,
+            diffusion_um2_per_ms=2.0,
+            bulk_t2_ms=3000.0,
+            rho_solid_um_per_ms=0.05,
+            rho_gas_um_per_ms=0.0,
+            dt_ms=5.0,
+            t_max_ms=10.0,
+            max_grid_size=None,
+            solver="triangular",
+            mesh_bulk_size_um=16.0,
+            mesh_boundary_size_um=5.0,
+            mesh_max_points=50000,
+        )
+
+        mesh = png_decay.build_triangular_water_mesh(labels, params)
+        mesh_area = sum(
+            triangle_area(mesh["points"][tri])
+            for tri in mesh["triangles"]
+        )
+        expected_area = float(
+            np.sum(labels == png_decay.WATER)
+            * params.pixel_size_x_um
+            * params.pixel_size_y_um
+        )
+
+        self.assertTrue(math.isclose(mesh_area, expected_area, rel_tol=0.05))
+
+
+def triangle_area(points):
+    return abs(
+        0.5
+        * (
+            points[0, 0] * (points[1, 1] - points[2, 1])
+            + points[1, 0] * (points[2, 1] - points[0, 1])
+            + points[2, 0] * (points[0, 1] - points[1, 1])
+        )
+    )
 
 
 if __name__ == "__main__":
