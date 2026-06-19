@@ -45,18 +45,10 @@ cfg.runName = '';
 %   'random' 随机颗粒；characteristicLength 表示目标平均孔喉
 %   'hex'    六角排布；characteristicLength 表示最小孔喉
 %   'square' 方形排布；characteristicLength 表示最小孔喉
-cfg.layoutType = 'random';
-
-% 与 Study process/PNM_beauty3.m 对齐的随机颗粒几何参数。
-cfg.sizeScale = 1;
-cfg.circleRadius = cfg.sizeScale * 0.003;
-cfg.circleSpacing = cfg.sizeScale * 0.0005;
-cfg.circleSpacingXLeft = 0.5;
+cfg.layoutType = 'external_tif';
 
 % 特征长度/孔喉尺度 [cm]
 cfg.characteristicLength = 0.001;
-cfg.targetAvgSpacing = cfg.characteristicLength;
-cfg.minThroatRandom = cfg.targetAvgSpacing / 3.0;
 
 % 目标 Y 方向宽度 [cm]，以及目标长宽比 X/Y。
 cfg.targetLengthYAxis = 0.04;
@@ -65,18 +57,22 @@ cfg.targetAspectRatio = 0.6 / 0.4;
 % random 几何复用控制：
 %   false 每次生成新随机几何
 %   true  尝试读取 geometryLoadFile；为空时使用结果目录中的 random_geometry_config.mat
-cfg.loadExistingGeometry = true;
-cfg.geometrySaveFile = "C:\Users\imgw\Documents\Codex\RTSPHEM-main\Data\T2single-RI\dissolution_results-Da_0.0369_Pe_0.1000_L_0.0010_lengthXAxis_0.060000_lengthYAxis_0.040000_random\random_geometry_config.mat";
-cfg.geometryLoadFile = cfg.geometrySaveFile;
+cfg.loadExistingGeometry = false;
+cfg.geometryLoadFile = '';
+cfg.geometrySaveFile = '';
 
-% 外部 TIF 几何。通常保持 false。
-cfg.useExternalGeometry = false;
-cfg.tifPath = "";
+% 外部 TIF 几何：像素值 1=固体，2=液体/孔隙。
+cfg.useExternalGeometry = true;
+cfg.externalGeometryType = 'tif';
+cfg.tifPath = fullfile(projectRoot, 'Data', 'InputGeometry', 'RTM_CT16r_1p92.tif');
+cfg.externalTifSolidValue = 1;
+cfg.externalTifLiquidValue = 2;
+cfg.externalTifPixelSizeMicron = 1.92;  % TIF 像素分辨率 [um/px]
+cfg.externalTifSmoothingSigmaPixels = 1.5;
 
 % 外部 DXF 几何。domain 多段线和 calcite 实体/边缘需要放在不同图层。
 % 这里按 1500 DXF 单位 = 0.15 cm 换算到模拟长度。
 cfg.useExternalDxfGeometry = false;
-cfg.externalGeometryType = 'dxf';
 cfg.externalDxfPath = "C:\Users\imgw\Documents\Codex\论文复现\pore-scale-simulation-reproduction\organized_gpu_ac3d_reproduction_20260527\data\dissolution_results-Da_40.4424_Pe_4.1640_L_0.1200_square\validation-domin.dxf";
 cfg.externalDxfDomainLayerNames = {'domin', 'DOMAIN'};
 cfg.externalDxfSolidLayerNames = {'calcite'};
@@ -87,36 +83,40 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
-cfg.inletVelocity = 0.01;
-cfg.transportPeTarget = Inf;
+% cfg.inletVelocity = 0.1;
+cfg.inletVelocity = 0.1;
+cfg.transportPeTarget = 8;  % <== 在这里加上这一行
 
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
 
 % 入口 H+ 浓度 [mol/cm^3]
-cfg.initialHydrogenConcentration = 1e-4;
+cfg.initialHydrogenConcentration = 1.37e-5;
 
 % 扩散系数 [cm^2/s]
-cfg.diffusionCoefficient = 1e-5;
+cfg.diffusionCoefficient = 5e-5;
 
 % 碳酸钙摩尔体积 [cm^3/mol]
 cfg.molarVolume = 36.9;
 
-% 反应速率常数 [mol/dm^2/s]，与 PNM_beauty3.m 中的 TST 公式单位保持一致。
+% 反应速率常数 [mol/cm^2/s]
 cfg.rateCoefficientTST = 1e-4;
 
 %% ===================== 时间步与终止条件 =====================
 % 初始宏观时间步 [s]
-cfg.initialMacroscaleTimeStepSize = 0.10;
+cfg.initialMacroscaleTimeStepSize = 0.01;
 
 % 最大时间步 [s]。如果留空 []，PNM_beauty3 会根据 Pe 自动估算。
 cfg.maximalStep = [];
 
 % 结束时间 [s]。如果留空 []，PNM_beauty3 会根据流速等参数自动估算。
-cfg.endTime = [];
+cfg.endTime = 3600 * 4.5;
 % cfg.endTime = 10;
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 10000000;
+
+cfg.targetDissolutionSlices = 100;
+
 
 %% ===================== 网格与 DXF 导出精度 =====================
 % 微尺度网格分区数。越大越精细，也越慢。
@@ -185,11 +185,7 @@ fprintf('单组 RTM/NMR 运行\n');
 fprintf('  layout = %s\n', cfg.layoutType);
 fprintf('  L      = %.6g cm\n', cfg.characteristicLength);
 fprintf('  u_in   = %.6g cm/s\n', cfg.inletVelocity);
-fprintf('  D      = %.6g cm^2/s\n', cfg.diffusionCoefficient);
 fprintf('  c_in   = %.6g mol/cm^3\n', cfg.initialHydrogenConcentration);
-if strcmpi(cfg.layoutType, 'random') && cfg.loadExistingGeometry
-    fprintf('  random geometry = %s\n', cfg.geometryLoadFile);
-end
 fprintf('  sync NMR = %s\n', mat2str(cfg.enableNMRSimulation));
 fprintf('  surrogate NMR = %s\n', mat2str(cfg.enableNMRSurrogate));
 fprintf('  NMR method = %s\n', nmrOptions.nmr_method);

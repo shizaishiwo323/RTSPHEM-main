@@ -43,6 +43,11 @@ useExternalGeometry = useExternalGeometry || useExternalDxfGeometry;
 useExternalTifGeometry = useExternalGeometry && ~useExternalDxfGeometry;
 % tifPath = '/Users/wangbin/Desktop/pore copy-1-2.tif'; % TIF 路径
 tifPath = cfgget(config, 'tifPath', "");
+externalTifSolidValue = cfgget(config, 'externalTifSolidValue', []);
+externalTifLiquidValue = cfgget(config, 'externalTifLiquidValue', []);
+externalTifPixelSizeMicron = cfgget(config, 'externalTifPixelSizeMicron', []);
+externalTifPixelSizeCm = cfgget(config, 'externalTifPixelSizeCm', []);
+externalTifSmoothingSigmaPixels = cfgget(config, 'externalTifSmoothingSigmaPixels', 1.5);
 externalDxfPath = cfgget(config, 'externalDxfPath', cfgget(config, 'dxfPath', ""));
 externalDxfDomainLayerNames = cfgget(config, 'externalDxfDomainLayerNames', {'domin', 'domain', 'DOMAIN'});
 externalDxfSolidLayerNames = cfgget(config, 'externalDxfSolidLayerNames', {'calcite'});
@@ -309,8 +314,15 @@ dimension = 2;
 spaceScaleFactor = 1; % spaceScaleFactor [length of Y] = 1 [cm]
 
 % Parameters in dm and s
-pixelSizeMicron = 1; % 每个像素对应的实际长度（微米，例：1 μm/px）
+pixelSizeMicron = cfgget(config, 'pixelSizeMicron', 1); % 每个像素对应的实际长度（微米，例：1 μm/px）
+if ~isempty(externalTifPixelSizeMicron)
+    pixelSizeMicron = externalTifPixelSizeMicron;
+end
 pixelSizeCm = pixelSizeMicron * 1e-4; % 将微米转换为厘米（1 μm = 1e-4 cm）
+if ~isempty(externalTifPixelSizeCm)
+    pixelSizeCm = externalTifPixelSizeCm;
+    pixelSizeMicron = pixelSizeCm * 1e4;
+end
 externalGeometryXCenters = [];
 externalGeometryYCenters = [];
 externalDxfGeometry = [];
@@ -397,19 +409,33 @@ elseif useExternalTifGeometry
     elseif ndims(Iraw) > 2
         Iraw = Iraw(:, :, 1);
     end
-    Iraw = uint8(Iraw);
-    % 将图像转为二值：0=孔隙，255=固体；容错地阈值化
-    % BW_solid = Iraw <= 128; % solid=1, pore=0
-    BW_solid = Iraw > 0; % solid=1, pore=0
+    % 将图像转为二值：BW_solid=true 表示固体，false 表示孔隙/液体。
+    if ~isempty(externalTifSolidValue) || ~isempty(externalTifLiquidValue)
+        if isempty(externalTifSolidValue) || isempty(externalTifLiquidValue)
+            error('externalTifSolidValue and externalTifLiquidValue must be set together.');
+        end
+
+        BW_solid = Iraw == externalTifSolidValue;
+        BW_liquid = Iraw == externalTifLiquidValue;
+        unknownPixels = ~(BW_solid | BW_liquid);
+        if any(unknownPixels(:))
+            uniqueValues = unique(Iraw(:));
+            error('External TIF contains values outside solid=%g and liquid=%g. Unique values: %s', ...
+                externalTifSolidValue, externalTifLiquidValue, mat2str(double(uniqueValues(:)')));
+        end
+    else
+        % 兼容旧数据：非零像素作为固体，0 作为孔隙。
+        BW_solid = Iraw > 0;
+    end
     % 计算有符号距离场（像素为单位）
     % phi > 0: solid; phi < 0: pore; phi = 0: 界面
     phi_pixels = bwdist(~BW_solid) - bwdist(BW_solid);
-    sigma = 1.5; % 平滑半径，通常取 1 到 2 个像素
+    sigma = externalTifSmoothingSigmaPixels; % 平滑半径，通常取 1 到 2 个像素
     phi_pixels = imgaussfilt(phi_pixels, sigma);
     % 将 y 方向从"图像上->下"转换为"几何下->上"
     phi_pixels = flipud(phi_pixels);
     % 换算单位：像素 -> 厘米
-    phi_cm = phi_pixels * pixelSizeCm;
+    phi_cm = double(phi_pixels) * pixelSizeCm;
     % 计算物理尺寸
     [ny_img, nx_img] = size(BW_solid);
     lengthXAxis = nx_img * pixelSizeCm; % [cm]
@@ -417,6 +443,9 @@ elseif useExternalTifGeometry
     externalGeometryXCenters = (0.5:1:(nx_img-0.5)) * pixelSizeCm; % [cm]
     externalGeometryYCenters = (0.5:1:(ny_img-0.5)) * pixelSizeCm; % [cm] bottom-up after flip
     fprintf('Image size (pixels): %d x %d\n', nx_img, ny_img);
+    fprintf('TIF phase values: solid=%s, liquid=%s\n', ...
+        mat2str(externalTifSolidValue), mat2str(externalTifLiquidValue));
+    fprintf('TIF pixel size: %.6g micron/px\n', pixelSizeMicron);
     fprintf('Length X Axis: %.4f cm, Length Y Axis: %.4f cm\n', lengthXAxis, lengthYAxis);
 else
     % 如果不用外部几何，lengthXAxis 和 lengthYAxis 已在前面自动计算
@@ -1311,6 +1340,11 @@ metadata.externalGeometry = struct( ...
     'dxfReferenceLength', externalDxfReferenceLength, ...
     'dxfReferenceLengthCm', externalDxfReferenceLengthCm, ...
     'dxfImportDirection', string(externalDxfImportDirection));
+metadata.externalGeometry.tifPath = string(tifPath);
+metadata.externalGeometry.tifSolidValue = externalTifSolidValue;
+metadata.externalGeometry.tifLiquidValue = externalTifLiquidValue;
+metadata.externalGeometry.tifPixelSizeMicron = pixelSizeMicron;
+metadata.externalGeometry.tifSmoothingSigmaPixels = externalTifSmoothingSigmaPixels;
 if useExternalDxfGeometry && ~isempty(externalDxfGeometry)
     metadata.externalGeometry.dxfScaleCmPerUnit = externalDxfGeometry.scaleCmPerDxfUnit;
     metadata.externalGeometry.dxfDomainLayer = externalDxfGeometry.domainLayer;
