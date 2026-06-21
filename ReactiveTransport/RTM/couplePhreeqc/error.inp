@@ -1,0 +1,51 @@
+SOLUTION_RAW                 19 
+  -temp                      25
+  -pressure                  1
+  -potential                 0
+  -total_h                   5.7401511840337e-009
+  -total_o                   2.8700692802623e-009
+  -cb                        2.185713748539e-016
+  -density                   0.99704743038051
+  -viscosity                 0.89002391829103
+  -viscos_0                  0.89002391829103
+  -totals
+    Cl                       1.2404937781965e-014
+  -pH                        3.6199561630517
+  -pe                        4
+  -mu                        0.00024202109953456
+  -ah2o                      0.99999177128262
+  -mass_water                5.1707168153165e-011
+  -soln_vol                  5.1860743124555e-011
+  -total_alkalinity          -1.2623509156819e-014
+  -activities
+    Cl                       -3.6277420103865
+    E                        -4
+    H(0)                     -18.389912326103
+    O(0)                     -55.600182495195
+  -gammas
+KINETICS_RAW                 19 
+  # KINETICS_MODIFY candidate identifiers #
+  -step_divide               1
+  -rk                        3
+  -bad_step_max              5000
+  -use_cvode                 0
+  -cvode_steps               100
+  -cvode_order               5
+  -component                 Calcite
+      # KINETICS_MODIFY candidate identifiers #
+      -tol                   1e-012
+      -m                     5.8360486034782e-010
+      -m0                    5.8360486034782e-010
+      -namecoef
+        CaCO3                1
+      -d_params
+        10 1 
+      # KineticsComp workspace variables #
+      -moles                 0
+      -initial_moles         0
+  -equal_increments           0
+  -count                     0
+  -steps             
+    1 
+  # KINETICS workspace variables #
+  -totals                    

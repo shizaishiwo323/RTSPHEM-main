@@ -28,6 +28,7 @@ clear; clc;
 rtmDir = fileparts(mfilename('fullpath'));
 projectRoot = fileparts(fileparts(rtmDir));
 addpath(rtmDir);
+addpath(fullfile(rtmDir, 'couplePhreeqc'));
 
 cfg = struct();
 
@@ -94,6 +95,35 @@ cfg.flowDirection = 'left_to_right';
 
 % 入口 H+ 浓度 [mol/cm^3]
 cfg.initialHydrogenConcentration = 1e-4;
+
+% 化学反应求解器：
+%   'phreeqc' 使用 phreeqc-m.dat 中的 Calcite RATES + 每单元 KINETICS；
+%   'tst'     使用原有简化 TST 速率模型。
+cfg.reactionModel = 'phreeqc';
+referencePhreeqcDatabase = "C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat";
+repoPhreeqcDatabase = fullfile(rtmDir, 'couplePhreeqc', 'phreeqc-m.dat');
+if exist(repoPhreeqcDatabase, 'file')
+    cfg.phreeqcDatabasePath = string(repoPhreeqcDatabase);
+else
+    cfg.phreeqcDatabasePath = referencePhreeqcDatabase;
+end
+cfg.phreeqcTemperatureC = 25;
+cfg.phreeqcKineticsCorrectionFactor = 1;
+cfg.phreeqcMaxSpecificSurfaceArea = 10;
+cfg.phreeqcBadStepMax = 5000;
+cfg.phreeqcMinHForPHMolL = 1e-7;
+cfg.phreeqcMinActiveWaterVolumeFraction = 1e-2;
+cfg.phreeqcMinActiveWaterVolumeCm3 = 0;
+cfg.phreeqcReactNeutralInterfaceCells = false;
+cfg.initialCalciumConcentration = 0;
+cfg.initialCarbonConcentration = 0;
+cfg.initialSodiumConcentration = 0;
+cfg.initialChlorideConcentration = 0;
+cfg.inletCalciumConcentration = cfg.initialCalciumConcentration;
+cfg.inletCarbonConcentration = cfg.initialCarbonConcentration;
+cfg.inletSodiumConcentration = cfg.initialSodiumConcentration;
+cfg.inletChlorideConcentration = cfg.initialHydrogenConcentration;
+cfg.phreeqcExportEvery = 1;
 
 % 扩散系数 [cm^2/s]
 cfg.diffusionCoefficient = 1e-5;
