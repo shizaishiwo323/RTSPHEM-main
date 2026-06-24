@@ -104,13 +104,7 @@ cfg.reactionModel = 'phreeqc';
 %   phreeqc_database_calcite : 真实 PHREEQC carbonate chemistry；
 %   phreeqc_tst_match        : PHREEQC 框架中复刻旧 TST 速率律。
 cfg.phreeqcRunGroup = 'phreeqc_database_calcite';
-referencePhreeqcDatabase = "C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat";
-repoPhreeqcDatabase = fullfile(rtmDir, 'couplePhreeqc', 'phreeqc-m.dat');
-if exist(repoPhreeqcDatabase, 'file')
-    cfg.phreeqcDatabasePath = string(repoPhreeqcDatabase);
-else
-    cfg.phreeqcDatabasePath = referencePhreeqcDatabase;
-end
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = 10;

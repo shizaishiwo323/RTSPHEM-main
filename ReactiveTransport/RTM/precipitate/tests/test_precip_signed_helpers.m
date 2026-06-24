@@ -1165,6 +1165,8 @@ rtmDir = fileparts(moduleDir);
 envDatabase = getenv('PHREEQC_DATABASE_PATH');
 candidates = {
     envDatabase
+    fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc-m.dat')
+    fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc.dat')
     fullfile(rtmDir, 'couplePhreeqc', 'phreeqc-m.dat')
     'C:\Program Files\USGS\IPhreeqcCOM 3.8.6-17100\database\phreeqc.dat'
     };

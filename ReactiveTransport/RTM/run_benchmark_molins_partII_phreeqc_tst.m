@@ -85,15 +85,7 @@ cfg.inletCarbonConcentration = 0;
 cfg.inletSodiumConcentration = 0;
 cfg.inletChlorideConcentration = cfg.initialHydrogenConcentration;
 
-cfg.phreeqcDatabasePath = string(fullfile(rtmDir, 'couplePhreeqc', 'phreeqc-m.dat'));
-if exist(char(cfg.phreeqcDatabasePath), 'file') ~= 2
-    referenceDb = "C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat";
-    if exist(char(referenceDb), 'file') == 2
-        cfg.phreeqcDatabasePath = referenceDb;
-    else
-        cfg.phreeqcDatabasePath = "C:\Program Files\USGS\IPhreeqcCOM 3.8.6-17100\database\phreeqc.dat";
-    end
-end
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = Inf;

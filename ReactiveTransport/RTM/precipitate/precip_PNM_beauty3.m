@@ -4439,13 +4439,16 @@ end
 
 function databasePath = defaultPhreeqcDatabasePath()
 projectRoot = fileparts(fileparts(fileparts(mfilename('fullpath'))));
-repoCandidate = fullfile(projectRoot, 'ReactiveTransport', 'RTM', 'couplePhreeqc', 'phreeqc-m.dat');
-referenceCandidate = 'C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat';
+repoCandidate = fullfile(projectRoot, 'ReactiveTransport', 'RTM', 'phreeqc', 'database', 'phreeqc-m.dat');
+repoFallbackCandidate = fullfile(projectRoot, 'ReactiveTransport', 'RTM', 'phreeqc', 'database', 'phreeqc.dat');
+legacyRepoCandidate = fullfile(projectRoot, 'ReactiveTransport', 'RTM', 'couplePhreeqc', 'phreeqc-m.dat');
 usgsCandidate = 'C:\Program Files\USGS\IPhreeqcCOM 3.8.6-17100\database\phreeqc.dat';
 if exist(repoCandidate, 'file')
     databasePath = repoCandidate;
-elseif exist(referenceCandidate, 'file')
-    databasePath = referenceCandidate;
+elseif exist(repoFallbackCandidate, 'file')
+    databasePath = repoFallbackCandidate;
+elseif exist(legacyRepoCandidate, 'file')
+    databasePath = legacyRepoCandidate;
 elseif exist(usgsCandidate, 'file')
     databasePath = usgsCandidate;
 else

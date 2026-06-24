@@ -106,7 +106,7 @@ cfg.reactionModel = 'phreeqc';
 %   phreeqc_tst_match        : 输运后的 H+ 场定义一级 TST 反应量，再交给 PHREEQC 做物种平衡
 % 如只想跑单组，可改为 {'phreeqc_tst_match'} 或 {'phreeqc_database_calcite'}。
 cfg.phreeqcRunGroups = {'phreeqc_database_calcite', 'phreeqc_tst_match'};
-cfg.phreeqcDatabasePath = "C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat";
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = 10;
