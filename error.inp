@@ -1,0 +1,58 @@
+SOLUTION_RAW                 1 
+  -temp                      25
+  -pressure                  1
+  -potential                 0
+  -total_h                   111.05452963693
+  -total_o                   56.366709689564
+  -cb                        0.8712125477447
+  -density                   1.0257842794784
+  -viscosity                 0.89002391147006
+  -viscos_0                  0.89002391147006
+  -totals
+    C(-4)                    1.0104194619608e-020
+    C(4)                     0.4302337982588
+    Ca                       0.43023379883344
+    Cl                       0.0313005007571
+    H(0)                     1.1351183076476e-014
+  -pH                        1.5031375790111
+  -pe                        4
+  -mu                        0.89713709433447
+  -ah2o                      0.98419335644309
+  -mass_water                1
+  -soln_vol                  1.0112568403947
+  -total_alkalinity          -0.042045450834919
+  -activities
+    C(-4)                    -19.905784587931
+    C(4)                     -13.966167510438
+    Ca                       -0.97437141429222
+    Cl                       -1.7160571515687
+    E                        -4
+    H(0)                     -14.156275158022
+    O(0)                     -64.081288825737
+  -gammas
+KINETICS_RAW                 1 
+  # KINETICS_MODIFY candidate identifiers #
+  -step_divide               1000
+  -rk                        3
+  -bad_step_max              5000
+  -use_cvode                 0
+  -cvode_steps               100
+  -cvode_order               5
+  -component                 Calcite_TST_Match
+      # KINETICS_MODIFY candidate identifiers #
+      -tol                   1e-008
+      -m                     250.34801559853
+      -m0                    250.34801559853
+      -namecoef
+        CaCO3                1
+      -d_params
+        2373.2443460919 0.0001 0.031395139779201 
+      # KineticsComp workspace variables #
+      -moles                 0
+      -initial_moles         0
+  -equal_increments           0
+  -count                     0
+  -steps             
+    1 
+  # KINETICS workspace variables #
+  -totals                    

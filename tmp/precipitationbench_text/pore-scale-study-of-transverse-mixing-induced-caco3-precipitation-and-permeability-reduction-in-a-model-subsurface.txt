@@ -1,0 +1,447 @@
+                                                                                                                                                              Environ. Sci. Technol. 2010, 44, 7833–7838
+
+
+
+                                                                                                          Pore-Scale Study of Transverse                                             results suggest that mineral precipitation along plume margins
+                                                                                                                                                                                     can decrease both reactant mixing during groundwater
+                                                                                                          Mixing Induced CaCO3 Precipitation                                         remediation, and injection and storage efficiency during CO2
+                                                                                                                                                                                     sequestration.
+                                                                                                          and Permeability Reduction in a
+                                                                                                          Model Subsurface Sedimentary                                               Introduction
+                                                                                                          System                                                                     Geological carbon sequestration is being evaluated at several
+                                                                                                                                                                                     field sites around the world to determine its technical
+                                                                                                                                                                                     feasibility, economical viability for storing carbon produced
+                                                                                                          CHANGYONG ZHANG,† KARL DEHOFF,‡                                            from stationary sources (e.g., refs 1-5) and the ability to
+                                                                                                          NANCY HESS,† MART OOSTROM,§                                                mitigate climate change (6). Carbon dioxide capture, trans-
+                                                                                                          THOMAS W. WIETSMA,|                                                        port, and storage (CCS) (7) involves the capture of CO2 from
+                                                                                                          ALBERT J. VALOCCHI,‡                                                       fossil fuel combustion, compression of captured CO2 into a
+                                                                                                          BRUCE W. FOUKE,⊥ AND                                                       liquid or supercritical fluid state, transport and subsequent
+                                                                                                          C H A R L E S J . W E R T H * ,‡
+                                                                                                                                                                                     injection. The most volumetrically significant subsurface rock
+See https://pubs.acs.org/sharingguidelines for options on how to legitimately share published articles.
+
+
+
+
+                                                                                                          Fundamental and Computational Sciences Directorate, Pacific                targets for injection are deep subsurface saline aquifers,
+                                                                                                          Northwest National Laboratory, Richland, Washington 99352,                 depleted oil reservoirs, and unmineable coal seams (8).
+                                                                                                          Department of Civil and Environmental Engineering,                         Injected CO2 displaces brine or oil in pores and also rises
+                                                                                                          University of Illinois at Urbana-Champaign, 205 N Mathews
+                                                                                                                                                                                     vertically toward the caprock, being less buoyant than the
+                                                                                                          Ave, Urbana, Illinois 61801, Energy and Environment
+              Downloaded via ZHEJIANG UNIV on June 23, 2026 at 19:29:15 (UTC).
+
+
+
+
+                                                                                                                                                                                     saline brines housed within subsurface sedimentary reser-
+                                                                                                          Directorate, Pacific Northwest National Laboratory,
+                                                                                                                                                                                     voirs. Along fluid-fluid interfaces between injected CO2 and
+                                                                                                          Richland, Washington 99354, Environmental Molecular
+                                                                                                          Sciences Laboratory, Pacific Northwest National Laboratory,                pore water, CO2 dissolves into the aqueous phase and either
+                                                                                                          Richland, Washington 99354, and Department of Geology,                     reduces the pH, or reacts with species that buffer pH to
+                                                                                                          University of Illinois at Urbana-Champaign,                                increase bicarbonate and carbonate concentrations (9, 10).
+                                                                                                          1301 W Green St, Urbana, Illinois 61801                                    Decreasing pH conditions induce carbonate mineral dis-
+                                                                                                                                                                                     solution, which release divalent metal cations, and increase
+                                                                                                          Received June 16, 2010. Revised manuscript received                        bicarbonate and carbonate concentrations. Simulation results
+                                                                                                          August 13, 2010. Accepted August 18, 2010.                                 indicate that these conditions promote carbonate mineral
+                                                                                                                                                                                     precipitation along the margins of injected CO2 plumes
+                                                                                                                                                                                     (11-13). Two significant concerns associated with mineral
+                                                                                                                                                                                     dissolution and precipitation during CO2 injection are
+                                                                                                          A microfluidic pore structure etched into a silicon wafer was              dissolution and failure of the caprock seal, and precipitation
+                                                                                                                                                                                     of minerals that reduce permeability, reservoir capacity, and
+                                                                                                          used as a two-dimensional model subsurface sedimentary system
+                                                                                                                                                                                     CO2 injection efficiency.
+                                                                                                          (i.e., micromodel) to study mineral precipitation and permeability             A large body of literature has explored dissolution and
+                                                                                                          reduction relevant to groundwater remediation and geological               precipitation reactions relevant to CO2 injection in laboratory
+                                                                                                          carbon sequestration. Solutions containing CaCl2 and Na2CO3 at             batch studies (e.g., refs 14-16). Which mineral species react
+                                                                                                          four different saturation states (Ω ) [Ca2+][CO32-]/KspCaCO3)              and the time scales of reaction depend on a number of factors
+                                                                                                          were introduced through two separate inlets, and they mixed                including existing minerals and solutes, pH, temperature,
+                                                                                                          by diffusion transverse to the main flow direction along the center        and pressure (17-19). Among the most common minerals
+                                                                                                          of the micromodel resulting in CaCO3 precipitation. Precipitation          available for reaction in geologic storage reservoirs are
+                                                                                                          rates increased and the total amount of precipitates decreased             calcium carbonates, which include vaterite, aragonite, and
+                                                                                                          with increasing saturation state, and only vaterite and calcite            calcite (20). They are often present in limestone in sedi-
+                                                                                                                                                                                     mentary deposits, and dissolution and precipitation time
+                                                                                                          crystals were formed (no aragonite). The relative amount of vaterite
+                                                                                                                                                                                     scales are rapid (i.e., minutes to days). Carteret et al. (20)
+                                                                                                          increased from 80% at the lowest saturation state (Ωv ) 2.8                showed that in a batch system, vaterite is initially the major
+                                                                                                          for vaterite) to 95% at the highest saturation state (Ωv ) 4.5).           phase at low temperature (i.e., 20 °C), and aragonite is initially
+                                                                                                          Fluorescent tracer tests conducted before and after CaCO3                  the major phase at temperatures above 50 °C; both trans-
+                                                                                                          precipitation indicate that pore spaces were occluded by CaCO3             formed to the more stable form calcite after 7 h.
+                                                                                                          precipitates along the transverse mixing zone, thus substantially              Although calcium carbonate dissolution and precipitation
+                                                                                                          reducing porosity and permeability, and potentially limiting               reactions have been extensively studied in batch systems
+                                                                                                          transformation from vaterite to the more stable calcite. The               (e.g., refs 9, 15, 16, and 20), very little work has explored
+                                                                                                                                                                                     these reactions under flow conditions, where advective and
+                                                                                                                                                                                     diffusive mixing processes play a major role (21, 22).
+                                                                                                                                                                                     Preliminary modeling studies (11-13) indicate that along
+                                                                                                             * Corresponding author e-mail: werth@illinois.edu; phone: 217-          the fringes of injected CO2 plumes, convective and diffusive
+                                                                                                          333-3822; fax: 217-333-6968.
+                                                                                                             †
+                                                                                                               Fundamental and Computational Sciences Directorate, Pacific           mixing processes affect CO2 dissolution into the pore water
+                                                                                                          Northwest National Laboratory.                                             and subsequent dissolution and precipitation reactions
+                                                                                                             ‡
+                                                                                                               Department of Civil and Environmental Engineering, University         within the formation and caprock. Calcium carbonate
+                                                                                                          of Illinois at Urbana-Champaign.                                           precipitation can decrease porosity and permeability. This
+                                                                                                             §
+                                                                                                               Energy and Environment Directorate, Pacific Northwest National        has been shown in wellborn cement and caprock core
+                                                                                                          Laboratory.
+                                                                                                                                                                                     samples (23), and in controlled two-dimensional (2D)
+                                                                                                             |
+                                                                                                               Environmental Molecular Sciences Laboratory, Pacific Northwest
+                                                                                                          National Laboratory.                                                       benchtop flow cell experiments where calcium carbonate
+                                                                                                             ⊥
+                                                                                                                Department of Geology, University of Illinois at Urbana-             was precipitated along the center mixing line between
+                                                                                                          Champaign.                                                                 aqueous phase calcium and carbonate (21, 22). Calcium
+                                                                                                          10.1021/es1019788      2010 American Chemical Society                      VOL. 44, NO. 20, 2010 / ENVIRONMENTAL SCIENCE & TECHNOLOGY 9 7833
+                                                                                                          Published on Web 08/30/2010
+TABLE 1. Summary of Experimental Conditions
+    conc. CaCl2 Na2CO3     Ωc             Ωa            Ωv
+exp [mM] pHa     pHa   wrt calciteb wrt aragonitec wrt vaterited
+ 1       6.5   5.8   10.6     3.4           3.2           2.8
+ 2       10    5.9   10.8     3.8           3.6           3.1
+ 3       25    6.1   10.9     4.6           4.4           3.9
+ 4       50    6.3   11.1     5.2           5.0           4.5
+     a
+   pH of DI water used to prepare all solutions is 5.7. b pKsp      FIGURE 1. Micromodel and flow setup.
+) 8.42. c pKsp ) 8.22. d pKsp ) 7.73; all pKsp values from
+Stumm (36).                                                         as Ω ) [Ca2+] × [CO32-]/KspCaCO3 (37); concentrations of Ca2+
+                                                                    and CO32- are based on the inlet reactant concentrations.
+                                                                    The experimental conditions were chosen as a first step to
+carbonate precipitation limited by advective or diffusive           evaluate mineral precipitation rates, morphology, phase, and
+mixing is relevant to other subsurface processes as well,           the corresponding effects on permeability; they do not directly
+including precipitation near injection wells and along plume        reflect the range expected in an actual reservoir.
+margins during groundwater remediation (24), precipitation              Fluorescein (Sigma, 70%) was dissolved in DI water at 10
+along fluid injection fronts during enhanced oil recovery (25),     µM and used as a fluorescent tracer to visualize changes in
+and precipitation of leachate along the shadow zones of             permeability as a result of CaCO3 precipitation.
+nuclear waste storage tunnels (26).                                     Micromodel Experiments. The micromodel (Figure 1)
+    Herein, we focus on calcium carbonate precipitation and         used in this study consists of two separate inlet channels (A,
+dissolution under transverse mixing limited conditions.             B) connected to a 2 cm ×1 cm (length × width) pore network,
+Reactive transport limited by transverse mixing has been the        followed by a third inlet (C) and an outlet (D). The pore
+focus of a number of recent studies. However, in all but a few      network contains a uniform distribution of cylindrical posts
+cases reactions of interests were limited to soluble reaction       300 µm in diameter, with 180 µm pore spaces, 40 µm pore
+products (e.g., refs 27-30). Transverse mixing-limited reactive     throats, and a porosity of 0.39. The depth of the pore network
+transport involving mineral precipitation and dissolution has       is 17-21 µm. Standard photolithography techniques and ICP-
+been limited to numerical simulations (e.g., refs 21, 22, and       DRIE (inductively coupled plasma-deep reactive ion etching)
+31-34) and two studies in continuum-scale flow cells (e.g.,         were used to fabricate the micromodels; details of the
+refs 21 and 22). These studies all indicate that mixing             microfabrication process can be found in Chomsurin and
+limitations between dissolved cations and carbonate give            Werth (38) and Willingham et al. (29). The fabricated silicon
+rise to highly nonuniform concentration gradients, localized        micromodels were heated to 1100 °C under oxygen for 1 h
+reactions and precipitation, and hence highly localized             to grow a thin oxide layer (∼0.1 µm). The final step was to
+changes in porosity and permeability. However, experimental         anodically bond a cover sheet of Pyrex glass to etched silicon
+pore-scale studies are lacking, and the influence of these          micromodel to seal the flow channels.
+conditions on mineral growth rate, morphology, phases, and              Prior to each experiment, the micromodel was first flushed
+pore blockage are unknown.                                          with CO2 gas to facilitate subsequent saturation by water,
+    The objective of this study is to investigate calcium           followed by >100 pore volumes (PV) of degassed DI water.
+carbonate precipitation limited by transverse mixing between        Solutions of CaCl2 and Na2CO3 were introduced separately
+calcium chloride and sodium carbonate in the context of             into the pore network via inlets A and B at equal flow rates
+flow through porous subsurface sedimentary systems. Specif-         corresponding to a Darcy velocity of 1.25 cm/min; constant
+ically, we evaluate the impact of transverse concentration          flow through the micromodel was maintained using a pair
+gradients and solution saturation state on calcium carbonate        of ISCO pumps (Teledyne ISCO Inc., model 100DM). To
+precipitate morphology, phase, stability, and reaction rate         prevent CaCO3 precipitation and clogging in the outlet tubing,
+in a homogeneous pore network etched into a silicon                 a solution of HCl (pH ) 1.5-2.0) was introduced through
+substrate (i.e., micromodel). Reflected differential interfer-      inlet C using a syringe pump (Harvard Instruments) at a
+ence contrast microscopy is used to evaluate the precipitate        volumetric flow rate equal to one-half of the total flow rate
+morphology, stability, and reaction rate, and confocal Raman        through the pore network. An independent test using a
+spectroscopy is used to evaluate the precipitate phase.             fluorescent tracer showed minimal flow disruption in the
+Micromodel flow and transport systems are excellent plat-           pore network due to injection through C. All experiments
+forms for elucidating coupled processes involving advection,        were performed in duplicate, and with previously unused
+diffusion, and biogeochemical reactions at the pore-scale,          micromodels.
+and for providing insights to continuum-scale processes                 Microscope Imaging. Mixing between the two reactant
+(30, 35). While reactant species other than calcium and             solutions resulted in calcium carbonate precipitation in the
+carbonate are also important in subsurface sedimentary              center of the micromodel, which was imaged at selected time
+systems, this research focuses on these as the first step in        intervals until precipitation reached pseudo steady state (i.e.,
+evaluation of coupled pore-scale physical processes (ad-            the number of pixels occupied by CaCO3 precipitates in a
+vection, diffusion) and geochemical reactions that potentially      micromodel was constant over time). All micromodel images
+impact CO2 sequestration and other subsurface processes.            were acquired with a Nikon Eclipse 2000 TE epifluorescent
+                                                                    microscope using 4× and 10× inverted objectives (with image
+Materials and Methods                                               resolutions of 1.62 and 0.65 µm, respectively) and reflected
+Chemicals. Solutions of calcium chloride (CaCl2), sodium            differential interference contrast (DIC) microscopy. The
+carbonate (Na2CO3), and hydrochloric acid (HCl) (all chemi-         microscope is equipped with an automated stage (Prior
+cals are ACS reagents grade, Sigma-Aldrich) were prepared           Scientific Instrument) and a monochrome digital Charge-
+in deionized (DI) water and degassed under sonication prior         Coupled Device (CCD) camera, both connected to a computer
+to use. Four equal molar concentrations of CaCl2 and Na2CO3         and controlled by NIS-Elements imaging software. A total of
+were prepared: 6.5, 10, 25, and 50 mM. Table 1 lists the pH         75 (25 × 3) separate images were taken at each time point;
+and saturation state (Ω) of each set of solutions with respect      an additional image from outside the pore network area was
+to (wrt) three different polymorphs of CaCO3 (i.e., calcite,        also acquired and applied to each image to correct for
+aragonite, and vaterite) (36). The saturation state is defined      nonuniform illumination. Next, the 25 × 3 separate images
+
+7834 9 ENVIRONMENTAL SCIENCE & TECHNOLOGY / VOL. 44, NO. 20, 2010
+FIGURE 2. Images of center of micromodels with CaCO3 precipitates formed along the mixing zone at different saturation states (a)
+Ωc/Ωv ) 3.4/2.8, (b) Ωc/Ωv ) 3.8/3.1, (c) Ωc/Ωv ) 4.6/3.9, and (d) Ωc/Ωv ) 5.2/4.5.
+
+were montaged to form a single image, which captured the          tates. By comparing the flowpath of fluorescein in micro-
+center of the pore network where CaCO3 precipitates were          models with and without precipitates, permeability changes
+formed.                                                           due to precipitation were identified.
+    Image Analysis. Montaged images (0.65 µm resolution)             Laser Confocal Imaging. Also after precipitation reached
+of micromodels were analyzed to quantitatively evaluate           pseudo steady state, the micromodel pore network was
+CaCO3 precipitation rates. The image intensity of CaCO3           entirely filled with the fluorescein solution and fluorescent
+precipitates is lower than that for silicon posts and water-      confocal images were obtained using a Leica SP2 laser
+filled pore spaces; a threshold value was determined for each     scanning confocal microscope at 0.21 µm in-plane resolution
+image to distinguish pixels with CaCO3 precipitates, and the      and 0.5 µm slice thickness to visualize the three-dimensional
+area (i.e., number of pixels) corresponding to precipitates       (3D) morphology of CaCO3 precipitates.
+was determined. This method only results in an apparent
+indicator of precipitation rate, since precipitates may not       Results and Discussions
+occupy the entire depth of the micromodel, and because the        Distribution, Morphology, and Mineralogy of CaCO3 Crys-
+density of precipitates may vary between pixels.                  tal Precipitation. Images of micromodel pore spaces with
+    Raman Back-Scattering Spectroscopy. This method was           calcium carbonate precipitates at pseudo-steady-state in each
+used to characterize calcium carbonate mineral phases in          of the four experiments are shown in Figure 2. At all saturation
+selected pores along the mixing zone when precipitation in        states, crystal precipitation took place primarily in pore spaces
+a micromodel reached pseudo steady state. A long working          along the center mixing zone between calcium and carbonate,
+distance 50× objective was used to locate precipitates in the     with some precipitates forming around the edges of cylin-
+micromodel, to help focus 30 mW of 514.0 nm polarized             drical posts. The transverse width of precipitates decreases
+excitation from a CW Nd:YAG diode laser to an approximate         with increasing saturation state. This zone is approximately
+1.5 µm spot size and to collect the Raman scattered light         two pore bodies wide at the two lower saturation states (Figure
+from the precipitate. Video imaging of the sample under           2a,b), and less than one pore body at the two higher saturation
+laser illumination allowed precise positioning of the focused     states (Figure 2c,d). The total amount of CaCO3 precipitation
+laser beam. The backscattered Raman light was collected           formed (based on the total number of pixels containing
+and focused at the 200 µm entrance slit of a JY 800 triple        precipitate) decreases with increasing saturation state, with
+spectrometer with 800 g/mm gratings. The exit slit was            this amount approximately 5 times greater at the lowest
+maintained at 200 µm and the scattered light was then             saturation state than at the highest saturation state. For water-
+dispersed on to a liquid nitrogen cooled charged coupled          soluble species, higher saturation states are expected to result
+device Ge detector. The detector was calibrated using Hg          in more reactant mixing (greater concentration driving force),
+emission lines. Since the Raman spectrum of CaCO3 poly-           and more product formation. The opposite is true for CaCO3
+morphs ranges from about 100 to 1600 cm-1, collection of          precipitation in the micromodels. This indicates that pre-
+the entire spectrum in two segments is necessary. The Raman       cipitates formed at higher saturation states are more densely
+signal was averaged for a minimum of 90 s for each segment.       packed (i.e., CaCO3 precipitates have lower porosity) and
+Multiple Raman spectra were collected on the three mor-           limit transverse mixing. At pseudo-steady-state, the width of
+phologically distinct crystallite types, and the peak positions   each precipitate zone in the transverse direction remained
+and lineshapes of the resulting spectra were analyzed using       nearly constant along the flow direction in all experiments.
+a commercially available software package, GRAMS/32. Since        This agrees with results from a continuum-scale study (21)
+Raman spectra reflect the molecular symmetry of the               in which mixing of calcium chloride and sodium carbonate
+crystalline lattice, the pattern of peaks can be used to          in a 2D flow cell resulted in a calcium carbonate precipitate
+distinguish between polymorphs of CaCO3 (20). The collected       zone with uniform width.
+Raman spectra were assigned to either vaterite or calcite             Images of CaCO3 precipitates in selected pore spaces at
+crystal structure by comparison to both a spectral database       different saturation states, along with Raman spectra of
+and spectra reported in literature (20, 39, 40).                  selected CaCO3 precipitates, are shown in Figure 3. At the
+    Fluorescent Tracer Experiments. Immediately after Ca-         lowest saturation state (i.e., Ωc/Ωv ) 3.4/2.8 wrt calcite/
+CO3 precipitation reached pseudo steady state in a micro-         vaterite, no aragonite detected), three morphologically
+model, a fluorescein tracer solution and water were separately    distinct types of crystals precipitated along the center mixing
+injected into the micromodel through inlets A and B, at a 2:1     zone as shown in Figure 2. These include (1) euhedral 50-100
+flow rate ratio. A separate control experiment was performed      µm diameter rhombohedra (Figure 3a inset) that exhibit
+using the same flow rates in a micromodel with no precipi-        distinct growth hillocks (41), (2) feather “shrub” aggregates
+
+                                                                    VOL. 44, NO. 20, 2010 / ENVIRONMENTAL SCIENCE & TECHNOLOGY 9 7835
+                                                                    FIGURE 4. Overall CaCO3 precipitation versus time in the
+                                                                    micromodel at Ωc/Ωv ) 3.4/2.8 and Ωc/Ωv ) 5.2/4.5.
+                                                                    calcite. The amounts of vaterite and calcite for the inter-
+                                                                    mediate saturation states were in between those in the low
+                                                                    and high saturation state experiments.
+                                                                         Vaterite has the highest solubility among the three CaCO3
+                                                                    polymorphs at ambient temperature and pressure, and is
+                                                                    considered a metastable form that transforms to calcite (the
+                                                                    more stable form) through Ostwald ripening. Carteret et al.
+                                                                    (20) showed that at 20 °C, calcite accounts for <5% of the
+                                                                    total precipitates in batch system after 2 min, and the
+                                                                    percentage increased to 10-30% after 7 h. In the micromodel,
+                                                                    Ca2+ and CO32- are initially segregated and they only mix
+                                                                    through diffusion. Their concentrations vary in space and Ω
+                                                                    is at a maximum along the micromodel center zone, where
+                                                                    CaCO3 precipitates are preferentially formed. At high satura-
+                                                                    tion state, we propose that rapid precipitation reduced mixing
+                                                                    between Ca2+ and CO32- and hence slowed phase transfor-
+                                                                    mation from vaterite to calcite.
+                                                                         CaCO3 Precipitation Rate. The total number of pixels
+                                                                    with CaCO3 precipitate in the micromodel over time in the
+                                                                    low and high saturation state experiments is shown in Figure
+                                                                    4 (results from intermediate saturation states are included
+                                                                    in Figure S2 of the Supporting Information). From low to
+                                                                    high saturation states, CaCO3 precipitates initially formed at
+FIGURE 3. Raman back scattering spectra of CaCO3 precipitates
+formed along the center mixing zone in the micromodel at (a)        apparent rates of approximately 3.1 × 104, 1.1 × 105, 2.8 ×
+Ωc/Ωv ) 3.4/2.8 and (b) Ωc/Ωv ) 5.2/4.5.                            105, and 4.0 × 105 pixels/h, and reached pseudo-steady-state
+                                                                    after 25, 7, 1.5, and 0.5 h. Assuming uniform precipitate
+(42, 43) composed of dendritically branched euhedral to             density in each pixel, and a bulk density of 2.6 g/mL (44), the
+subhedral columnar crystals, each of which reach 25 to 100          precipitates formed at rates of approximately 6.8 × 10-7, 2.5
+µm in length along the C-axis (Figure 3a inset), and (3)            × 10-6, 6.0 × 10-6, and 8.9 × 10-6 g/h, and the total amount
+anhedral to spherical inclusion-rich microcrystalline crystals      of precipitates formed are 1.4 × 10-5, 9.7 × 10-6, 4.0 × 10-6,
+5-20 µm in diameter (data not shown). Raman spectra of              and 2.7 × 10-6 g (from low to high saturation states). The
+rhombohedra (Figure 3a) show medium to strong peaks at              increase in saturation state resulted in higher reactant
+wavenumbers 155, 281, 712, and 1085 cm-1 that match those           concentrations in the mixing zone, and hence an increase
+for calcite (20). Raman spectra of feather “shrub” aggregates       in precipitation rate and a decrease in the amount of
+(Figure 3a) and spherical microcrystalline crystals show            precipitates. It is important to note that precipitate density
+medium to strong peaks at wavenumbers 266 and 302 (lattice/         is likely not spatially uniform. However, the monotonic trends
+external mode), and 1073 and 1089 (internal mode) that              in precipitation rates and total precipitates formed at four
+match vaterite (20, 39, 40). Assuming crystals are uniform          different saturation states indicate changes in precipitate
+over the depth of the micromodel, precipitate shapes were           density would not change our general results.
+used to estimate mineral forms, and vaterite and calcite                 The number of pixels containing CaCO3 precipitate in
+accounted for approximately 80% and 20%, respectively, of           three pores over time located upgradient, middle, and
+the precipitates (by area).                                         downgradient along the flow direction in the low and high
+    At the highest saturation state (i.e., Ωc/Ωv ) 5.2/4.5), the    saturation experiments are shown in Figure 5; results from
+majority of precipitates were confined to thin dense zones          the two intermediate saturation experiments are included in
+distributed across pore bodies and around the perimeters of         Figure S3 of the Supporting Information. At upgradient pores
+cylindrical posts along the center mixing zone, with isolated       near the inlet, CaCO3 precipitates were formed at higher rates
+crystalline precipitates (both rhombohedra and spherical            (i.e., line slopes are greater) than the middle and downgra-
+microcrystal) formed off center along the walls of cylindrical      dient pores; for example, at Ωc/Ωv ) 3.4/2.8, the amount of
+posts (Figure 3b inset). Raman spectra (Figure 3b) of solid         precipitates in the upgradient pore space reached a maximum
+precipitate lines and spherical microcrystals matched vaterite      value after approximately 7.5 h, whereas in pores near the
+as characterized by peaks at wavenumbers 266, 302, 1074,            middle and downgradient sections, CaCO3 precipitates
+and 1089 (20, 39, 40). Rhombohedra were found to be calcite.        reached a maximum after 20 h (Figure 5a). This behavior is
+On the basis of the precipitate shapes, greater than 95% of         general for the other two saturation states. The higher
+the total precipitates were vaterite, with the remainder (<5%)      precipitation rate in the upgradient pores can be attributed
+
+7836 9 ENVIRONMENTAL SCIENCE & TECHNOLOGY / VOL. 44, NO. 20, 2010
+                                                                    3.9) show that CaCO3 precipitates occupied the entire 20 µm
+                                                                    depth of the micromodel, which indicates potential blockage
+                                                                    of pore space. Crystals formed off-center or those formed
+                                                                    along the cylinder walls also occupied the entire 20 µm depth
+                                                                    in the micromodel, indicating crystal precipitation was
+                                                                    uniform along the vertical dimension in the micromodel.
+                                                                    Images of fluorescent tracer in the micromodels from a
+                                                                    control experiment (no precipitates in the micromodel) and
+                                                                    in the experiments after CaCO3 precipitation reached pseudo-
+                                                                    steady-state were obtained using a 2:1 flow rate of tracer:
+                                                                    water. The tracer solution occupied approximately 2/3 of
+                                                                    the transverse cross-sectional area of the micromodel in the
+                                                                    absence of CaCO3 precipitates, but only half of the transverse
+                                                                    cross-sectional area of the micromodels after CaCO3 pre-
+                                                                    cipitates formed at each of the four saturation states. This
+                                                                    confirms blockage of the pore space by CaCO3 precipitates.
+                                                                    Images that support these results are in the Supporting
+                                                                    Information (Figures S4 and S5).
+                                                                        Implications. Results from this study indicate mineral
+                                                                    precipitation reactions in subsurface sedimentary systems
+                                                                    can limit transverse mixing between reactive fluids. Different
+                                                                    polymorphs of CaCO3 crystal precipitation can form along
+                                                                    transverse mixing zones depending on the solution saturation
+                                                                    sate, and these result in a decrease in porosity, a reduction
+                                                                    in mixing between reactive species which limits mineral phase
+                                                                    transformation, and a reduction in effective permeability.
+                                                                    Implications of this study on processes occurring in sub-
+                                                                    surface sedimentary systems include the following:(i) along
+FIGURE 5. CaCO3 precipitation versus time in selected pores at
+(a) Ωc/Ωv ) 3.4/2.8 and (b) Ωc/Ωv ) 5.2/4.5.                        the fringes of CO2 plumes created during geological carbon
+                                                                    sequestration mineral precipitation may decrease the ef-
+                                                                    fective permeability and result in a buildup of pressure and
+                                                                    potential loss of injectivity, (ii) precipitates formed along
+                                                                    plume margins during in situ remediation can decrease
+                                                                    reactant mixing and decrease cleanup efficiency, (iii) mixing
+                                                                    and precipitation of leachate from nuclear waste repository
+                                                                    with surrounding groundwater can be an effective way of
+                                                                    storing radioactive wastes (26). Experiments performed in
+                                                                    this work represent a simplified scenario, more complex
+                                                                    solution conditions (i.e., presence of competing cations,
+                                                                    different ionic strength, pH, temperature, and pressure) and
+                                                                    physical and chemical heterogeneity in 3D porous media
+                                                                    are expected. Further study is needed to evaluate how these
+FIGURE 6. CaCO3 precipitation and dissolution (Ωc/Ωv ) 5.2/         complexities affect mineral precipitation, and corresponding
+4.5).                                                               changes in reactant mixing, mineralogy, porosity, and
+                                                                    permeability.
+to sharper reactant concentration gradients. Further, at high
+saturation state (Ωc/Ωv ) 5.2/4.5), the amount of precipitates      Acknowledgments
+decreased after reaching a maximum and then leveled off             This work was supported by the Office of Science (BER), U.S.
+(Figure 5b), which agrees with the overall trend in the entire      Department of Energy (DOE), Grant No. DE-FG02-06ER64207,
+micromodel.                                                         by a Graduate Assistance in Areas of National Need fellowship
+    Dissolution of CaCO3 Precipitates. CaCO3 precipitates           from the U.S. Department of Education for Karl Dehoff, Grant
+initially formed near the inlet at high saturation states were      P200A060190, by the Pacific Northwest National Laboratory
+found to dissolve over time; Figure 6 compares snapshots of         Directed Research and Development Program under PNNL’s
+selected pore spaces near the inlet and outlet at three different   Carbon Sequestration Initiative, and by LDRD 82552-001-10
+time points in the high saturation state experiment (Ωc/Ωv          sponsored by the Los Alamos National laboratory. A portion
+) 5.2/4.5). Near the inlet, the width of CaCO3 precipitates         of the experiments were conducted in the William R. Wiley
+decreased from 50 µm at 11 min to 10 µm at 70 min (Figure           Environmental Molecular Sciences Laboratory, a United
+6 left panels). We propose that this reduction occurs because       States Department of Energy (DOE) scientific user facility
+the packing density of precipitates increases over time (i.e.,      operated for the DOE by PNNL. We thank Jon Ekman at the
+porosity of CaCO3 precipitates decreases with time), limiting       Beckman Imaging Technology Group, University of Illinois,
+mixing and reaction between solutes. In the pore space near         for help with laser confocal imaging.
+the downgradient location, dissolution was also observed
+but to a lesser extent: from 23 µm at 29 min to 12 µm at 60
+min (Figure 6 right panels).                                        Supporting Information Available
+    Permeability Reduction. Changes in permeability as a            High resolution image (0.65 µm) used for mineral analysis
+result of CaCO3 precipitation were not directly measured in         (Figure S1), total and region specific precipitation versus time
+the current study; instead, 3D laser confocal microscopy and        from micromodel experiments at intermediate saturation
+fluorescent tracer tests were conducted to qualitatively            states (Figure S2, S3), laser confocal microscope images of
+evaluate permeability reduction. Laser confocal images in           precipitates in selected pores (Figure S4), and images of a
+selected pores for two experiments (Ωc/Ωv ) 3.4/2.8, 4.6/           fluorescent tracer before and after CaCO3 precipitation in
+
+                                                                     VOL. 44, NO. 20, 2010 / ENVIRONMENTAL SCIENCE & TECHNOLOGY 9 7837
+the micromodel (Figure S5).This material is available free of               (22) Katz, G. E.; Berkowitz, B.; Guadagnini, A.; Saaltink, M. W.,
+charge via the Internet at http://pubs.acs.org.                                  Experimental and modeling investigation of multicomponent
+                                                                                 reactive transport in porous media. J. Contam. Hydrol. 2010,
+                                                                                 DOI: 10.1016/j.jconhyd.2009.11.002.
+Literature Cited                                                            (23) Wigand, M.; Kaszuba, J. P.; Carey, J. W.; Hollis, W. K. Geochemical
+ (1) Audigane, P.; Gaus, I.; Czernichowski-Lauriol, I.; Pruess, K.; Xu,          effects of CO2 sequestration on fractured wellbore cement at
+     T. F. Two-dimensional reactive transport modeling of CO2                    the cement/caprock interface. Chem. Geol. 2009, 265 (1-2),
+     injection in a saline Aquifer at the Sleipner site, North Sea.              122–133.
+     Am. J. Sci. 2007, 307 (7), 974–1008.                                   (24) Yabusaki, S.; Cantrell, K.; Sass, B.; Steefel, C. Multicomponent
+ (2) Doughty, C.; Freifeld, B. M.; Trautz, R. C. Site characterization           reactive transport in an in situ zero-valent iron cell. Environ.
+     for CO2 geologic storage and vice versa: The Frio brine pilot,              Sci. Technol. 2001, 35 (7), 1493–1503.
+     Texas, USA as a case study. Environ. Geol. 2008, 54 (8), 1635–         (25) Keith, D. C.; Harrison, W. J.; Wendlandt, R. F.; Daniels, E. J.
+     1656.                                                                       Mineralogical responses of siliciclastic carbonate-cemented
+ (3) Nicot, J.-P. Evaluation of large-scale CO2 storage on fresh-water           reservoirs to steamflood enhanced oil recovery. Appl. Geochem.
+     sections of aquifers: An example from the Texas Gulf Coast                  1998, 13 (4), 491–507.
+     Basin. Int. J. Greenhouse Gas Control 2008, 2 (4), 582–593.            (26) Nicot, J. P. Methodology for bounding calculations of nuclear
+ (4) Doughty, C. Investigation of CO2 plume behavior for a large-                criticality of fissile material accumulations external to a waste
+     scale pilot test of geologic carbon storage in a saline formation.          container at Yucca Mountain, Nevada. Appl. Geochem. 2008, 23
+     Transp. Porous Media 2010, 82 (1), 49–76.                                   (8), 2065–2081.
+ (5) Person, M.; Banerjee, A.; Rupp, J.; Medina, C.; Lichtner, P.; Gable,   (27) Gramling, C. M.; Harvey, C. F.; Meigs, L. C. Reactive transport
+     C.; Pawar, R.; Celia, M.; McIntosh, J.; Bense, V. Assessment of             in porous media: A comparison of model prediction with
+     basin-scale hydrologic impacts of CO2 sequestration, Illinois               laboratory visualization. Environ. Sci. Technol. 2002, 36 (11),
+     basin. Int. J. Greenhouse Gas Control 2010, 4 (5), 840–854.                 2508–2514.
+ (6) IPCC Special Report on Carbon Dioxide Capture and Storage;             (28) Oates, P. M.; Harvey, C. F. A colorimetric reaction to quantify
+     Cambridge University Press: Cambridge, U.K., 2005; 442 pp.                  fluid mixing. Exp. Fluids 2006, 41 (5), 673–683.
+ (7) CCS Guidelines: Guidelines for Carbon Dioxide Capture, Trans-          (29) Willingham, T. W.; Werth, C. J.; Valocchi, A. J. Evaluation of the
+     port and Storage; W. R. I.: Washington, DC, 2008; 144 p.                    effects of porous media structure on mixing-controlled reactions
+ (8) National Energy Technology Laboratory. Carbon Sequestration                 using pore-scale modeling and micromodel experiments. En-
+     Atlas of the United States and Canada; U.S. Department of                   viron. Sci. Technol. 2008, 42 (9), 3185–3193.
+     Energy, Office of Fossil Energy: Washington DC, 2007; 90 p.            (30) Willingham, T.; Zhang, C.; Werth, C. J.; Valocchi, A. J.; Oostrom,
+ (9) Rosenbauer, R. J.; Koksalan, T.; Palandri, J. L. Experimental               M.; Wietsma, T. W. Using dispersivity values to quantify the
+     investigation of CO2-brine-rock interactions at elevated tem-               effects of pore-scale flow focusing on enhanced reaction along
+     perature and pressure: Implications for CO2 sequestration in                a transverse mixing zone. Adv. Water Resour. 2010, 33 (4), 525–
+     deep-saline aquifers. Fuel Process. Technol. 2005, 86 (14-15),              535.
+     1581–1597.                                                             (31) Steefel, C. I.; Lichtner, P. C. Diffusion and reaction in rock matrix
+(10) Kharaka, Y. K.; Thordsen, J. J.; Hovorka, S. D.; Nance, H. S.; Cole,        bordering a hyperalkaline fluid-filled fracture. Geochim. Cos-
+     D. R.; Phelps, T. J.; Knauss, K. G. Potential environmental issues          mochim. Acta 1994, 58 (17), 3595–3612.
+     of CO2 storage in deep saline aquifers: Geochemical results from
+                                                                            (32) Kang, Q. J.; Zhang, D. X.; Chen, S. Y. Simulation of dissolution
+     the Frio-I Brine Pilot test, Texas, USA. Appl. Geochem. 2009, 24
+                                                                                 and precipitation in porous media. J. Geophys. Res., [Solid Earth]
+     (6), 1106–1112.
+                                                                                 2003, 108 (B10), DOI: 10.1029/2003JB002504.
+(11) Johnson, J. W.; Nitao, J. J.; Knauss, K. G. Reactive transport
+                                                                            (33) Emmanuel, S.; Berkowitz, B. Mixing-induced precipitation and
+     modelling of CO2 storage in saline aquifers to elucidate
+                                                                                 porosity evolution in porous media. Adv. Water Resour. 2005,
+     fundamental processes, trapping mechanisms and sequestration
+                                                                                 28 (4), 337–344.
+     partitioning. In Geological Storage of Carbon Dioxide; Baines,
+     S. J., Worden, R. H., Eds.; Geological Society, London, Special        (34) Li, L.; Peters, C. A.; Celia, M. A. Effects of mineral spatial
+     Publications: 2004; Vol. 233.                                               distribution on reaction rates in porous media. Water Resour.
+(12) Ennis-King, J.; Paterson, L. Role of convective mixing in the               Res. 2007, 43 (1), DOI: 10.1029/2005WR004848.
+     long-term storage of carbon dioxide in deep saline formations.         (35) Zhang, C. Y.; Kang, Q. J.; Wang, X.; Zilles, J. L.; Muller, R. H.;
+     SPE J. 2005, 10 (3), 349–356.                                               Werth, C. J. Effects of Pore-Scale Heterogeneity and Transverse
+(13) Ennis-King, J.; Paterson, L. Coupling of geochemical reactions              Mixing on Bacterial Growth in Porous Media. Environ. Sci.
+     and convective mixing in the long-term geological storage of                Technol. 2010, 44 (8), 3085–3092.
+     carbon dioxide. Int. J. Greenhouse Gas Control 2007, 1 (1), 86–        (36) Stumm, W. Chemistry of the Solid-Water Interface; John Wiley
+     93.                                                                         & Sons, Inc: New York, 1992.
+(14) Giammar, D. E.; Bruant, R. G.; Peters, C. A. Forsterite dissolution    (37) Kandianis, M. T.; Fouke, B. W.; Johnson, R. W.; Veysey, J.; Inskeep,
+     and magnesite precipitation at conditions relevant for deep                 W. P. Microbial biomass: A catalyst for CaCO3 precipitation in
+     saline aquifer storage and sequestration of carbon dioxide.                 advection-dominated transport regimes. Geol. Soc. Am. Bull.
+     Chem. Geol. 2005, 217 (3-4), 257–276.                                       2008, 120 (3-4), 442–450.
+(15) Luquot, L.; Gouze, P. Experimental determination of porosity           (38) Chomsurin, C.; Werth, C. J. Analysis of pore-scale nonaqueous
+     and permeability changes induced by injection of CO2 into                   phase liquid dissolution in etched silicon pore networks. Water
+     carbonate rocks. Chem. Geol. 2009, 265 (1-2), 148–159.                      Resour. Res. 2003, 39 (9), DOI: 10.1029/2002WR001643.
+(16) Liteanu, E.; Spiers, C. J. Influence of pore fluid salt content on     (39) Behrens, G.; Kuhn, L. T.; Ubic, R.; Heuer, A. H. Raman-spectra
+     compaction creep of calcite aggregates in the presence of                   of vateritic calcium-carbonate. Spectrosc. Lett. 1995, 28 (6), 983–
+     supercritical CO2. Chem. Geol. 2009, 265 (1-2), 134–147.                    995.
+(17) Xu, T. F.; Apps, J. A.; Pruess, K. Reactive geochemical transport      (40) Veinott, G. I.; Porter, T. R.; Nasdala, L. Using Mg as a proxy for
+     simulation to study mineral trapping for CO2 disposal in deep               crystal structure and Sr as an indicator of marine growth in
+     arenaceous formations. J. Geophys. Res., [Solid Earth] 2003, 108            vaterite and aragonite otoliths of aquaculture rainbow trout.
+     (B2), DOI: 10.1029/2002JB001979.                                            Trans. Am. Fish. Soc. 2009, 138 (5), 1157–1165.
+(18) Xu, T. F.; Apps, J. A.; Pruess, K. Numerical simulation of CO2         (41) Paquette, J.; Reeder, R. J. New type of compositional zoning in
+     disposal by mineral trapping in deep aquifers. Appl. Geochem.               calcitesInsights into crystal-growth mechanisms. Geology 1990,
+     2004, 19 (6), 917–936.                                                      18 (12), 1244–1247.
+(19) Matter, J. M.; Kelemen, P. B. Permanent storage of carbon dioxide      (42) Dickson, J. A. D. Crystal-growth diagrams as an aid to interpreting
+     in geological reservoirs by mineral carbonation. Nat. Geosci.               the fabrics of calcite aggregates. J. Sediment. Petrol. 1993, 63
+     2009, 2 (12), 837–841.                                                      (1), 1–17.
+(20) Carteret, C.; Dandeu, A.; Moussaoui, S.; Muhr, H.; Humbert, B.;        (43) Jones, B.; Renaut, R. W.; Owen, R. B.; Torfason, H. Growth
+     Plasari, E. Polymorphism studied by lattice phonon raman                    patterns and implications of complex dendrites in calcite
+     spectroscopy and statistical mixture analysis method. Applica-              travertines from Lysuholl, Sn ae fellsnes, Iceland. Sedimentology
+     tion to calcium carbonate polymorphs during batch crystal-                  2005, 52 (6), 1277–1301.
+     lization. Cryst. Growth Des. 2009, 9 (2), 807–812.                     (44) Wollenweber, J.; Alles, S.; Busch, A.; Krooss, B. M.; Stanjek, H.;
+(21) Tartakovsky, A. M.; Redden, G.; Lichtner, P. C.; Scheibe, T. D.;            Littke, R. Experimental investigation of the CO2 sealing efficiency
+     Meakin, P. Mixing-induced precipitation: Experimental study                 of caprocks. Int. J. Greenh. Gas Con. 2010, 4 (2), 231–241.
+     and multiscale numerical analysis. Water Resour. Res. 2008, 44
+     (6), DOI: 10.1029/2006WR005725.                                        ES1019788
+
+
+7838 9 ENVIRONMENTAL SCIENCE & TECHNOLOGY / VOL. 44, NO. 20, 2010
+

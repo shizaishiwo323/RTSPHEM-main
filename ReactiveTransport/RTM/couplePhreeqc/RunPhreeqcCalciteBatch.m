@@ -42,12 +42,28 @@ iphreeqc.RunFile(inputPath);
 rawOutput = iphreeqc.GetSelectedOutputArray;
 
 activeResult = ParsePhreeqcSelectedOutput(rawOutput, nnz(activeCells));
+activeResult = applyHydrogenActivityForTstMatch(activeResult, options);
 activeResult = scaleKineticDissolutionToCellInventory(activeResult, activeState, options);
 activeResult = InferCalciteDissolutionFromTotals(activeResult, activeState, getOption(options, 'timeStepSize', 1));
+activeResult = applyPrescribedCalciteDissolution(activeResult, activeState, options);
 result = mergeActiveResult(result, activeResult, activeCells);
 result.inputPath = string(inputPath);
 result.databasePath = string(databasePath);
 clear cleanupPhreeqc;
+end
+
+function result = applyHydrogenActivityForTstMatch(result, options)
+defaultRateLaw = getOption(options, 'phreeqcRateLaw', 'database_calcite');
+rateLaw = getOption(options, 'rateLaw', defaultRateLaw);
+rateLaw = lower(strrep(strtrim(char(rateLaw)), '-', '_'));
+if ~ismember(rateLaw, {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match'})
+    return;
+end
+if isfield(result, 'pH') && ~isempty(result.pH)
+    result.h_activity_mol_cm3 = 10 .^ (-result.pH(:)) ./ 1000;
+else
+    result.h_activity_mol_cm3 = result.h_mol_cm3;
+end
 end
 
 function result = scaleKineticDissolutionToCellInventory(result, state, options)
@@ -73,6 +89,24 @@ result.calciteRate_mol_s = dissolvedMoles ./ max(timeStepSize, eps);
 result.calciteRate_mol_dm2_s = result.calciteRate_mol_s;
 end
 
+function result = applyPrescribedCalciteDissolution(result, state, options)
+numCells = numel(result.h_mol_cm3);
+if ~isfield(state, 'prescribed_calcite_dissolved_moles') || ...
+        isempty(state.prescribed_calcite_dissolved_moles)
+    return;
+end
+
+timeStepSize = getOption(options, 'timeStepSize', 1);
+prescribed = optionalColumn(state, 'prescribed_calcite_dissolved_moles', numCells, 0);
+dissolvedMoles = max(prescribed(:), 0);
+dissolvedMoles(~isfinite(dissolvedMoles)) = 0;
+
+result.calciteDissolvedMoles = dissolvedMoles;
+result.calciteDeltaMoles = -dissolvedMoles;
+result.calciteRate_mol_s = dissolvedMoles ./ max(timeStepSize, eps);
+result.calciteRate_mol_dm2_s = result.calciteRate_mol_s;
+end
+
 function activeCells = selectActivePhreeqcCells(state, options)
 numCells = numel(state.h_mol_cm3);
 interfaceArea = optionalColumn(state, 'interface_area_cm2', numCells, 0);
@@ -83,6 +117,7 @@ c = optionalColumn(state, 'c_mol_cm3', numCells, 0);
 na = optionalColumn(state, 'na_mol_cm3', numCells, 0);
 cl = optionalColumn(state, 'cl_mol_cm3', numCells, 0);
 h = optionalColumn(state, 'h_mol_cm3', numCells, 0);
+prescribed = optionalColumn(state, 'prescribed_calcite_dissolved_moles', numCells, 0);
 concentrationTol = getOption(options, 'activeConcentrationToleranceMolCm3', 1e-30);
 minActiveWaterVolume = getOption(options, 'minActiveWaterVolumeCm3', 0);
 minActiveWaterVolumeFraction = getOption(options, 'minActiveWaterVolumeFraction', 0);
@@ -94,7 +129,9 @@ end
 hasWater = waterVolume(:) > minActiveWaterVolume;
 hasInterface = interfaceArea(:) > 0 & calciteMoles(:) > 0;
 hasChemistry = any([h(:), ca(:), c(:), na(:), cl(:)] > concentrationTol, 2);
-activeCells = hasWater & (hasChemistry | (reactNeutralInterfaceCells & hasInterface));
+hasPrescribedReaction = prescribed(:) > 0;
+activeCells = hasWater & (hasChemistry | hasPrescribedReaction ...
+    | (reactNeutralInterfaceCells & hasInterface));
 end
 
 function activeState = subsetState(state, activeCells)

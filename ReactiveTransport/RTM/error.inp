@@ -1,0 +1,36 @@
+SOLUTION_RAW                 19708 
+  -temp                      25
+  -pressure                  1
+  -potential                 0
+  -total_h                   111.02319457763
+  -total_o                   55.506216696271
+  -cb                        0.00094236097818099
+  -density                   0.99722381083016
+  -viscosity                 0.89002391814353
+  -viscos_0                  0.89002391814353
+  -totals
+    Cl                       0.0098188241046565
+    H(0)                     1.3618207685549e-015
+  -pH                        2.0079405210354
+  -pe                        4
+  -mu                        0.01029000458205
+  -ah2o                      0.99965013984421
+  -mass_water                1
+  -soln_vol                  1.0031438711966
+  -total_alkalinity          -0.010761185082838
+  -activities
+    Cl                       -2.0539195983612
+    E                        -4
+    H(0)                     -15.165881040824
+    O(0)                     -62.048541852084
+  -gammas
+REACTION_RAW                 19708 
+  -reactant_list
+    CaCO3                    1
+  -steps
+    79.550287394843 
+  -count_steps               0
+  -equal_increments          0
+  -units                     Mol
+  # REACTION workspace variables #
+  -element_list

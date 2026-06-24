@@ -101,6 +101,11 @@ cfg.initialHydrogenConcentration = 1e-4;
 % 化学反应求解器：PHREEQC 单矿物 calcite / HCl-NaCl 体系。
 % 旧 TST 求解器仍可通过 cfg.reactionModel = 'tst' 使用。
 cfg.reactionModel = 'phreeqc';
+% 默认跑两组：
+%   phreeqc_database_calcite : phreeqc-m.dat 中真实 Calcite carbonate chemistry
+%   phreeqc_tst_match        : 输运后的 H+ 场定义一级 TST 反应量，再交给 PHREEQC 做物种平衡
+% 如只想跑单组，可改为 {'phreeqc_tst_match'} 或 {'phreeqc_database_calcite'}。
+cfg.phreeqcRunGroups = {'phreeqc_database_calcite', 'phreeqc_tst_match'};
 cfg.phreeqcDatabasePath = "C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat";
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
@@ -228,30 +233,68 @@ cfg.nmrSurrogateDevice = nmrWorkflowConfig.nmrSurrogateDevice;
 %   PNG NMR 参数和 T2 反演参数统一在 ReactiveTransport/RTM/NMRSimulationConfig.m 中设置。
 
 %% ===================== 开始运行 =====================
-fprintf('========================================\n');
-fprintf('单组 RTM/NMR 运行\n');
-fprintf('  layout = %s\n', cfg.layoutType);
-fprintf('  L      = %.6g cm\n', cfg.characteristicLength);
-fprintf('  u_in   = %.6g cm/s\n', cfg.inletVelocity);
-fprintf('  D      = %.6g cm^2/s\n', cfg.diffusionCoefficient);
-fprintf('  c_in   = %.6g mol/cm^3\n', cfg.initialHydrogenConcentration);
-fprintf('  reaction model = %s\n', cfg.reactionModel);
-fprintf('  PHREEQC DB = %s\n', cfg.phreeqcDatabasePath);
-if ~isempty(cfg.targetDissolutionSlices)
-    fprintf('  target dissolution slices = %d\n', cfg.targetDissolutionSlices);
+baseCfg = cfg;
+runStamp = datestr(now, 'yyyymmdd_HHMMSS');
+runGroups = baseCfg.phreeqcRunGroups;
+if ischar(runGroups) || isstring(runGroups)
+    runGroups = cellstr(runGroups);
 end
-if strcmpi(cfg.layoutType, 'random') && cfg.loadExistingGeometry
-    fprintf('  random geometry = %s\n', cfg.geometryLoadFile);
+
+results = struct();
+for iGroup = 1:numel(runGroups)
+    groupCfg = ConfigurePhreeqcRunGroup(baseCfg, runGroups{iGroup}, runStamp);
+    if isfield(baseCfg, 'resultsDir') && ~isempty(baseCfg.resultsDir)
+        groupCfg.resultsDir = fullfile(char(baseCfg.resultsDir), groupCfg.phreeqcRunGroup);
+    end
+
+    fprintf('========================================\n');
+    fprintf('PHREEQC RTM/NMR 运行组 %d/%d\n', iGroup, numel(runGroups));
+    fprintf('  group  = %s\n', groupCfg.phreeqcRunGroup);
+    fprintf('  rate law = %s\n', groupCfg.phreeqcRateLaw);
+    fprintf('  layout = %s\n', groupCfg.layoutType);
+    fprintf('  L      = %.6g cm\n', groupCfg.characteristicLength);
+    fprintf('  u_in   = %.6g cm/s\n', groupCfg.inletVelocity);
+    fprintf('  D      = %.6g cm^2/s\n', groupCfg.diffusionCoefficient);
+    fprintf('  c_in   = %.6g mol/cm^3\n', groupCfg.initialHydrogenConcentration);
+    fprintf('  reaction model = %s\n', groupCfg.reactionModel);
+    fprintf('  PHREEQC DB = %s\n', groupCfg.phreeqcDatabasePath);
+    if strcmpi(groupCfg.phreeqcRateLaw, 'tst_match')
+        fprintf('  TST-match k = %.6g mol/dm^2/s\n', groupCfg.phreeqcTstRateCoefficient);
+    end
+    if ~isempty(groupCfg.targetDissolutionSlices)
+        fprintf('  target dissolution slices = %d\n', groupCfg.targetDissolutionSlices);
+    end
+    if strcmpi(groupCfg.layoutType, 'random') && groupCfg.loadExistingGeometry
+        fprintf('  random geometry = %s\n', groupCfg.geometryLoadFile);
+    end
+    fprintf('  sync NMR = %s\n', mat2str(groupCfg.enableNMRSimulation));
+    fprintf('  surrogate NMR = %s\n', mat2str(groupCfg.enableNMRSurrogate));
+    fprintf('  NMR method = %s\n', nmrOptions.nmr_method);
+    fprintf('  PNG NMR = %s (%s)\n', mat2str(groupCfg.enablePNGSimulation), groupCfg.pngNMRMethod);
+    fprintf('========================================\n\n');
+
+    result = PNM_beauty3(groupCfg);
+    results.(matlab.lang.makeValidName(groupCfg.phreeqcRunGroup)) = result;
+
+    fprintf('\n运行完成 [%s]:\n', groupCfg.phreeqcRunGroup);
+    fprintf('  结果目录: %s\n', result.resultsDir);
+    fprintf('  最终孔隙率: %.6f\n', result.finalPorosity);
+    fprintf('  最终渗透率: %.6f mD\n', result.finalPermeability);
+
+    try
+        comparison = ComparePhreeqcRunToPe0p1(result.resultsDir);
+        results.(matlab.lang.makeValidName(groupCfg.phreeqcRunGroup)).comparisonToPe0p1 = comparison;
+        fprintf('  Pe0p1 对比目录: %s\n', fullfile(result.resultsDir, 'comparison_to_Pe0p1'));
+    catch compareErr
+        warning('RTSPHEM:Phreeqc:ComparisonFailed', ...
+            'Pe0p1 comparison failed for %s: %s', groupCfg.phreeqcRunGroup, compareErr.message);
+    end
 end
-fprintf('  sync NMR = %s\n', mat2str(cfg.enableNMRSimulation));
-fprintf('  surrogate NMR = %s\n', mat2str(cfg.enableNMRSurrogate));
-fprintf('  NMR method = %s\n', nmrOptions.nmr_method);
-fprintf('  PNG NMR = %s (%s)\n', mat2str(cfg.enablePNGSimulation), cfg.pngNMRMethod);
-fprintf('========================================\n\n');
 
-result = PNM_beauty3(cfg);
-
-fprintf('\n运行完成:\n');
-fprintf('  结果目录: %s\n', result.resultsDir);
-fprintf('  最终孔隙率: %.6f\n', result.finalPorosity);
-fprintf('  最终渗透率: %.6f mD\n', result.finalPermeability);
+fprintf('\n全部 PHREEQC 运行组完成:\n');
+for iGroup = 1:numel(runGroups)
+    fieldName = matlab.lang.makeValidName(ConfigurePhreeqcRunGroup(struct(), runGroups{iGroup}).phreeqcRunGroup);
+    if isfield(results, fieldName)
+        fprintf('  %s -> %s\n', fieldName, results.(fieldName).resultsDir);
+    end
+end

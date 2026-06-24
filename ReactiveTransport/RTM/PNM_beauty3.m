@@ -48,6 +48,10 @@ externalTifLiquidValue = cfgget(config, 'externalTifLiquidValue', []);
 externalTifPixelSizeMicron = cfgget(config, 'externalTifPixelSizeMicron', []);
 externalTifPixelSizeCm = cfgget(config, 'externalTifPixelSizeCm', []);
 externalTifSmoothingSigmaPixels = cfgget(config, 'externalTifSmoothingSigmaPixels', 1.5);
+externalTifCropTopRows = cfgget(config, 'externalTifCropTopRows', 0);
+externalTifCropBottomRows = cfgget(config, 'externalTifCropBottomRows', 0);
+externalTifCropLeftCols = cfgget(config, 'externalTifCropLeftCols', 0);
+externalTifCropRightCols = cfgget(config, 'externalTifCropRightCols', 0);
 externalDxfPath = cfgget(config, 'externalDxfPath', cfgget(config, 'dxfPath', ""));
 externalDxfDomainLayerNames = cfgget(config, 'externalDxfDomainLayerNames', {'domin', 'domain', 'DOMAIN'});
 externalDxfSolidLayerNames = cfgget(config, 'externalDxfSolidLayerNames', {'calcite'});
@@ -284,6 +288,12 @@ if ~useExternalGeometry
             % random 模式保持原有逻辑，使用目标尺寸
             lengthYAxis = targetLengthYAxis;
             lengthXAxis = targetLengthYAxis * targetAspectRatio;
+
+        case 'single_circle'
+            % Single centered grain benchmark geometry, e.g. Molins et al.
+            % parts I/II: 0.1 cm x 0.05 cm channel with one calcite disk.
+            lengthYAxis = targetLengthYAxis;
+            lengthXAxis = targetLengthYAxis * targetAspectRatio;
             
         otherwise
             error('Unknown layoutType: %s', layoutType);
@@ -346,12 +356,36 @@ inletChlorideConcentration = cfgget(config, 'inletChlorideConcentration', initia
 phreeqcTemperatureC = cfgget(config, 'phreeqcTemperatureC', 25);
 phreeqcDatabasePath = cfgget(config, 'phreeqcDatabasePath', defaultPhreeqcDatabasePath());
 phreeqcExportEvery = cfgget(config, 'phreeqcExportEvery', exportEvery);
+phreeqcRunGroup = char(cfgget(config, 'phreeqcRunGroup', 'phreeqc_database_calcite'));
+if usePhreeqc
+    phreeqcRateLaw = normalizePhreeqcRateLaw( ...
+        cfgget(config, 'phreeqcRateLaw', defaultPhreeqcRateLaw(phreeqcRunGroup)));
+else
+    phreeqcRateLaw = normalizePhreeqcRateLaw( ...
+        cfgget(config, 'phreeqcRateLaw', 'database_calcite'));
+end
+phreeqcTransportFirstSplit = usePhreeqc && strcmpi(phreeqcRateLaw, 'tst_match');
+phreeqcTstRateCoefficient = cfgget(config, 'phreeqcTstRateCoefficient', rateCoefficientTST);
 phreeqcKineticsCorrectionFactor = cfgget(config, 'phreeqcKineticsCorrectionFactor', 1);
 phreeqcMaxSpecificSurfaceArea = cfgget(config, 'phreeqcMaxSpecificSurfaceArea', 10);
+if usePhreeqc && strcmpi(phreeqcRateLaw, 'tst_match') && ...
+        ~cfgHasNonEmptyField(config, 'phreeqcMaxSpecificSurfaceArea')
+    phreeqcMaxSpecificSurfaceArea = Inf;
+end
 phreeqcBadStepMax = cfgget(config, 'phreeqcBadStepMax', 5000);
 phreeqcMinHForPHMolL = cfgget(config, 'phreeqcMinHForPHMolL', 1e-7);
 phreeqcMinActiveWaterVolumeFraction = cfgget(config, 'phreeqcMinActiveWaterVolumeFraction', 0);
 phreeqcMinActiveWaterVolumeCm3 = cfgget(config, 'phreeqcMinActiveWaterVolumeCm3', 0);
+phreeqcReactionWaterVolumeFloorFraction = cfgget(config, 'phreeqcReactionWaterVolumeFloorFraction', 0);
+phreeqcReactionWaterVolumeFloorCm3 = cfgget(config, 'phreeqcReactionWaterVolumeFloorCm3', 0);
+phreeqcReactionProjectionMinCells = cfgget(config, 'phreeqcReactionProjectionMinCells', 6);
+phreeqcReactionProjectionMaxCells = cfgget(config, 'phreeqcReactionProjectionMaxCells', 18);
+phreeqcReactionProjectionMaxRings = cfgget(config, 'phreeqcReactionProjectionMaxRings', 3);
+phreeqcReactionProjectionFlowBias = cfgget(config, 'phreeqcReactionProjectionFlowBias', 0);
+phreeqcReactionProjectionMode = lower(char(cfgget(config, ...
+    'phreeqcReactionProjectionMode', 'interface_cell')));
+phreeqcReactionWaterVolumeMode = lower(char(cfgget(config, ...
+    'phreeqcReactionWaterVolumeMode', 'cut_cell_agglomerated')));
 phreeqcReactNeutralInterfaceCells = logical(cfgget(config, 'phreeqcReactNeutralInterfaceCells', false));
 phreeqcSolutionWaterKg = cfgget(config, 'phreeqcSolutionWaterKg', 1);
 phreeqcWriteSolutionWaterLine = logical(cfgget(config, 'phreeqcWriteSolutionWaterLine', false));
@@ -374,7 +408,7 @@ dissolutionReactionRate = @(cHydrogen) ...
 kinematicViscosityWater = 0.01;  % [cm²/s]
 rhoWater = 1;                                  % 密度 [g/cm^3]（cgs）
 mu = rhoWater * kinematicViscosityWater;   
-thickness = 1;
+thickness = cfgget(config, 'thicknessCm', cfgget(config, 'partIIIHeightCm', 1));
 
 if strcmp(layoutType, 'random')
     defaultCharacteristicLength = targetAvgSpacing; % [cm]
@@ -390,6 +424,12 @@ fprintf('Rate coefficient (TST)          : %.4e mol dm^(-2) s^(-1)\n', rateCoeff
 fprintf('Reaction model                 : %s\n', reactionModel);
 if usePhreeqc
     fprintf('PHREEQC database               : %s\n', phreeqcDatabasePath);
+    fprintf('PHREEQC run group              : %s\n', phreeqcRunGroup);
+    fprintf('PHREEQC rate law               : %s\n', phreeqcRateLaw);
+    if strcmpi(phreeqcRateLaw, 'tst_match')
+        fprintf('PHREEQC TST-match coefficient  : %.4e mol dm^(-2) s^(-1)\n', ...
+            phreeqcTstRateCoefficient);
+    end
     fprintf('Na/Cl initial concentration    : %.4e / %.4e mol cm^(-3)\n', ...
         initialSodiumConcentration, initialChlorideConcentration);
 end
@@ -446,6 +486,28 @@ elseif useExternalTifGeometry
         Iraw = rgb2gray(Iraw(:, :, 1:3));
     elseif ndims(Iraw) > 2
         Iraw = Iraw(:, :, 1);
+    end
+    externalTifCropTopRows = max(0, round(externalTifCropTopRows));
+    externalTifCropBottomRows = max(0, round(externalTifCropBottomRows));
+    externalTifCropLeftCols = max(0, round(externalTifCropLeftCols));
+    externalTifCropRightCols = max(0, round(externalTifCropRightCols));
+    rawRows = size(Iraw, 1);
+    rawCols = size(Iraw, 2);
+    rowStart = 1 + externalTifCropTopRows;
+    rowEnd = rawRows - externalTifCropBottomRows;
+    colStart = 1 + externalTifCropLeftCols;
+    colEnd = rawCols - externalTifCropRightCols;
+    if rowStart > rowEnd || colStart > colEnd
+        error('External TIF crop removes the whole image: top=%d, bottom=%d, left=%d, right=%d.', ...
+            externalTifCropTopRows, externalTifCropBottomRows, ...
+            externalTifCropLeftCols, externalTifCropRightCols);
+    end
+    if externalTifCropTopRows > 0 || externalTifCropBottomRows > 0 || ...
+            externalTifCropLeftCols > 0 || externalTifCropRightCols > 0
+        fprintf('Cropping external TIF: top=%d rows, bottom=%d rows, left=%d cols, right=%d cols\n', ...
+            externalTifCropTopRows, externalTifCropBottomRows, ...
+            externalTifCropLeftCols, externalTifCropRightCols);
+        Iraw = Iraw(rowStart:rowEnd, colStart:colEnd);
     end
     % 将图像转为二值：BW_solid=true 表示固体，false 表示孔隙/液体。
     if ~isempty(externalTifSolidValue) || ~isempty(externalTifLiquidValue)
@@ -1037,8 +1099,18 @@ else
                 end
             end  % end if ~geometryLoaded
 
+        case 'single_circle'
+            defaultCenter = [0.5 * lengthXAxis, 0.5 * lengthYAxis];
+            circleCenters = cfgget(config, 'singleCircleCenter', defaultCenter);
+            circleCenters = double(circleCenters);
+            if numel(circleCenters) ~= 2
+                error('singleCircleCenter must be a two-element [x, y] coordinate in cm.');
+            end
+            circleCenters = reshape(circleCenters, 1, 2);
+            circleRadii = circleRadius;
+
         otherwise
-            error('Unknown layoutType. Use square | hex | random.');
+            error('Unknown layoutType. Use square | hex | random | single_circle.');
     end
 
     if isempty(circleRadii)
@@ -1321,7 +1393,9 @@ if writeExcel && exist(tortuositySegXlsxFile, 'file'), delete(tortuositySegXlsxF
 
 if ~exist(logfile, 'file')
     fid = fopen(logfile, 'w');
-    fprintf(fid, 'timestep,time_s,porosity,permeability_mD,k_k0,avg_dissolution_rate,surface_area_cm2,grain_volume_cm3,injected_pv,outlet_H_conc,tortuosity\n');
+    fprintf(fid, ['timestep,time_s,porosity,permeability_mD,k_k0,avg_dissolution_rate,', ...
+        'interface_tst_rate_mol_cm2_s,flux_apparent_rate_mol_cm2_s,', ...
+        'surface_area_cm2,grain_volume_cm3,injected_pv,outlet_H_conc,tortuosity\n']);
     fclose(fid);
 end
 
@@ -1376,12 +1450,24 @@ if usePhreeqc
         'temperatureC', phreeqcTemperatureC, ...
         'mineralName', 'Calcite', ...
         'mineralFormula', 'CaCO3', ...
+        'rateLaw', phreeqcRateLaw, ...
+        'phreeqcRunGroup', phreeqcRunGroup, ...
+        'rateCoefficientTST', phreeqcTstRateCoefficient, ...
+        'phreeqcTstRateCoefficient', phreeqcTstRateCoefficient, ...
         'kineticsCorrectionFactor', phreeqcKineticsCorrectionFactor, ...
         'maxSpecificSurfaceArea', phreeqcMaxSpecificSurfaceArea, ...
         'badStepMax', phreeqcBadStepMax, ...
         'minHForPHMolL', phreeqcMinHForPHMolL, ...
         'minActiveWaterVolumeFraction', phreeqcMinActiveWaterVolumeFraction, ...
         'minActiveWaterVolumeCm3', phreeqcMinActiveWaterVolumeCm3, ...
+        'reactionWaterVolumeFloorFraction', phreeqcReactionWaterVolumeFloorFraction, ...
+        'reactionWaterVolumeFloorCm3', phreeqcReactionWaterVolumeFloorCm3, ...
+        'reactionProjectionMinCells', phreeqcReactionProjectionMinCells, ...
+        'reactionProjectionMaxCells', phreeqcReactionProjectionMaxCells, ...
+        'reactionProjectionMaxRings', phreeqcReactionProjectionMaxRings, ...
+        'reactionProjectionFlowBias', phreeqcReactionProjectionFlowBias, ...
+        'reactionProjectionMode', phreeqcReactionProjectionMode, ...
+        'reactionWaterVolumeMode', phreeqcReactionWaterVolumeMode, ...
         'reactNeutralInterfaceCells', phreeqcReactNeutralInterfaceCells, ...
         'solutionWaterKg', phreeqcSolutionWaterKg, ...
         'writeSolutionWaterLine', phreeqcWriteSolutionWaterLine, ...
@@ -1392,6 +1478,30 @@ if usePhreeqc
     phreeqcSpeciesData = initializePhreeqcSpeciesDataFromTransports( ...
         hydrogenTransport, calciumTransport, carbonTransport, sodiumTransport, chlorideTransport, 0);
     phreeqcCalciteRateData = zeros(gridHyPHM.numT, 1);
+    if strcmpi(phreeqcRateLaw, 'tst_match')
+        initialPhreeqcGeometryState = computePhreeqcGeometryState( ...
+            gridHyPHM, levelSet{1}(:, 1), molarVolume, thickness);
+        initialPhreeqcState = collectPhreeqcState(hydrogenTransport, calciumTransport, ...
+            carbonTransport, sodiumTransport, chlorideTransport, 0, initialPhreeqcGeometryState);
+        initialPhreeqcState.prescribed_calcite_dissolved_moles = ...
+            zeros(size(initialPhreeqcGeometryState.water_volume_cm3(:)));
+        initialPhreeqcState.reaction_water_volume_cm3 = ...
+            initialPhreeqcGeometryState.water_volume_cm3(:);
+        initialEquilibriumOptions = phreeqcOptions;
+        initialEquilibriumOptions.timeStepIndex = -1;
+        initialEquilibriumData = RunPhreeqcCalciteBatch( ...
+            initialPhreeqcState, initialEquilibriumOptions);
+        phreeqcSpeciesData = updatePhreeqcStateFromResult( ...
+            phreeqcSpeciesData, initialEquilibriumData);
+        initialPhreeqcStepSize = transportStepper.timepts(2) - transportStepper.timepts(1);
+        initialRateDriver = getPhreeqcTstRateDriver(phreeqcSpeciesData);
+        initialTstStep = ComputeTstMatchStepDissolution( ...
+            initialRateDriver, initialPhreeqcGeometryState.interface_area_cm2, ...
+            initialPhreeqcGeometryState.calcite_moles, initialPhreeqcStepSize, ...
+            gridHyPHM.V0T, VertexTriMatrix, gridHyPHM.numV, ...
+            phreeqcTstRateCoefficient, molarVolume);
+        phreeqcCalciteRateData = initialTstStep.ratePerArea_mol_cm2_s;
+    end
     phreeqcSpeciesData.calciteRatePerArea_mol_cm2_s = phreeqcCalciteRateData;
     phreeqcSpeciesData.calciteDissolvedMoles = zeros(gridHyPHM.numT, 1);
 end
@@ -1445,6 +1555,10 @@ metadata.externalGeometry.tifSolidValue = externalTifSolidValue;
 metadata.externalGeometry.tifLiquidValue = externalTifLiquidValue;
 metadata.externalGeometry.tifPixelSizeMicron = pixelSizeMicron;
 metadata.externalGeometry.tifSmoothingSigmaPixels = externalTifSmoothingSigmaPixels;
+metadata.externalGeometry.tifCropTopRows = externalTifCropTopRows;
+metadata.externalGeometry.tifCropBottomRows = externalTifCropBottomRows;
+metadata.externalGeometry.tifCropLeftCols = externalTifCropLeftCols;
+metadata.externalGeometry.tifCropRightCols = externalTifCropRightCols;
 if useExternalDxfGeometry && ~isempty(externalDxfGeometry)
     metadata.externalGeometry.dxfScaleCmPerUnit = externalDxfGeometry.scaleCmPerDxfUnit;
     metadata.externalGeometry.dxfDomainLayer = externalDxfGeometry.domainLayer;
@@ -1476,6 +1590,9 @@ metadata.parameters = struct( ...
     'molarVolume_cm3_mol', molarVolume, ...
     'rateCoefficientTST_mol_dm2_s', rateCoefficientTST, ...
     'reactionModel', string(reactionModel), ...
+    'phreeqcRunGroup', string(phreeqcRunGroup), ...
+    'phreeqcRateLaw', string(phreeqcRateLaw), ...
+    'phreeqcTstRateCoefficient_mol_dm2_s', phreeqcTstRateCoefficient, ...
     'phreeqcDatabasePath', string(phreeqcDatabasePath), ...
     'phreeqcTemperatureC', phreeqcTemperatureC, ...
     'phreeqcKineticsCorrectionFactor', phreeqcKineticsCorrectionFactor, ...
@@ -1484,6 +1601,14 @@ metadata.parameters = struct( ...
     'phreeqcMinHForPHMolL', phreeqcMinHForPHMolL, ...
     'phreeqcMinActiveWaterVolumeFraction', phreeqcMinActiveWaterVolumeFraction, ...
     'phreeqcMinActiveWaterVolumeCm3', phreeqcMinActiveWaterVolumeCm3, ...
+    'phreeqcReactionWaterVolumeFloorFraction', phreeqcReactionWaterVolumeFloorFraction, ...
+    'phreeqcReactionWaterVolumeFloorCm3', phreeqcReactionWaterVolumeFloorCm3, ...
+    'phreeqcReactionProjectionMinCells', phreeqcReactionProjectionMinCells, ...
+    'phreeqcReactionProjectionMaxCells', phreeqcReactionProjectionMaxCells, ...
+    'phreeqcReactionProjectionMaxRings', phreeqcReactionProjectionMaxRings, ...
+    'phreeqcReactionProjectionFlowBias', phreeqcReactionProjectionFlowBias, ...
+    'phreeqcReactionProjectionMode', string(phreeqcReactionProjectionMode), ...
+    'phreeqcReactionWaterVolumeMode', string(phreeqcReactionWaterVolumeMode), ...
     'phreeqcReactNeutralInterfaceCells', phreeqcReactNeutralInterfaceCells, ...
     'phreeqcSolutionWaterKg', phreeqcSolutionWaterKg, ...
     'phreeqcWriteSolutionWaterLine', phreeqcWriteSolutionWaterLine, ...
@@ -1618,25 +1743,38 @@ while transportStepper.next
         end
     end
 
+    stopAfterThisStep = false;
+    hydrogenData = hydrogenTransport.U.getdata(timeIterationStep-1);
+
+    if ~phreeqcTransportFirstSplit
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % Level set evolution step
 
     disp('Evolution of level set ...');
     tic;
 
-    hydrogenData = hydrogenTransport.U.getdata(timeIterationStep-1);
+    phreeqcLevelSetStep = [];
 
     % Convert reaction-driving data from T --> V.
     if usePhreeqc
-        phreeqcRateV = averageTriangleDataToVertices(phreeqcCalciteRateData, VertexTriMatrix, gridHyPHM.numV);
-        normalSpeed = molarVolume * phreeqcRateV;
-    else
-        hydrogenDataV = zeros(gridHyPHM.numV, 1);
-        for i = 1:gridHyPHM.numV
-            triIndices = VertexTriMatrix{1, i};
-            hydrogenDataV(i) = min(hydrogenData(triIndices));
+        if strcmpi(phreeqcRateLaw, 'tst_match')
+            phreeqcLevelSetGeometryState = computePhreeqcGeometryState( ...
+                gridHyPHM, levelSet{1}(:, timeIterationStep), molarVolume, thickness);
+            phreeqcLevelSetStep = ComputeTstMatchStepDissolution( ...
+                getPhreeqcTstRateDriver(phreeqcSpeciesData), ...
+                phreeqcLevelSetGeometryState.interface_area_cm2, ...
+                phreeqcLevelSetGeometryState.calcite_moles, macroscaleTimeStepSize, ...
+                gridHyPHM.V0T, VertexTriMatrix, gridHyPHM.numV, ...
+                phreeqcTstRateCoefficient, molarVolume);
+            normalSpeed = phreeqcLevelSetStep.normalSpeed_cm_s;
+        else
+            phreeqcRateV = averageTriangleDataToVertices(phreeqcCalciteRateData, VertexTriMatrix, gridHyPHM.numV);
+            normalSpeed = molarVolume * phreeqcRateV;
         end
-        normalSpeed = arrayfun(interfaceNormalVelocity, hydrogenDataV);
+    else
+        normalSpeed = computeLegacyTstNormalSpeedFromTriangleHydrogen( ...
+            hydrogenData, VertexTriMatrix, gridHyPHM.numV, ...
+            molarVolume, rateCoefficientTST);
     end
     normalSpeedMax = max(abs(normalSpeed));
 
@@ -1648,8 +1786,9 @@ while transportStepper.next
     CFL = 1 / 4 * 1 / 10 * 1 / numPartitionsMicroscale / max(normalSpeedMax, eps);
 
     oldMicroscaleTime = currentTime;
-    for j = 1:ceil(transportStepper.curtau/CFL)
-        microscaleTimeStepSize = min(currentTime+transportStepper.curtau-oldMicroscaleTime, CFL);
+    levelSetTargetTime = currentTime + macroscaleTimeStepSize;
+    for j = 1:ceil(macroscaleTimeStepSize/CFL)
+        microscaleTimeStepSize = min(levelSetTargetTime - oldMicroscaleTime, CFL);
         newMicroscaleTime = oldMicroscaleTime + microscaleTimeStepSize;
         % [] argument is unused in method (needed for implicit methods)
         currentLevelSetDataCells{1} = levelSetEquationTimeStep( ...
@@ -1822,8 +1961,17 @@ while transportStepper.next
     end
     Tortuosity(timeIterationStep+1) = tau_now;
     % -------------------------------------------------------------------------
+    end
 
     %% Macroscopic transport step
+
+    if phreeqcTransportFirstSplit
+        hydrogenTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep));
+        calciumTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep));
+        carbonTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep));
+        sodiumTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep));
+        chlorideTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep));
+    end
 
     surfaceAreaFunc = @(x) areaHelperFun(-1, x, surfaceArea, numberOfSlices, ...
         timeIterationStep);
@@ -1877,17 +2025,128 @@ while transportStepper.next
 
         phreeqcOptions.timeStepSize = macroscaleTimeStepSize;
         phreeqcOptions.timeStepIndex = timeIterationStep;
+        phreeqcReactionLevelSetData = levelSet{1}(:, timeIterationStep + 1);
+        if phreeqcTransportFirstSplit
+            phreeqcReactionLevelSetData = levelSet{1}(:, timeIterationStep);
+        end
         phreeqcGeometryState = computePhreeqcGeometryState( ...
-            gridHyPHM, levelSet{1}(:, timeIterationStep + 1), molarVolume, thickness);
+            gridHyPHM, phreeqcReactionLevelSetData, molarVolume, thickness);
+        phreeqcBaseState = collectPhreeqcState(hydrogenTransport, calciumTransport, carbonTransport, ...
+            sodiumTransport, chlorideTransport, timeIterationStep, phreeqcGeometryState);
+        phreeqcState = phreeqcBaseState;
+        prescribedInterfaceMoles = [];
+        projectedMoles = [];
+        agglomerateWeightMatrix = [];
+        phreeqcReactionInputState = [];
+        if strcmpi(phreeqcRateLaw, 'tst_match')
+            phreeqcEquilibriumState = phreeqcState;
+            phreeqcEquilibriumState.prescribed_calcite_dissolved_moles = ...
+                zeros(size(phreeqcGeometryState.water_volume_cm3(:)));
+            phreeqcEquilibriumState.reaction_water_volume_cm3 = ...
+                phreeqcGeometryState.water_volume_cm3(:);
+            phreeqcEquilibriumOptions = phreeqcOptions;
+            phreeqcEquilibriumOptions.timeStepIndex = 100000 + timeIterationStep;
+            phreeqcEquilibriumData = RunPhreeqcCalciteBatch( ...
+                phreeqcEquilibriumState, phreeqcEquilibriumOptions);
+            phreeqcState = updatePhreeqcStateFromResult(phreeqcState, phreeqcEquilibriumData);
+            phreeqcBaseState = phreeqcState;
+
+            if phreeqcTransportFirstSplit
+                phreeqcLevelSetStep = ComputeTstMatchStepDissolution( ...
+                    getPhreeqcTstRateDriver(phreeqcState), ...
+                    phreeqcGeometryState.interface_area_cm2, ...
+                    phreeqcGeometryState.calcite_moles, macroscaleTimeStepSize, ...
+                    gridHyPHM.V0T, VertexTriMatrix, gridHyPHM.numV, ...
+                    phreeqcTstRateCoefficient, molarVolume);
+            end
+            if isempty(phreeqcLevelSetStep)
+                error('RTSPHEM:Phreeqc:MissingTstStep', ...
+                    ['PHREEQC TST-match requires the same dissolution step ', ...
+                    'for level-set motion and prescribed CaCO3 reaction.']);
+            end
+            phreeqcCalciteRateData = phreeqcLevelSetStep.ratePerArea_mol_cm2_s;
+            prescribedInterfaceMoles = phreeqcLevelSetStep.prescribedMoles;
+            switch phreeqcReactionProjectionMode
+                case {'interface_cell', 'cut_cell', 'same_cell'}
+                    projectedMoles = prescribedInterfaceMoles;
+                    switch phreeqcReactionWaterVolumeMode
+                        case {'actual_cell', 'cell', 'none'}
+                            projectedReactionWaterCm3 = phreeqcGeometryState.water_volume_cm3(:);
+                        case {'cut_cell_agglomerated', 'agglomerated', 'local_agglomerated'}
+                            [projectedReactionWaterCm3, agglomerateWeightMatrix] = ...
+                                computeAgglomeratedReactionWaterVolumes( ...
+                                prescribedInterfaceMoles, gridHyPHM, VertexTriMatrix, ...
+                                phreeqcReactionLevelSetData, ...
+                                phreeqcGeometryState.water_volume_cm3, ...
+                                phreeqcReactionProjectionMinCells, ...
+                                phreeqcReactionProjectionMaxCells, ...
+                                phreeqcReactionProjectionMaxRings);
+                        otherwise
+                            error('RTSPHEM:Phreeqc:UnknownReactionWaterVolumeMode', ...
+                                'Unknown PHREEQC reaction water volume mode: %s.', ...
+                                phreeqcReactionWaterVolumeMode);
+                    end
+                case {'neighbor_pore', 'pore_neighbor', 'projected_pore'}
+                    triangleVelocityData = stokesVelocityToTriangleVelocity(gridHyPHM, StokesL.U.getdata(1));
+                    [projectedMoles, projectedReactionWaterCm3] = projectInterfaceReactionToPoreCells( ...
+                        prescribedInterfaceMoles, gridHyPHM, VertexTriMatrix, ...
+                        phreeqcReactionLevelSetData, phreeqcGeometryState.water_volume_cm3, ...
+                        phreeqcReactionProjectionMinCells, phreeqcReactionProjectionMaxCells, ...
+                        phreeqcReactionProjectionMaxRings, triangleVelocityData, ...
+                        phreeqcReactionProjectionFlowBias);
+                otherwise
+                    error('RTSPHEM:Phreeqc:UnknownReactionProjectionMode', ...
+                        'Unknown PHREEQC reaction projection mode: %s.', ...
+                        phreeqcReactionProjectionMode);
+            end
+            positiveWaterVolumes = projectedReactionWaterCm3(projectedReactionWaterCm3 > 0);
+            reactionWaterFloorCm3 = phreeqcReactionWaterVolumeFloorCm3;
+            if phreeqcReactionWaterVolumeFloorFraction > 0 && ~isempty(positiveWaterVolumes)
+                reactionWaterFloorCm3 = max(reactionWaterFloorCm3, ...
+                    max(positiveWaterVolumes) * phreeqcReactionWaterVolumeFloorFraction);
+            end
+            phreeqcState.prescribed_calcite_dissolved_moles = projectedMoles;
+            phreeqcState.reaction_water_volume_cm3 = max(projectedReactionWaterCm3(:), ...
+                reactionWaterFloorCm3);
+            if ~isempty(agglomerateWeightMatrix) && nnz(agglomerateWeightMatrix) > 0
+                phreeqcReactionInputState = BuildPhreeqcAgglomeratedState( ...
+                    phreeqcState, phreeqcGeometryState.water_volume_cm3, ...
+                    agglomerateWeightMatrix);
+                phreeqcState = phreeqcReactionInputState;
+            end
+        end
         phreeqcSpeciesData = RunPhreeqcCalciteBatch( ...
-            collectPhreeqcState(hydrogenTransport, calciumTransport, carbonTransport, ...
-            sodiumTransport, chlorideTransport, timeIterationStep, phreeqcGeometryState), phreeqcOptions);
+            phreeqcState, phreeqcOptions);
+        if strcmpi(phreeqcRateLaw, 'tst_match') && ...
+                ~isempty(agglomerateWeightMatrix) && nnz(agglomerateWeightMatrix) > 0
+            phreeqcSpeciesData = applyAgglomeratedPhreeqcUpdate( ...
+                phreeqcSpeciesData, phreeqcBaseState, phreeqcReactionInputState, ...
+                phreeqcGeometryState.water_volume_cm3, agglomerateWeightMatrix);
+        end
+        phreeqcSpeciesData = addPhreeqcWaterPhaseMassDiagnostics( ...
+            phreeqcSpeciesData, phreeqcBaseState, phreeqcGeometryState.water_volume_cm3);
         applyPhreeqcResultToTransports(phreeqcSpeciesData, hydrogenTransport, calciumTransport, ...
             carbonTransport, sodiumTransport, chlorideTransport, timeIterationStep);
-        phreeqcCalciteRateData = computePhreeqcRatePerArea( ...
-            phreeqcSpeciesData, phreeqcGeometryState.interface_area_cm2, macroscaleTimeStepSize);
+        if ~strcmpi(phreeqcRateLaw, 'tst_match')
+            phreeqcCalciteRateData = ComputePhreeqcInterfaceRatePerArea( ...
+                phreeqcSpeciesData, phreeqcGeometryState.interface_area_cm2, ...
+                macroscaleTimeStepSize, phreeqcOptions, phreeqcState.h_mol_cm3);
+        end
         phreeqcSpeciesData.calciteRatePerArea_mol_cm2_s = phreeqcCalciteRateData;
-        appendPhreeqcSummaryLog(phreeqcSummaryCsvFile, timeIterationStep, currentTime, phreeqcSpeciesData);
+        if strcmpi(phreeqcRateLaw, 'tst_match')
+            phreeqcSpeciesData.interfacePrescribedCalciteMoles = prescribedInterfaceMoles;
+            phreeqcSpeciesData.projectedPrescribedCalciteMoles = projectedMoles;
+            phreeqcSpeciesData.agglomerateMaxRowOverlap = computeAgglomerateMaxRowOverlap(agglomerateWeightMatrix);
+            phreeqcSpeciesData.agglomerateMeanRowOverlap = computeAgglomerateMeanRowOverlap(agglomerateWeightMatrix);
+            phreeqcSpeciesData.agglomerateMaxVolumeRatio = computeAgglomerateMaxVolumeRatio( ...
+                phreeqcState.reaction_water_volume_cm3, phreeqcGeometryState.water_volume_cm3, ...
+                projectedMoles);
+        end
+        phreeqcLogTime = currentTime;
+        if phreeqcTransportFirstSplit
+            phreeqcLogTime = currentTime + macroscaleTimeStepSize;
+        end
+        appendPhreeqcSummaryLog(phreeqcSummaryCsvFile, timeIterationStep, phreeqcLogTime, phreeqcSpeciesData);
     else
         speciesCells = {hydrogenTransport};
         nonlinearFunc = cell(1, 1);
@@ -1903,15 +2162,199 @@ while transportStepper.next
         hydrogenTransport.U.setdata(timeIterationStep-1, hydrogenTransport.U.getdata(timeIterationStep - 1)-Corrector(:, 1));
     end
 
+    if phreeqcTransportFirstSplit
+        disp('Evolution of level set ...');
+        tic;
+
+        if isempty(phreeqcLevelSetStep)
+            error('RTSPHEM:Phreeqc:MissingTransportFirstTstStep', ...
+                'PHREEQC transport-first TST split did not compute a dissolution step.');
+        end
+        normalSpeed = phreeqcLevelSetStep.normalSpeed_cm_s;
+        normalSpeedMax = max(abs(normalSpeed));
+        CFL = 1 / 4 * 1 / 10 * 1 / numPartitionsMicroscale / max(normalSpeedMax, eps);
+
+        oldMicroscaleTime = currentTime;
+        levelSetTargetTime = currentTime + macroscaleTimeStepSize;
+        for j = 1:ceil(macroscaleTimeStepSize/CFL)
+            microscaleTimeStepSize = min(levelSetTargetTime - oldMicroscaleTime, CFL);
+            newMicroscaleTime = oldMicroscaleTime + microscaleTimeStepSize;
+            currentLevelSetDataCells{1} = levelSetEquationTimeStep( ...
+                newMicroscaleTime, oldMicroscaleTime, oldLevelSetDataCells{1}, ...
+                microscaleGrid, normalSpeed, 1);
+            oldMicroscaleTime = newMicroscaleTime;
+            oldLevelSetDataCells{1} = currentLevelSetDataCells{1};
+        end
+
+        levelSet{1}(:, timeIterationStep + 1) = currentLevelSetDataCells{1};
+        currentTime = currentTime + macroscaleTimeStepSize;
+
+        levelSetEvolutionTime(timeIterationStep) = toc;
+        disp(['    ... done in ', ...
+            num2str(levelSetEvolutionTime(timeIterationStep)), ' seconds.']);
+
+        hydrogenTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep + 1));
+        calciumTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep + 1));
+        carbonTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep + 1));
+        sodiumTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep + 1));
+        chlorideTransport.L.setdata(timeIterationStep, levelSet{1}(:, timeIterationStep + 1));
+
+        disp('Calculation of effective parameters ...');
+        tic;
+
+        for i = 1:numberOfSlices
+            [cellProblemSystemMatrix, rhs, isDoF, triangleVolumes, ...
+                triangleSurfaces] = assembleCellProblem(microscaleGrid, ...
+                levelSet{i}(:, timeIterationStep + 1));
+            SOL = solveSystemFE(microscaleGrid, cellProblemSystemMatrix, rhs, isDoF);
+            [diffusion, porosities] = computeDiffusionTensor(microscaleGrid, SOL, ...
+                triangleVolumes);
+            surfaceArea{i}(timeIterationStep + 1) = sum(triangleSurfaces);
+        end
+        Volume(timeIterationStep+1) = (lengthYAxis * lengthXAxis - porosities);
+        cellProblemTime(timeIterationStep) = toc;
+        disp(['    ... done in ', num2str(cellProblemTime(timeIterationStep)), ...
+            ' seconds.']);
+
+        grainVolumeTolerance = 1e-10;
+        if Volume(timeIterationStep+1) <= grainVolumeTolerance
+            fprintf('\n========================================\n');
+            fprintf('>>> Grain Volume reached zero (%.2e cm^3)\n', Volume(timeIterationStep+1));
+            fprintf('>>> Will complete this step to export final dissolution images...\n');
+            fprintf('========================================\n\n');
+            stopAfterThisStep = true;
+        else
+            stopAfterThisStep = false;
+        end
+
+        disp(' ');
+        disp('Initializing Stokes problem...');
+
+        StokesL.L.setdata(levelSet{1}(:, timeIterationStep + 1))
+
+        flowStepper.next;
+        StokesL.computeLevel('s');
+
+        helper = StokesL.U.getdata(1);
+        flow.setdata(helper(gridHyPHM.numV + 1:end, 1).*gridHyPHM.nuE(:, 1)+helper(gridHyPHM.numV + 1:end, 2).*gridHyPHM.nuE(:, 2));
+        flowStepper.prev;
+
+        edgesRight = flowConfig.outletEdgePredicate(gridHyPHM.baryE);
+        edgeFlux = flow.getdata(1);
+        Q = sum(edgeFlux .* gridHyPHM.areaE .* double(edgesRight));
+
+        pData = phead.getdata(1);
+        leftNodes = flowConfig.inletNodePredicate(gridHyPHM.coordV);
+        rightNodes = flowConfig.outletNodePredicate(gridHyPHM.coordV);
+        dp = mean(pData(leftNodes)) - mean(pData(rightNodes));
+
+        A = flowConfig.crossSectionLength * thickness;
+        L = flowConfig.flowLength;
+
+        if abs(dp) < EPS
+            k_eff_cm2 = NaN;
+        else
+            k_eff_cm2 = mu * Q * L / (A * dp);
+        end
+
+        darcy_to_cm2 = 9.869233e-9;
+        md_to_cm2 = darcy_to_cm2 * 1e-3;
+        k_eff_mD = k_eff_cm2 / md_to_cm2;
+        Permeability(timeIterationStep+1) = k_eff_mD;
+
+        if isnan(k0) && ~isnan(k_eff_mD)
+            k0 = k_eff_mD;
+        end
+
+        velocityDataTau = StokesL.U.getdata(1);
+        nP2 = gridHyPHM.numV + gridHyPHM.numE;
+        if size(velocityDataTau, 2) == 2 && size(velocityDataTau, 1) == nP2
+            vx_p2 = velocityDataTau(:, 1);
+            vy_p2 = velocityDataTau(:, 2);
+        elseif size(velocityDataTau, 2) == 1 && length(velocityDataTau) == 2 * nP2
+            vx_p2 = velocityDataTau(1:nP2);
+            vy_p2 = velocityDataTau(nP2+1:end);
+        else
+            vx_p2 = [];
+            vy_p2 = [];
+        end
+
+        if ~isempty(vx_p2)
+            lsNow = levelSet{1}(:, timeIterationStep + 1);
+            lsEdgeMid = 0.5 * (lsNow(gridHyPHM.V0E(:,1)) + lsNow(gridHyPHM.V0E(:,2)));
+            ls_p2 = [lsNow; lsEdgeMid];
+            poreMask_p2 = ls_p2 < 0;
+            sum_speed_pore = sum(sqrt(vx_p2(poreMask_p2).^2 + vy_p2(poreMask_p2).^2));
+            if flowConfig.axisIndex == 1
+                v_axis_p2 = vx_p2;
+            else
+                v_axis_p2 = vy_p2;
+            end
+            sum_vaxis_pore = sum(v_axis_p2(poreMask_p2));
+            if sum_vaxis_pore > EPS
+                tau_now = sum_speed_pore / sum_vaxis_pore;
+            else
+                tau_now = NaN;
+            end
+
+            x_p2 = flowConfig.axisCoordinate([gridHyPHM.coordV; gridHyPHM.baryE]);
+            for iSeg = 1:numTortuositySegments
+                xL = tortuositySegEdges(iSeg);
+                xR = tortuositySegEdges(iSeg + 1);
+                if iSeg < numTortuositySegments
+                    segMask = (x_p2 >= xL) & (x_p2 < xR);
+                else
+                    segMask = (x_p2 >= xL) & (x_p2 <= xR);
+                end
+                poreSegMask = poreMask_p2 & segMask;
+
+                sum_speed_seg = sum(sqrt(vx_p2(poreSegMask).^2 + vy_p2(poreSegMask).^2));
+                sum_vaxis_seg = sum(v_axis_p2(poreSegMask));
+                if sum_vaxis_seg > EPS
+                    TortuositySegments(iSeg, timeIterationStep+1) = sum_speed_seg / sum_vaxis_seg;
+                else
+                    TortuositySegments(iSeg, timeIterationStep+1) = NaN;
+                end
+            end
+        else
+            tau_now = NaN;
+            TortuositySegments(:, timeIterationStep+1) = NaN;
+        end
+        Tortuosity(timeIterationStep+1) = tau_now;
+    end
+
     % --- 计算出口处平均 H+ 浓度：必须在输运求解之后读取当前步浓度 ---
     hydrogenDataCurrent = hydrogenTransport.U.getdata(timeIterationStep);
     outletTriangles = flowConfig.outletTrianglePredicate(gridHyPHM.baryT);
     OutletHConc(timeIterationStep+1) = ComputeOutletConcentration(hydrogenDataCurrent, outletTriangles);
+    fluxApparentRateNow = computeHydrogenFluxApparentRate( ...
+        hydrogenTransport, timeIterationStep, initialHydrogenConcentration, ...
+        inletVelocity, flowConfig, gridHyPHM, surfaceArea{1}(timeIterationStep));
+    interfaceTstRateNow = NaN;
 
     if usePhreeqc
-        Rate(timeIterationStep+1) = mean(phreeqcCalciteRateData, 'omitnan');
+        if strcmpi(phreeqcRateLaw, 'tst_match')
+            interfaceAreaNow = phreeqcGeometryState.interface_area_cm2(:);
+            activeRateArea = interfaceAreaNow > 0 & isfinite(phreeqcCalciteRateData(:));
+            Rate(timeIterationStep+1) = sum(phreeqcCalciteRateData(activeRateArea) ...
+                .* interfaceAreaNow(activeRateArea), 'omitnan') ...
+                ./ max(sum(interfaceAreaNow(activeRateArea), 'omitnan'), eps);
+            interfaceTstRateNow = Rate(timeIterationStep+1);
+        else
+            Rate(timeIterationStep+1) = mean(phreeqcCalciteRateData, 'omitnan');
+        end
     else
-        Rate(timeIterationStep+1) = -((hydrogenTransport.Q.getdata(timeIterationStep) - initialHydrogenConcentration * inletVelocity) .* flowConfig.outletEdgePredicate(gridHyPHM.baryE))' * gridHyPHM.areaE / surfaceArea{1}(timeIterationStep);
+        Rate(timeIterationStep+1) = fluxApparentRateNow;
+        legacyRateGeometryState = computePhreeqcGeometryState( ...
+            gridHyPHM, levelSet{1}(:, timeIterationStep), molarVolume, thickness);
+        legacyInterfaceRateData = ComputeLegacyEquivalentTstTriangleRate( ...
+            hydrogenData, legacyRateGeometryState.interface_area_cm2, ...
+            gridHyPHM.V0T, VertexTriMatrix, gridHyPHM.numV, rateCoefficientTST);
+        legacyInterfaceArea = legacyRateGeometryState.interface_area_cm2(:);
+        activeLegacyRateArea = legacyInterfaceArea > 0 & isfinite(legacyInterfaceRateData(:));
+        interfaceTstRateNow = sum(legacyInterfaceRateData(activeLegacyRateArea) ...
+            .* legacyInterfaceArea(activeLegacyRateArea), 'omitnan') ...
+            ./ max(sum(legacyInterfaceArea(activeLegacyRateArea), 'omitnan'), eps);
     end
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1955,9 +2398,34 @@ while transportStepper.next
           'FontSize', titleFontSize + 2, 'FontName', fontName, 'FontWeight', 'normal');
     
     % 获取浓度数据（三角形 P0 数据），绘图时保持单元常数并屏蔽固体/界面单元。
+    hydrogenPlotTitle = 'Hydrogen concentration {\itc} (mol·cm^{-3})';
+    hydrogenPlotShortTitle = 'Hydrogen concentration {\itc}';
     hydrogenConcentrationData = hydrogenTransport.U.getdata(timeIterationStep);
+    hydrogenUseAdaptiveColorScale = false;
+    if phreeqcTransportFirstSplit && isfield(phreeqcSpeciesData, 'h_activity_mol_cm3') && ...
+            ~isempty(phreeqcSpeciesData.h_activity_mol_cm3)
+        hydrogenConcentrationData = phreeqcSpeciesData.h_activity_mol_cm3(:);
+        hydrogenPlotTitle = 'H+ activity {\ita_H} (mol·cm^{-3})';
+        hydrogenPlotShortTitle = 'H+ activity {\ita_H}';
+        hydrogenUseAdaptiveColorScale = true;
+    end
     concentrationFaceData = PrepareConcentrationFaceData( ...
         hydrogenConcentrationData, gridHyPHM.V0T, levelSet{1}(:, timeIterationStep + 1));
+    hydrogenColorLimits = [0, initialHydrogenConcentration];
+    hydrogenColorbarLabel = '';
+    if hydrogenUseAdaptiveColorScale
+        finiteHydrogenFaceData = concentrationFaceData(isfinite(concentrationFaceData) & concentrationFaceData >= 0);
+        if ~isempty(finiteHydrogenFaceData)
+            adaptiveUpperLimit = max(finiteHydrogenFaceData);
+        else
+            adaptiveUpperLimit = initialHydrogenConcentration;
+        end
+        if ~isfinite(adaptiveUpperLimit) || adaptiveUpperLimit <= 0
+            adaptiveUpperLimit = max(initialHydrogenConcentration, eps);
+        end
+        hydrogenColorLimits = [0, adaptiveUpperLimit];
+        hydrogenColorbarLabel = sprintf('adaptive [0, %.3g]', adaptiveUpperLimit);
+    end
     
     % 绘制浓度分布
     ax1 = nexttile(1);
@@ -1965,15 +2433,20 @@ while transportStepper.next
         'Vertices', [gridHyPHM.coordV, zeros(gridHyPHM.numV, 1)], ...
         'FaceVertexCData', concentrationFaceData, ...
         'FaceColor', 'flat', 'EdgeColor', 'none');
-    title(['Hydrogen concentration {\itc} (mol·cm^{-3})'], ...
+    title(hydrogenPlotTitle, ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     set(gca, 'FontSize', fontSize, 'FontName', fontName, 'XTickLabel', []);
     view(2); axis equal tight;
-    caxis([0 initialHydrogenConcentration]);
+    caxis(hydrogenColorLimits);
     % colormap(ax1, 'plasma');  % 使用Plasma颜色映射
     % 获取子图位置并设置colorbar与子图y轴对齐
     ax1Pos = ax1.Position;
     cb1 = colorbar; cb1.FontSize = fontSize; cb1.FontName = fontName;
+    if ~isempty(hydrogenColorbarLabel)
+        cb1.Label.String = hydrogenColorbarLabel;
+        cb1.Label.FontSize = max(10, fontSize - 4);
+        cb1.Label.FontName = fontName;
+    end
     cb1.Position = [cb1.Position(1), ax1Pos(2), cb1.Position(3), ax1Pos(4)];  % colorbar上下对齐子图
     cbXPos = cb1.Position(1);  % 记录colorbar的X位置
     
@@ -2117,7 +2590,11 @@ while transportStepper.next
     % 追加写入 CSV（每步一行）
     fid = fopen(logfile, 'a');
     if fid ~= -1
-        fprintf(fid, '%d,%.6f,%.6f,%.6f,%.6f,%.6e,%.6e,%.6e,%.6f,%.6e,%.6f\n', timeIterationStep, t_now, por_now, perm_now, k_k0_now, rate_now, sa_now, vol_now, currentPV, outletHConc_now, tau_now);
+        fprintf(fid, ['%d,%.6f,%.6f,%.6f,%.6f,%.6e,%.6e,%.6e,', ...
+            '%.6e,%.6e,%.6f,%.6e,%.6f\n'], ...
+            timeIterationStep, t_now, por_now, perm_now, k_k0_now, ...
+            rate_now, interfaceTstRateNow, fluxApparentRateNow, ...
+            sa_now, vol_now, currentPV, outletHConc_now, tau_now);
         fclose(fid);
     else
         warning('Cannot open log file for writing: %s', logfile);
@@ -2126,8 +2603,13 @@ while transportStepper.next
     % 追加写入 Excel
     if writeExcel
         try
-            T_row = table(timeIterationStep, t_now, por_now, perm_now, k_k0_now, rate_now, sa_now, vol_now, currentPV, outletHConc_now, tau_now, ...
-                'VariableNames', {'TimeStep', 'Time_s', 'Porosity', 'Permeability_mD', 'k_k0', 'DissolutionRate', 'SurfaceArea_cm2', 'GrainVolume_cm3', 'InjectedPV', 'OutletHConc', 'Tortuosity'});
+            T_row = table(timeIterationStep, t_now, por_now, perm_now, k_k0_now, ...
+                rate_now, interfaceTstRateNow, fluxApparentRateNow, ...
+                sa_now, vol_now, currentPV, outletHConc_now, tau_now, ...
+                'VariableNames', {'TimeStep', 'Time_s', 'Porosity', 'Permeability_mD', ...
+                'k_k0', 'DissolutionRate', 'InterfaceTstRate_mol_cm2_s', ...
+                'FluxApparentRate_mol_cm2_s', 'SurfaceArea_cm2', 'GrainVolume_cm3', ...
+                'InjectedPV', 'OutletHConc', 'Tortuosity'});
             writetable(T_row, xlsxFile, 'WriteMode', 'append');
         catch ME
             warning('MATLAB:PNMExcelWrite', 'Failed to write to Excel: %s', ME.message);
@@ -2284,7 +2766,7 @@ while transportStepper.next
         'Vertices', [gridHyPHM.coordV, zeros(gridHyPHM.numV, 1)], ...
         'FaceVertexCData', concentrationFaceData, ...
         'FaceColor', 'flat', 'EdgeColor', 'none');
-    titleHandle1 = title(sprintf('Hydrogen concentration {\\itc} at {\\itt} = %.2f s (mol·cm^{-3})', currentTime), ...
+    titleHandle1 = title(sprintf('%s at {\\itt} = %.2f s (mol·cm^{-3})', hydrogenPlotShortTitle, currentTime), ...
           'FontSize', titleFontSize, 'FontName', fontName, 'FontWeight', 'normal');
     titleHandle1.Position(2) = titleHandle1.Position(2) * 1.35;  % 增加标题距离
     titleHandle1.Position(1) = titleHandle1.Position(1) - 0.01;  % 向左移动标题
@@ -2292,8 +2774,13 @@ while transportStepper.next
     ylabel('Y (cm)', 'FontSize', fontSize, 'FontName', fontName);
     set(gca, 'FontSize', fontSize, 'FontName', fontName);
     view(2); axis equal tight;
-    caxis([0 initialHydrogenConcentration]);
+    caxis(hydrogenColorLimits);
     cb1 = colorbar; cb1.FontSize = fontSize; cb1.FontName = fontName;
+    if ~isempty(hydrogenColorbarLabel)
+        cb1.Label.String = hydrogenColorbarLabel;
+        cb1.Label.FontSize = max(10, fontSize - 4);
+        cb1.Label.FontName = fontName;
+    end
     % colormap(figSub1, 'viridis'); % 使用viridis映射
     % 叠加初始界面轮廓线
     hold on;
@@ -3747,6 +4234,10 @@ state.ca_mol_cm3 = max(caTransport.U.getdata(timeStep), 0);
 state.c_mol_cm3 = max(cTransport.U.getdata(timeStep), 0);
 state.na_mol_cm3 = max(naTransport.U.getdata(timeStep), 0);
 state.cl_mol_cm3 = max(clTransport.U.getdata(timeStep), 0);
+state.ca_total_mol_cm3 = state.ca_mol_cm3;
+state.c_total_mol_cm3 = state.c_mol_cm3;
+state.na_total_mol_cm3 = state.na_mol_cm3;
+state.cl_total_mol_cm3 = state.cl_mol_cm3;
 if nargin >= 7 && ~isempty(geometryState)
     state.interface_area_cm2 = geometryState.interface_area_cm2;
     state.water_volume_cm3 = geometryState.water_volume_cm3;
@@ -3778,6 +4269,23 @@ data.calciteDissolvedMoles = zeros(numCells, 1);
 data.solutionNumber = (1:numCells)';
 end
 
+function state = updatePhreeqcStateFromResult(state, result)
+fields = { ...
+    'h_mol_cm3', 'h_activity_mol_cm3', 'ca_mol_cm3', 'hco3_mol_cm3', ...
+    'co3_mol_cm3', 'cl_mol_cm3', 'na_mol_cm3', ...
+    'ca_total_mol_cm3', 'c_total_mol_cm3', ...
+    'cl_total_mol_cm3', 'na_total_mol_cm3', 'pH', 'chargeBalance'};
+for iField = 1:numel(fields)
+    fieldName = fields{iField};
+    if isfield(result, fieldName) && ~isempty(result.(fieldName))
+        state.(fieldName) = result.(fieldName)(:);
+    end
+end
+if ~isfield(state, 'h_activity_mol_cm3') && isfield(state, 'pH')
+    state.h_activity_mol_cm3 = 10 .^ (-state.pH(:)) ./ 1000;
+end
+end
+
 function ratePerArea = computePhreeqcRatePerArea(result, interfaceAreaCm2, timeStepSize)
 if isfield(result, 'calciteDissolvedMoles')
     dissolvedMoles = result.calciteDissolvedMoles;
@@ -3790,6 +4298,14 @@ ratePerArea(active) = dissolvedMoles(active) ./ max(timeStepSize, eps) ./ interf
 ratePerArea(~isfinite(ratePerArea)) = 0;
 end
 
+function ratePerArea = calciteMolesToInterfaceRate(dissolvedMoles, interfaceAreaCm2, timeStepSize)
+ratePerArea = zeros(size(dissolvedMoles(:)));
+active = interfaceAreaCm2(:) > 0 & timeStepSize > 0;
+ratePerArea(active) = dissolvedMoles(active) ./ max(timeStepSize, eps) ...
+    ./ max(interfaceAreaCm2(active), eps);
+ratePerArea(~isfinite(ratePerArea)) = 0;
+end
+
 function applyPhreeqcResultToTransports(result, hTransport, caTransport, cTransport, ...
     naTransport, clTransport, timeStep)
 hTransport.U.setdata(timeStep, max(result.h_mol_cm3, 0));
@@ -3797,6 +4313,96 @@ caTransport.U.setdata(timeStep, max(result.ca_total_mol_cm3, 0));
 cTransport.U.setdata(timeStep, max(result.c_total_mol_cm3, 0));
 naTransport.U.setdata(timeStep, max(result.na_total_mol_cm3, 0));
 clTransport.U.setdata(timeStep, max(result.cl_total_mol_cm3, 0));
+end
+
+function result = applyAgglomeratedPhreeqcUpdate(result, baseState, reactionInputState, ...
+    waterVolumeCm3, agglomerateWeightMatrix)
+adjusted = ApplyPhreeqcAgglomeratedDelta(baseState, reactionInputState, result, ...
+    waterVolumeCm3, agglomerateWeightMatrix);
+memberCells = any(agglomerateWeightMatrix > 0, 2);
+concentrationFields = { ...
+    'h_mol_cm3', 'ca_total_mol_cm3', 'c_total_mol_cm3', ...
+    'na_total_mol_cm3', 'cl_total_mol_cm3', ...
+    'ca_mol_cm3', 'hco3_mol_cm3', 'co3_mol_cm3', ...
+    'na_mol_cm3', 'cl_mol_cm3', 'pH'};
+for iField = 1:numel(concentrationFields)
+    fieldName = concentrationFields{iField};
+    if isfield(result, fieldName) && isfield(adjusted, fieldName) && ...
+            numel(result.(fieldName)) == numel(memberCells) && ...
+            numel(adjusted.(fieldName)) == numel(memberCells)
+        values = result.(fieldName)(:);
+        adjustedValues = adjusted.(fieldName)(:);
+        values(memberCells) = adjustedValues(memberCells);
+        result.(fieldName) = values;
+    end
+end
+if isfield(result, 'h_activity_mol_cm3') && isfield(result, 'pH')
+    result.h_activity_mol_cm3 = 10 .^ (-result.pH(:)) ./ 1000;
+end
+end
+
+function data = addPhreeqcWaterPhaseMassDiagnostics(data, baseState, waterVolumeCm3)
+waterVolumeCm3 = max(waterVolumeCm3(:), 0);
+data.water_phase_h_delta_moles_total = computeWaterPhaseDelta( ...
+    data, baseState, waterVolumeCm3, 'h_mol_cm3');
+data.water_phase_ca_delta_moles_total = computeWaterPhaseDelta( ...
+    data, baseState, waterVolumeCm3, 'ca_total_mol_cm3');
+data.water_phase_c_delta_moles_total = computeWaterPhaseDelta( ...
+    data, baseState, waterVolumeCm3, 'c_total_mol_cm3');
+data.water_phase_na_delta_moles_total = computeWaterPhaseDelta( ...
+    data, baseState, waterVolumeCm3, 'na_total_mol_cm3');
+data.water_phase_cl_delta_moles_total = computeWaterPhaseDelta( ...
+    data, baseState, waterVolumeCm3, 'cl_total_mol_cm3');
+end
+
+function deltaMoles = computeWaterPhaseDelta(data, baseState, waterVolumeCm3, fieldName)
+if ~isfield(data, fieldName) || ~isfield(baseState, fieldName)
+    deltaMoles = NaN;
+    return;
+end
+newValues = data.(fieldName)(:);
+oldValues = baseState.(fieldName)(:);
+if numel(newValues) ~= numel(waterVolumeCm3) || numel(oldValues) ~= numel(waterVolumeCm3)
+    deltaMoles = NaN;
+    return;
+end
+deltaMoles = sum((newValues - oldValues) .* waterVolumeCm3, 'omitnan');
+end
+
+function value = computeAgglomerateMaxRowOverlap(agglomerateWeightMatrix)
+if isempty(agglomerateWeightMatrix) || nnz(agglomerateWeightMatrix) == 0
+    value = 0;
+    return;
+end
+rowCounts = full(sum(agglomerateWeightMatrix > 0, 2));
+value = max(rowCounts, [], 'omitnan');
+end
+
+function value = computeAgglomerateMeanRowOverlap(agglomerateWeightMatrix)
+if isempty(agglomerateWeightMatrix) || nnz(agglomerateWeightMatrix) == 0
+    value = 0;
+    return;
+end
+rowCounts = full(sum(agglomerateWeightMatrix > 0, 2));
+rowCounts = rowCounts(rowCounts > 0);
+if isempty(rowCounts)
+    value = 0;
+else
+    value = mean(rowCounts, 'omitnan');
+end
+end
+
+function value = computeAgglomerateMaxVolumeRatio(reactionWaterCm3, waterVolumeCm3, activeMoles)
+if isempty(reactionWaterCm3) || isempty(waterVolumeCm3) || isempty(activeMoles)
+    value = NaN;
+    return;
+end
+active = activeMoles(:) > 0 & waterVolumeCm3(:) > 0;
+if ~any(active)
+    value = 1;
+else
+    value = max(reactionWaterCm3(active) ./ max(waterVolumeCm3(active), eps), [], 'omitnan');
+end
 end
 
 function [nonlinearFunc, nonlinearJacFunc] = zeroPhreeqcNonlinearFunctions(numSpecies, ~)
@@ -3852,13 +4458,226 @@ for iVertex = 1:numVertices
 end
 end
 
+function vertexData = averagePositiveTriangleDataToVertices(triangleData, vertexTriMatrix, numVertices)
+vertexData = zeros(numVertices, 1);
+for iVertex = 1:numVertices
+    triIndices = vertexTriMatrix{1, iVertex};
+    values = triangleData(triIndices);
+    values = values(isfinite(values) & values > 0);
+    if isempty(values)
+        vertexData(iVertex) = 0;
+    else
+        vertexData(iVertex) = mean(values);
+    end
+end
+end
+
+function [projectedMoles, reactionWaterCm3] = projectInterfaceReactionToPoreCells( ...
+    interfaceMoles, grid, vertexTriMatrix, levelSetData, waterVolumeCm3, ...
+    minCells, maxCells, maxRings, triangleVelocityData, flowBias)
+numTriangles = numel(interfaceMoles);
+projectedMoles = zeros(numTriangles, 1);
+reactionWaterCm3 = max(waterVolumeCm3(:), 0);
+if numTriangles == 0
+    return;
+end
+
+if nargin < 9 || isempty(triangleVelocityData)
+    triangleVelocityData = zeros(numTriangles, 2);
+end
+if nargin < 10 || isempty(flowBias)
+    flowBias = 0;
+end
+minCells = max(1, round(minCells));
+maxCells = max(minCells, round(maxCells));
+maxRings = max(0, round(maxRings));
+flowBias = max(flowBias, 0);
+levelSetOnTriangles = levelSetData(grid.V0T);
+fullyPoreTriangles = all(levelSetOnTriangles < 0, 2) & reactionWaterCm3 > 0;
+positiveSources = find(interfaceMoles(:) > 0 & isfinite(interfaceMoles(:)));
+for iSource = 1:numel(positiveSources)
+    sourceTri = positiveSources(iSource);
+    if fullyPoreTriangles(sourceTri)
+        candidates = sourceTri;
+    else
+        candidates = findNearbyPoreTriangles(sourceTri, grid, vertexTriMatrix, ...
+            fullyPoreTriangles, minCells, maxCells, maxRings);
+    end
+    if isempty(candidates)
+        candidates = sourceTri;
+    end
+
+    candidateWater = max(reactionWaterCm3(candidates), 0);
+    delta = grid.baryT(candidates, :) - grid.baryT(sourceTri, :);
+    distances = sqrt(sum(delta.^2, 2));
+    distanceScale = max(sqrt(max(grid.areaT(sourceTri), eps)), eps);
+    weights = candidateWater ./ max(distances + distanceScale, eps);
+    localVelocity = triangleVelocityData(sourceTri, :);
+    localSpeed = sqrt(sum(localVelocity.^2));
+    if localSpeed > eps && flowBias > 0
+        directionScore = (delta * localVelocity(:)) ./ max(distances * localSpeed, eps);
+        directionScore = max(min(directionScore, 1), -1);
+        weights = weights .* exp(flowBias .* directionScore);
+    end
+    if ~any(weights > 0) || any(~isfinite(weights))
+        weights = ones(numel(candidates), 1);
+    end
+    weights = weights(:) ./ sum(weights(:));
+    projectedMoles(candidates) = projectedMoles(candidates) + interfaceMoles(sourceTri) .* weights;
+end
+end
+
+function [reactionWaterCm3, agglomerateWeightMatrix] = computeAgglomeratedReactionWaterVolumes( ...
+    interfaceMoles, grid, vertexTriMatrix, levelSetData, waterVolumeCm3, ...
+    minCells, maxCells, maxRings)
+% Use a local cut-cell agglomerate as the PHREEQC mixing volume while the
+% prescribed CaCO3 amount remains attached to the interface cell. This avoids
+% singular mol/kgw reactions caused by arbitrarily small water slivers.
+numTriangles = numel(interfaceMoles);
+reactionWaterCm3 = max(waterVolumeCm3(:), 0);
+agglomerateWeightMatrix = sparse(numTriangles, numTriangles);
+if numTriangles == 0
+    return;
+end
+
+minCells = max(1, round(minCells));
+maxCells = max(minCells, round(maxCells));
+maxRings = max(0, round(maxRings));
+levelSetOnTriangles = levelSetData(grid.V0T);
+fullyPoreTriangles = all(levelSetOnTriangles < 0, 2) & reactionWaterCm3 > 0;
+positiveSources = find(interfaceMoles(:) > 0 & isfinite(interfaceMoles(:)));
+
+for iSource = 1:numel(positiveSources)
+    sourceTri = positiveSources(iSource);
+    candidates = sourceTri;
+    if ~fullyPoreTriangles(sourceTri)
+        nearbyPores = findNearbyPoreTriangles(sourceTri, grid, vertexTriMatrix, ...
+            fullyPoreTriangles, minCells, maxCells, maxRings);
+        candidates = unique([sourceTri; nearbyPores(:)]);
+    end
+    candidateWater = max(reactionWaterCm3(candidates), 0);
+    positiveWater = candidateWater > 0;
+    candidates = candidates(positiveWater);
+    candidateWater = candidateWater(positiveWater);
+    localWater = sum(candidateWater);
+    if isfinite(localWater) && localWater > reactionWaterCm3(sourceTri)
+        reactionWaterCm3(sourceTri) = localWater;
+    end
+    if isfinite(localWater) && localWater > 0
+        agglomerateWeightMatrix(candidates, sourceTri) = candidateWater ./ localWater;
+    end
+end
+end
+
+function candidates = findNearbyPoreTriangles(sourceTri, grid, vertexTriMatrix, ...
+    fullyPoreTriangles, minCells, maxCells, maxRings)
+numTriangles = size(grid.V0T, 1);
+visited = false(numTriangles, 1);
+frontier = sourceTri;
+candidates = [];
+for iRing = 0:maxRings
+    frontier = unique(frontier(:));
+    frontier = frontier(frontier >= 1 & frontier <= numTriangles & ~visited(frontier));
+    if isempty(frontier)
+        break;
+    end
+    visited(frontier) = true;
+    poreNow = frontier(fullyPoreTriangles(frontier));
+    if ~isempty(poreNow)
+        candidates = unique([candidates; poreNow(:)]); %#ok<AGROW>
+        if numel(candidates) >= minCells || iRing == maxRings
+            break;
+        end
+    end
+
+    nextFrontier = [];
+    for iTri = 1:numel(frontier)
+        vertices = grid.V0T(frontier(iTri), :);
+        for iVertex = 1:numel(vertices)
+            nextFrontier = [nextFrontier, vertexTriMatrix{1, vertices(iVertex)}]; %#ok<AGROW>
+        end
+    end
+    frontier = setdiff(unique(nextFrontier(:)), find(visited));
+end
+
+if numel(candidates) > maxCells
+    distances = sqrt(sum((grid.baryT(candidates, :) - grid.baryT(sourceTri, :)).^2, 2));
+    [~, order] = sort(distances, 'ascend');
+    candidates = candidates(order(1:maxCells));
+end
+end
+
+function triangleVelocityData = stokesVelocityToTriangleVelocity(grid, stokesVelocityData)
+triangleVelocityData = zeros(grid.numT, 2);
+nP2 = grid.numV + grid.numE;
+if isempty(stokesVelocityData)
+    return;
+end
+if size(stokesVelocityData, 2) == 2 && size(stokesVelocityData, 1) >= grid.numV
+    vertexVelocity = stokesVelocityData(1:grid.numV, :);
+elseif size(stokesVelocityData, 2) == 1 && numel(stokesVelocityData) >= 2 * nP2
+    vertexVelocity = [stokesVelocityData(1:grid.numV), ...
+        stokesVelocityData(nP2 + (1:grid.numV))];
+else
+    return;
+end
+vertexVelocityX = vertexVelocity(:, 1);
+vertexVelocityY = vertexVelocity(:, 2);
+triangleVelocityData(:, 1) = mean(vertexVelocityX(grid.V0T), 2);
+triangleVelocityData(:, 2) = mean(vertexVelocityY(grid.V0T), 2);
+triangleVelocityData(~isfinite(triangleVelocityData)) = 0;
+end
+
+function normalSpeed = computeLegacyTstNormalSpeedFromTriangleHydrogen( ...
+    triangleHydrogen, vertexTriMatrix, numVertices, molarVolume, rateCoefficientTST)
+hydrogenDataV = zeros(numVertices, 1);
+for iVertex = 1:numVertices
+    triIndices = vertexTriMatrix{1, iVertex};
+    values = triangleHydrogen(triIndices);
+    hydrogenDataV(iVertex) = min(values);
+end
+normalSpeed = molarVolume .* max(hydrogenDataV, 0) .* 1000 .* rateCoefficientTST;
+normalSpeed(~isfinite(normalSpeed)) = 0;
+end
+
+function rateDriver = getPhreeqcTstRateDriver(phreeqcSpeciesData)
+if isfield(phreeqcSpeciesData, 'h_activity_mol_cm3') && ...
+        ~isempty(phreeqcSpeciesData.h_activity_mol_cm3)
+    rateDriver = phreeqcSpeciesData.h_activity_mol_cm3;
+else
+    rateDriver = phreeqcSpeciesData.h_mol_cm3;
+end
+rateDriver = rateDriver(:);
+end
+
+function rateValue = computeHydrogenFluxApparentRate(hTransport, timeStep, ...
+    inletConcentration, inletVelocity, flowConfig, grid, surfaceAreaCm2)
+% Historical RTSPHEM rate diagnostic from outlet H+ flux deficit.
+% For PHREEQC multi-component chemistry this remains an apparent acid
+% consumption diagnostic, not a strict CaCO3 molar dissolution balance.
+outletEdges = flowConfig.outletEdgePredicate(grid.baryE);
+hydrogenFlux = hTransport.Q.getdata(timeStep);
+rateValue = -((hydrogenFlux - inletConcentration * inletVelocity) ...
+    .* outletEdges)' * grid.areaE ./ max(surfaceAreaCm2, eps);
+if ~isfinite(rateValue)
+    rateValue = NaN;
+end
+end
+
 function initializePhreeqcSummaryLog(csvFile)
 fid = fopen(csvFile, 'w');
 if fid ~= -1
     fprintf(fid, ['timestep,time_s,pH_mean,pH_min,pH_max,H_mean_mol_cm3,', ...
         'Ca_mean_mol_cm3,HCO3_mean_mol_cm3,CO3_mean_mol_cm3,Cl_mean_mol_cm3,', ...
         'Na_mean_mol_cm3,calcite_rate_mean_mol_cm2_s,calcite_dissolved_moles_mean,', ...
-        'calcite_si_mean,charge_balance_mean\n']);
+        'calcite_si_mean,charge_balance_mean,interface_prescribed_moles_total,', ...
+        'projected_prescribed_moles_total,result_dissolved_moles_total,', ...
+        'interface_prescribed_active_cells,projected_prescribed_active_cells,', ...
+        'interface_projected_overlap_cells,water_phase_h_delta_moles_total,', ...
+        'water_phase_ca_delta_moles_total,water_phase_c_delta_moles_total,', ...
+        'water_phase_na_delta_moles_total,water_phase_cl_delta_moles_total,', ...
+        'agglomerate_max_row_overlap,agglomerate_mean_row_overlap,', ...
+        'agglomerate_max_volume_ratio\n']);
     fclose(fid);
 end
 end
@@ -3879,15 +4698,70 @@ if isfield(data, 'calciteDissolvedMoles')
 else
     dissolvedMolesForLog = NaN(size(rateForLog));
 end
-fprintf(fid, '%d,%.12g,%.12g,%.12g,%.12g,%.12e,%.12e,%.12e,%.12e,%.12e,%.12e,%.12e,%.12e,%.12g,%.12g\n', ...
+[interfaceMolesTotal, projectedMolesTotal, resultMolesTotal, ...
+    interfaceActiveCells, projectedActiveCells, overlapCells] = ...
+    computePhreeqcMoleSupportDiagnostics(data, dissolvedMolesForLog);
+fprintf(fid, ['%d,%.12g,%.12g,%.12g,%.12g,%.12e,%.12e,%.12e,%.12e,%.12e,%.12e,', ...
+    '%.12e,%.12e,%.12g,%.12g,%.12e,%.12e,%.12e,%d,%d,%d,', ...
+    '%.12e,%.12e,%.12e,%.12e,%.12e,%.12g,%.12g,%.12g\n'], ...
     stepIndex, timeSeconds, mean(data.pH, 'omitnan'), min(data.pH, [], 'omitnan'), ...
     max(data.pH, [], 'omitnan'), mean(data.h_mol_cm3, 'omitnan'), ...
     mean(data.ca_mol_cm3, 'omitnan'), mean(data.hco3_mol_cm3, 'omitnan'), ...
     mean(data.co3_mol_cm3, 'omitnan'), mean(data.cl_mol_cm3, 'omitnan'), ...
     mean(data.na_mol_cm3, 'omitnan'), mean(rateForLog, 'omitnan'), ...
     mean(dissolvedMolesForLog, 'omitnan'), ...
-    mean(data.calciteSI, 'omitnan'), mean(data.chargeBalance, 'omitnan'));
+    mean(data.calciteSI, 'omitnan'), mean(data.chargeBalance, 'omitnan'), ...
+    interfaceMolesTotal, projectedMolesTotal, resultMolesTotal, ...
+    interfaceActiveCells, projectedActiveCells, overlapCells, ...
+    optionalScalarField(data, 'water_phase_h_delta_moles_total'), ...
+    optionalScalarField(data, 'water_phase_ca_delta_moles_total'), ...
+    optionalScalarField(data, 'water_phase_c_delta_moles_total'), ...
+    optionalScalarField(data, 'water_phase_na_delta_moles_total'), ...
+    optionalScalarField(data, 'water_phase_cl_delta_moles_total'), ...
+    optionalScalarField(data, 'agglomerateMaxRowOverlap'), ...
+    optionalScalarField(data, 'agglomerateMeanRowOverlap'), ...
+    optionalScalarField(data, 'agglomerateMaxVolumeRatio'));
 fclose(fid);
+end
+
+function value = optionalScalarField(data, fieldName)
+if isfield(data, fieldName) && ~isempty(data.(fieldName))
+    value = data.(fieldName);
+else
+    value = NaN;
+end
+end
+
+function [interfaceMolesTotal, projectedMolesTotal, resultMolesTotal, ...
+    interfaceActiveCells, projectedActiveCells, overlapCells] = ...
+    computePhreeqcMoleSupportDiagnostics(data, dissolvedMolesForLog)
+if isfield(data, 'interfacePrescribedCalciteMoles') && ...
+        ~isempty(data.interfacePrescribedCalciteMoles)
+    interfaceMoles = data.interfacePrescribedCalciteMoles(:);
+else
+    interfaceMoles = NaN(size(dissolvedMolesForLog(:)));
+end
+if isfield(data, 'projectedPrescribedCalciteMoles') && ...
+        ~isempty(data.projectedPrescribedCalciteMoles)
+    projectedMoles = data.projectedPrescribedCalciteMoles(:);
+else
+    projectedMoles = NaN(size(dissolvedMolesForLog(:)));
+end
+resultMoles = dissolvedMolesForLog(:);
+
+interfaceMolesTotal = sum(interfaceMoles, 'omitnan');
+projectedMolesTotal = sum(projectedMoles, 'omitnan');
+resultMolesTotal = sum(resultMoles, 'omitnan');
+
+interfaceActive = isfinite(interfaceMoles) & interfaceMoles > 0;
+projectedActive = isfinite(projectedMoles) & projectedMoles > 0;
+interfaceActiveCells = nnz(interfaceActive);
+projectedActiveCells = nnz(projectedActive);
+if numel(interfaceActive) == numel(projectedActive)
+    overlapCells = nnz(interfaceActive & projectedActive);
+else
+    overlapCells = 0;
+end
 end
 
 function databasePath = defaultPhreeqcDatabasePath()
@@ -3906,12 +4780,42 @@ else
 end
 end
 
+function rateLaw = defaultPhreeqcRateLaw(runGroup)
+normalized = lower(strrep(strtrim(char(runGroup)), '-', '_'));
+switch normalized
+    case {'phreeqc_database_calcite', 'database_calcite', 'database', 'calcite'}
+        rateLaw = 'database_calcite';
+    case {'phreeqc_tst_match', 'tst_match', 'calcite_tst_match'}
+        rateLaw = 'tst_match';
+    otherwise
+        error('RTSPHEM:Phreeqc:UnknownRunGroup', ...
+            'Unknown PHREEQC run group: %s.', char(runGroup));
+end
+end
+
+function rateLaw = normalizePhreeqcRateLaw(rateLaw)
+normalized = lower(strrep(strtrim(char(rateLaw)), '-', '_'));
+switch normalized
+    case {'phreeqc_database_calcite', 'database_calcite', 'database', 'calcite'}
+        rateLaw = 'database_calcite';
+    case {'phreeqc_tst_match', 'tst_match', 'calcite_tst_match'}
+        rateLaw = 'tst_match';
+    otherwise
+        error('RTSPHEM:Phreeqc:UnknownRateLaw', ...
+            'Unknown PHREEQC rate law: %s.', char(rateLaw));
+end
+end
+
 function value = cfgget(config, fieldName, defaultValue)
 if isstruct(config) && isfield(config, fieldName) && ~isempty(config.(fieldName))
     value = config.(fieldName);
 else
     value = defaultValue;
 end
+end
+
+function tf = cfgHasNonEmptyField(config, fieldName)
+tf = isstruct(config) && isfield(config, fieldName) && ~isempty(config.(fieldName));
 end
 
 function setupPNMPaths(reactiveRoot, rtmDir)

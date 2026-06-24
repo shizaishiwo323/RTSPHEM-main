@@ -1,0 +1,218 @@
+ 1                               SUPPORTING INFORMATION
+ 2   Pore-Scale Study of Transverse Mixing Induced CaCO3
+ 3   Precipitation and Permeability Reduction in a Model Subsurface
+ 4   Sedimentary System
+ 5
+ 6   Changyong Zhang1, Karl Dehoff2, Nancy Hess1, Mart Oostrom3, Thomas W. Wietsma4, Albert J.
+ 7   Valocchi2, Bruce W. Fouke5, Charles J. Werth*2
+ 8
+     1
+ 9       Fundamental and Computational Sciences Directorate, Pacific Northwest National Laboratory,
+10   Richland WA 99352
+     2
+11       Department of Civil and Environmental Engineering, University of Illinois at Urbana-
+12   Champaign, 205 N Mathews Ave, Urbana IL 61801
+     3
+13       Energy and Environment Directorate, Pacific Northwest National Laboratory, Richland, WA
+14   99354
+     4
+15       Environmental Molecular Sciences Laboratory, Pacific Northwest National Laboratory,
+16   Richland, WA 99354
+     5
+17       Department of Geology, University of Illinois at Urbana-Champaign, 1301 W Green St, Urbana
+18   IL 61801
+19
+     *
+20       Corresponding author e-mail: werth@illinois.edu; phone: 217-333-3822; fax: 217-333-6968.
+21
+22   Journal: Environmental Science & Technology
+23   Number of pages: 6
+24   Number of Figures: 5
+25   Date prepared: August 12, 2010
+
+
+
+
+                                                       1
+ 1
+ 2
+
+ 3
+
+ 4
+
+ 5
+
+ 6
+
+ 7
+
+ 8
+
+ 9
+
+10
+
+11
+
+12
+
+13
+
+14
+
+15   Figure S1. High resolution image (0.65 μm) used for mineral form analysis.
+
+
+
+
+                                                   2
+ 1
+
+ 2
+
+ 3
+
+ 4
+
+ 5
+
+ 6
+
+ 7
+
+ 8
+
+ 9
+
+10
+
+11   Figure S2. Overall precipitation rate in the micromodel at Ωc/Ωv = 3.8/3.1, and Ωc/Ωv =
+
+12   4.6/3.9.
+
+
+
+
+                                                   3
+ 1
+
+ 2
+
+ 3
+
+ 4
+
+ 5
+
+ 6
+
+ 7
+
+ 8
+
+ 9
+
+10
+
+11
+
+12
+
+13
+
+14
+
+15
+
+16
+
+17   Figure S3. CaCO3 precipitation rate at selected pore space at (a) Ωc/Ωv = 3.8/3.1, and (b),
+
+18   Ωc/Ωv = 4.6/3.9.
+
+
+
+
+                                                     4
+ 1
+
+ 2
+
+ 3
+
+ 4
+
+ 5
+
+ 6
+
+ 7
+
+ 8
+
+ 9
+
+10
+
+11
+
+12
+
+13
+
+14
+
+15   Figure S4. 3D confocal images of CaCO3 precipitates in a micromodel pore at (a) Ωc/Ωv =
+
+16   3.4/2.8 and (b) Ωc/Ωv = 4.6/3.9, and (c-e) 2D confocal images at selected depths at Ωc/Ωv =
+
+17   3.4/2.8.
+
+
+
+
+                                                    5
+ 1
+
+ 2    (a)
+
+ 3
+
+ 4
+
+ 5
+
+ 6
+      (b)                                           (c)
+ 7
+
+ 8
+
+ 9
+
+10
+
+11    (d)                                           (e)
+
+12
+
+13
+
+14
+
+15
+
+16
+
+17   Figure S5. Images of the fluorescent tracer in the micromodel before CaCO3 precipitates formed
+
+18   (a), and after CaCO3 precipitates formed at Ωc/Ωv = 3.4/2.8 (b), Ωc/Ωv = 3.8/3.1 (c), Ωc/Ωv =
+
+19   4.6/3.9 (d), and Ωc/Ωv = 5.2/4.5 (e).
+
+
+
+
+                                                    6
+

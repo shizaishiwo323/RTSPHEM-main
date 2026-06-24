@@ -7,6 +7,7 @@ end
 
 species = {
     'H', 'h_mol_cm3', 'H+ concentration';
+    'H_activity', 'h_activity_mol_cm3', 'H+ activity equivalent [mol cm^{-3}]';
     'Ca', 'ca_mol_cm3', 'Ca2+ concentration';
     'HCO3', 'hco3_mol_cm3', 'HCO3- concentration';
     'CO3', 'co3_mol_cm3', 'CO3^{2-} concentration';

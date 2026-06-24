@@ -100,6 +100,10 @@ cfg.initialHydrogenConcentration = 1e-4;
 %   'phreeqc' 使用 phreeqc-m.dat 中的 Calcite RATES + 每单元 KINETICS；
 %   'tst'     使用原有简化 TST 速率模型。
 cfg.reactionModel = 'phreeqc';
+% PHREEQC 运行组：
+%   phreeqc_database_calcite : 真实 PHREEQC carbonate chemistry；
+%   phreeqc_tst_match        : PHREEQC 框架中复刻旧 TST 速率律。
+cfg.phreeqcRunGroup = 'phreeqc_database_calcite';
 referencePhreeqcDatabase = "C:\Users\imgw\Downloads\RTSPHEM-P-main (1)\RTSPHEM-P-main\SourceCode\phreeqc-m.dat";
 repoPhreeqcDatabase = fullfile(rtmDir, 'couplePhreeqc', 'phreeqc-m.dat');
 if exist(repoPhreeqcDatabase, 'file')
@@ -133,6 +137,9 @@ cfg.molarVolume = 36.9;
 
 % 反应速率常数 [mol/dm^2/s]，与 PNM_beauty3.m 中的 TST 公式单位保持一致。
 cfg.rateCoefficientTST = 1e-4;
+if strcmpi(cfg.reactionModel, 'phreeqc')
+    cfg = ConfigurePhreeqcRunGroup(cfg, cfg.phreeqcRunGroup);
+end
 
 %% ===================== 时间步与终止条件 =====================
 % 初始宏观时间步 [s]
@@ -222,6 +229,12 @@ fprintf('  L      = %.6g cm\n', cfg.characteristicLength);
 fprintf('  u_in   = %.6g cm/s\n', cfg.inletVelocity);
 fprintf('  D      = %.6g cm^2/s\n', cfg.diffusionCoefficient);
 fprintf('  c_in   = %.6g mol/cm^3\n', cfg.initialHydrogenConcentration);
+fprintf('  reaction model = %s\n', cfg.reactionModel);
+if strcmpi(cfg.reactionModel, 'phreeqc') && isfield(cfg, 'phreeqcRunGroup')
+    fprintf('  PHREEQC group = %s\n', cfg.phreeqcRunGroup);
+    fprintf('  PHREEQC rate law = %s\n', cfg.phreeqcRateLaw);
+    fprintf('  PHREEQC DB = %s\n', cfg.phreeqcDatabasePath);
+end
 if ~isempty(cfg.targetDissolutionSlices)
     fprintf('  target dissolution slices = %d\n', cfg.targetDissolutionSlices);
 end
