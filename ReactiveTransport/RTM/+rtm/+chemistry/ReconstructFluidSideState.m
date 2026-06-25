@@ -10,7 +10,8 @@ if nargin < 4 || isempty(options)
     options = struct();
 end
 rtm.state.ValidateState(state);
-[waterVolume, cellCentroid, interfaceCentroid, interfaceArea] = validateGeometry(geometry, state);
+[waterVolume, cellCentroid, interfaceCentroid, interfaceArea, interfaceNormal] = ...
+    validateGeometry(geometry, state);
 neighbors = getNeighbors(connectivity, size(state.component_moles, 1));
 useLimiter = logical(getFieldOrDefault(options, 'useLimiter', true));
 
@@ -31,8 +32,10 @@ for iCell = 1:numCells
     end
 
     sourceCell(iCell) = iCell;
-    stencil = unique([iCell; neighbors{iCell}(:)]);
-    stencil = stencil(waterVolume(stencil) > 0);
+    fluidSideNeighbors = filterFluidSideNeighbors( ...
+        neighbors{iCell}(:), waterVolume, cellCentroid, interfaceCentroid(iCell, :), ...
+        interfaceNormal(iCell, :));
+    stencil = unique([iCell; fluidSideNeighbors(:)]);
     [reconstructed, usedFallback] = reconstructCell( ...
         iCell, stencil, concentration, cellCentroid, interfaceCentroid(iCell, :), useLimiter);
     values(iCell, :) = reconstructed;
@@ -87,7 +90,21 @@ reconstructed = candidate;
 usedFallback = false;
 end
 
-function [waterVolume, cellCentroid, interfaceCentroid, interfaceArea] = validateGeometry(geometry, state)
+function fluidSideNeighbors = filterFluidSideNeighbors( ...
+        neighborIds, waterVolume, cellCentroid, interfacePoint, normal)
+neighborIds = neighborIds(waterVolume(neighborIds) > 0);
+fluidSideNeighbors = neighborIds;
+if isempty(neighborIds) || any(~isfinite(normal)) || norm(normal) <= eps
+    return;
+end
+normal = normal ./ norm(normal);
+relativePosition = cellCentroid(neighborIds, :) - interfacePoint;
+fluidSide = relativePosition * normal(:) > 0;
+fluidSideNeighbors = neighborIds(fluidSide);
+end
+
+function [waterVolume, cellCentroid, interfaceCentroid, interfaceArea, interfaceNormal] = ...
+    validateGeometry(geometry, state)
 numCells = size(state.component_moles, 1);
 requiredFields = {'water_volume_cm3', 'cell_centroid_cm', ...
     'interface_centroid_cm', 'interface_area_cm2'};
@@ -101,9 +118,14 @@ waterVolume = geometry.water_volume_cm3(:);
 cellCentroid = geometry.cell_centroid_cm;
 interfaceCentroid = geometry.interface_centroid_cm;
 interfaceArea = geometry.interface_area_cm2(:);
+interfaceNormal = nan(numCells, 2);
+if isfield(geometry, 'interface_normal') && ~isempty(geometry.interface_normal)
+    interfaceNormal = geometry.interface_normal;
+end
 if numel(waterVolume) ~= numCells || numel(interfaceArea) ~= numCells || ...
         size(cellCentroid, 1) ~= numCells || size(interfaceCentroid, 1) ~= numCells || ...
-        size(cellCentroid, 2) ~= 2 || size(interfaceCentroid, 2) ~= 2
+        size(cellCentroid, 2) ~= 2 || size(interfaceCentroid, 2) ~= 2 || ...
+        size(interfaceNormal, 1) ~= numCells || size(interfaceNormal, 2) ~= 2
     error('RTSPHEM:Chemistry:GeometrySizeMismatch', ...
         'Geometry fields must match state cell count and use 2D centroids.');
 end

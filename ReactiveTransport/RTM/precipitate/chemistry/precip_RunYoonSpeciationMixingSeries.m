@@ -12,7 +12,7 @@ if nargin < 2 || isempty(options)
     options = struct();
 end
 
-fractions = getOption(options, 'fractions', (0:0.05:1)');
+fractions = getOption(options, 'fractions', (0:0.01:1)');
 fractions = fractions(:);
 maxAcceptedPhDifference = getOption(options, 'maxAcceptedPhDifference', 0);
 maxAcceptedSiVateriteDifference = getOption(options, ...
@@ -91,6 +91,10 @@ function summary = buildSummary(comparison, hasIphreeqc, ...
     maxAcceptedInletPhError, spec)
 summary = struct();
 summary.numSamples = height(comparison);
+summary.mixingFractionStep = inferUniformFractionStep( ...
+    comparison.fractionInletA);
+summary.mixingFractionsCover101 = hasDefault101FractionCoverage( ...
+    comparison.fractionInletA);
 [summary.yoonPeakOmegaVaterite, yoonPeakIdx] = ...
     max(comparison.omegaVaterite_yoon);
 summary.yoonPeakFractionInletA = comparison.fractionInletA(yoonPeakIdx);
@@ -152,6 +156,27 @@ function tf = isInternalFraction(value)
 tf = isfinite(value) && value > 0 && value < 1;
 end
 
+function step = inferUniformFractionStep(fractions)
+if numel(fractions) < 2
+    step = NaN;
+    return;
+end
+d = diff(fractions(:));
+if all(abs(d - d(1)) <= 1e-12)
+    step = d(1);
+else
+    step = NaN;
+end
+end
+
+function tf = hasDefault101FractionCoverage(fractions)
+fractions = fractions(:);
+tf = numel(fractions) == 101 && ...
+    abs(fractions(1)) <= 1e-12 && ...
+    abs(fractions(end) - 1) <= 1e-12 && ...
+    all(abs(diff(fractions) - 0.01) <= 1e-12);
+end
+
 function value = getOption(options, fieldName, defaultValue)
 if isstruct(options) && isfield(options, fieldName) && ~isempty(options.(fieldName))
     value = options.(fieldName);
@@ -165,6 +190,8 @@ manifest = struct();
 manifest.runner = 'precip_RunYoonSpeciationMixingSeries';
 manifest.numSamples = summary.numSamples;
 manifest.fractions = fractions(:)';
+manifest.mixingFractionStep = summary.mixingFractionStep;
+manifest.mixingFractionsCover101 = summary.mixingFractionsCover101;
 manifest.hasIphreeqc = hasIphreeqc;
 manifest.outputCsv = char(outputCsv);
 manifest.maxAbsPhDifference = summary.maxAbsPhDifference;

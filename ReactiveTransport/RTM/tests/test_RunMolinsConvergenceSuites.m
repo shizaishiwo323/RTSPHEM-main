@@ -91,6 +91,11 @@ for iSuite = 1:numel(run.suites)
         [54; 5.4; 0.54; 0.054]);
     verifyEqual(testCase, run.suites(iSuite).acceptance_matrix.grid_resolutions, ...
         ["128x64"; "256x128"; "512x256"]);
+    verifyEqual(testCase, run.suites(iSuite).report.refinement_dimension, "time");
+    verifyEqual(testCase, run.suites(iSuite).report.refinement_field, ...
+        "time_step_s");
+    verifyTrue(testCase, all(isfinite(run.suites(iSuite).report.grid_spacings_cm)));
+    verifyTrue(testCase, all(isfinite(run.suites(iSuite).report.time_steps_s)));
     verifyEqual(testCase, numel(run.suites(iSuite).runs), 12);
     runNames = string({run.suites(iSuite).runs.name}');
     verifyTrue(testCase, any(contains(runNames, "128x64") & contains(runNames, "dt_54")));
@@ -98,6 +103,11 @@ for iSuite = 1:numel(run.suites)
     partialPath = fullfile(outputRoot, char(run.kinds(iSuite)), ...
         'benchmark_convergence_partial.json');
     verifyTrue(testCase, exist(partialPath, 'file') == 2);
+    partial = jsondecode(fileread(partialPath));
+    verifyTrue(testCase, isfield(partial.runs(1).summary, ...
+        'reaction_realized_moles'));
+    verifyGreaterThanOrEqual(testCase, ...
+        partial.runs(1).summary.reaction_realized_moles, 0);
 end
 
 decoded = jsondecode(fileread(run.index_path));

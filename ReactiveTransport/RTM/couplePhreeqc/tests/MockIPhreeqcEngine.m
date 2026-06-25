@@ -40,7 +40,11 @@ classdef MockIPhreeqcEngine < handle
         end
 
         function rawOutput = GetSelectedOutputArray(obj)
-            rawOutput = obj.RawOutput;
+            if isa(obj.RawOutput, 'function_handle')
+                rawOutput = obj.RawOutput(obj);
+            else
+                rawOutput = obj.RawOutput;
+            end
         end
 
         function errorString = GetErrorString(obj)

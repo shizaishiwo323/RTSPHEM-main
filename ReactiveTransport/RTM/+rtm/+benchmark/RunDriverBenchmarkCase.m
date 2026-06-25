@@ -24,7 +24,17 @@ try
             cfg, state, geometry, connectivity, options);
     end
     driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, connectivity);
-    if shouldUseLightweightStepHistory(options)
+    if shouldUseGeometryMacroLoop(options)
+        macroOptions = getFieldOrDefault(options, 'geometryMacroOptions', struct());
+        driverSummary = rtm.driver.RunQuasiSteadyGeometry( ...
+            driver, totalTimeSeconds, macroOptions);
+        driverSummary = addMacroLoopCompatibilityFields(driverSummary);
+    elseif shouldUseFixedGeometrySteadyRt(cfg)
+        fixedOptions = getFieldOrDefault(options, ...
+            'fixedGeometryOptions', struct());
+        driverSummary = driver.runFixedGeometryRtSubcycles( ...
+            totalTimeSeconds, fixedOptions);
+    elseif shouldUseLightweightStepHistory(options)
         driverSummary = runRtSubcyclesLightweight(driver, totalTimeSeconds, ...
             initialState, initialGeometry, cfg, options);
     else
@@ -49,6 +59,7 @@ function [initializedState, initializedGeometry, steadyInfo] = ...
     initializeFromPartISteadyState(cfg, state, geometry, connectivity, options)
 steadyDriver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, connectivity);
 steadyOptions = getFieldOrDefault(options, 'steadyOptions', struct());
+steadyOptions = applyFixedInitializerDefaults(steadyOptions);
 steadyInfo = rtm.driver.RunToReactiveSteadyState(steadyDriver, steadyOptions);
 
 initializedState = steadyInfo.state;
@@ -61,9 +72,27 @@ if isfield(steadyInfo, 'geometry') && isstruct(steadyInfo.geometry)
     steadyInfo.initializer_remap = initializerRemapSummary( ...
         steadyInfo.state, steadyInfo.geometry, initializedState, geometry);
 end
+steadyInfo.fixed_geometry = true;
+steadyInfo.fixed_mineral_inventory = true;
+steadyInfo.state = initializedState;
+steadyInfo.geometry = initializedGeometry;
 steadyInfo.state = stripHeavyField(steadyInfo.state);
 steadyInfo.geometry = stripHeavyField(steadyInfo.geometry);
 steadyInfo.summaries = struct([]);
+end
+
+function steadyOptions = applyFixedInitializerDefaults(steadyOptions)
+if ~isstruct(steadyOptions)
+    error('RTSPHEM:Benchmark:InvalidDriverCaseOption', ...
+        'options.steadyOptions must be a struct.');
+end
+if ~isfield(steadyOptions, 'freezeGeometry') || isempty(steadyOptions.freezeGeometry)
+    steadyOptions.freezeGeometry = true;
+end
+if ~isfield(steadyOptions, 'freezeMineralInventory') || ...
+        isempty(steadyOptions.freezeMineralInventory)
+    steadyOptions.freezeMineralInventory = true;
+end
 end
 
 function initializedState = remapInitializerStateToGeometry( ...
@@ -140,6 +169,56 @@ end
 
 function tf = shouldUseLightweightStepHistory(options)
 tf = logical(getFieldOrDefault(options, 'lightweightStepHistory', false));
+end
+
+function tf = shouldUseGeometryMacroLoop(options)
+tf = logical(getFieldOrDefault(options, 'useGeometryMacroLoop', false));
+end
+
+function tf = shouldUseFixedGeometrySteadyRt(cfg)
+tf = strcmp(char(getNestedField(cfg, {'time', 'mode'}, '')), ...
+    'fixed_geometry_steady_rt');
+end
+
+function summary = addMacroLoopCompatibilityFields(summary)
+summary.accepted_steps = summary.accepted_macro_steps;
+summary.rejected_steps = summary.rejected_macro_steps;
+summary.step_results = struct([]);
+summary.geometry_macro_loop = true;
+summary.max_component_mass_residual_moles = maxMacroComponentResidual(summary);
+summary.max_displacement_over_h = maxMacroDisplacement(summary);
+end
+
+function value = maxMacroComponentResidual(summary)
+value = 0;
+for iStep = 1:numel(summary.macro_step_results)
+    stepSummary = summary.macro_step_results(iStep);
+    if isfield(stepSummary, 'max_component_mass_residual_moles')
+        value = max(value, max(abs( ...
+            stepSummary.max_component_mass_residual_moles(:)), [], 'omitnan'));
+    end
+    if isfield(stepSummary, 'diagnostics') && ...
+            isfield(stepSummary.diagnostics, 'component_absolute_residual_moles')
+        value = max(value, max(abs( ...
+            stepSummary.diagnostics.component_absolute_residual_moles(:)), [], 'omitnan'));
+    end
+    if isfield(stepSummary, 'rt_summary') && ...
+            isfield(stepSummary.rt_summary, 'max_component_mass_residual_moles')
+        value = max(value, max(abs( ...
+            stepSummary.rt_summary.max_component_mass_residual_moles(:)), [], 'omitnan'));
+    end
+end
+end
+
+function value = maxMacroDisplacement(summary)
+value = 0;
+for iStep = 1:numel(summary.macro_step_results)
+    stepSummary = summary.macro_step_results(iStep);
+    if isfield(stepSummary, 'geometry_info') && ...
+            isfield(stepSummary.geometry_info, 'max_displacement_over_h')
+        value = max(value, stepSummary.geometry_info.max_displacement_over_h);
+    end
+end
 end
 
 function summary = runRtSubcyclesLightweight(driver, totalTimeSeconds, ...
@@ -247,6 +326,7 @@ function summary = enrichSummary(driverSummary, initialState, initialGeometry, .
 summary = driverSummary;
 summary.run_name = string(getFieldOrDefault(runInfo, 'name', "driver_case"));
 summary.refinement_scale = refinementScale;
+summary.time_step_s = configuredTimeStep(cfg, refinementScale);
 summary.accepted = didCompleteRequestedTime(driverSummary, options);
 summary.failure_message = "";
 summary.initial_porosity = porosityFromGeometry(initialGeometry);
@@ -258,6 +338,7 @@ summary.initial_mineral_moles = sum(initialState.mineral_moles(:), 'omitnan');
 summary.final_mineral_moles = sum(driverSummary.state.mineral_moles(:), 'omitnan');
 summary.mineral_dissolved_moles = ...
     summary.initial_mineral_moles - summary.final_mineral_moles;
+summary.reaction_realized_moles = acceptedReactionRealizedMoles(driverSummary);
 summary.solid_volume_change_cm3 = solidVolumeChangeFromMineral( ...
     summary.mineral_dissolved_moles, cfg);
 summary.final_solid_volume_cm3 = max(summary.initial_solid_volume_cm3 + ...
@@ -267,7 +348,7 @@ summary.final_surface_area_cm2 = geometryScalar(driverSummary.geometry, ...
 summary.final_porosity = finalPorosityFromMineralChange( ...
     initialGeometry, summary.initial_porosity, summary.mineral_dissolved_moles, cfg);
 summary.mean_effective_rate_mol_cm2_s = meanEffectiveRate( ...
-    summary.mineral_dissolved_moles, summary.initial_surface_area_cm2, ...
+    rateObservableMoles(summary, cfg), summary.initial_surface_area_cm2, ...
     summary.time_s);
 summary.initial_component_moles_total = sum(initialState.component_moles, 1);
 summary.final_component_moles_total = sum(driverSummary.state.component_moles, 1);
@@ -292,6 +373,7 @@ summary.solver_state = struct('abort', true, ...
     'abort_reason', string(err.message));
 summary.run_name = string(getFieldOrDefault(runInfo, 'name', "driver_case"));
 summary.refinement_scale = refinementScale;
+summary.time_step_s = configuredTimeStep(cfg, refinementScale);
 summary.accepted = false;
 summary.failure_message = string(err.message);
 summary.initial_porosity = porosityFromGeometry(initialGeometry);
@@ -302,6 +384,7 @@ summary.initial_solid_volume_cm3 = geometryScalar(initialGeometry, ...
 summary.initial_mineral_moles = sum(initialState.mineral_moles(:), 'omitnan');
 summary.final_mineral_moles = summary.initial_mineral_moles;
 summary.mineral_dissolved_moles = 0;
+summary.reaction_realized_moles = 0;
 summary.solid_volume_change_cm3 = solidVolumeChangeFromMineral( ...
     summary.mineral_dissolved_moles, cfg);
 summary.final_solid_volume_cm3 = max(summary.initial_solid_volume_cm3 + ...
@@ -311,7 +394,7 @@ summary.final_surface_area_cm2 = geometryScalar(initialGeometry, ...
 summary.final_porosity = finalPorosityFromMineralChange( ...
     initialGeometry, summary.initial_porosity, 0, cfg);
 summary.mean_effective_rate_mol_cm2_s = meanEffectiveRate( ...
-    summary.mineral_dissolved_moles, summary.initial_surface_area_cm2, ...
+    rateObservableMoles(summary, cfg), summary.initial_surface_area_cm2, ...
     summary.time_s);
 summary.initial_component_moles_total = sum(initialState.component_moles, 1);
 summary.final_component_moles_total = summary.initial_component_moles_total;
@@ -370,6 +453,35 @@ if ~(isfinite(dissolvedMoles) && isfinite(molarVolume))
     value = NaN;
 else
     value = -max(dissolvedMoles, 0) .* molarVolume;
+end
+end
+
+function value = acceptedReactionRealizedMoles(driverSummary)
+value = 0;
+if ~isfield(driverSummary, 'step_results')
+    return;
+end
+for iStep = 1:numel(driverSummary.step_results)
+    stepResult = driverSummary.step_results(iStep);
+    if ~(isfield(stepResult, 'diagnostics') && ...
+            isfield(stepResult.diagnostics, 'accepted') && ...
+            logical(stepResult.diagnostics.accepted))
+        continue;
+    end
+    if isfield(stepResult, 'reaction_result') && ...
+            isfield(stepResult.reaction_result, 'realized_interface_moles')
+        value = value + sum(stepResult.reaction_result.realized_interface_moles(:), ...
+            'omitnan');
+    end
+end
+end
+
+function value = rateObservableMoles(summary, cfg)
+if strcmp(char(getNestedField(cfg, {'time', 'mode'}, '')), ...
+        'fixed_geometry_steady_rt')
+    value = summary.reaction_realized_moles;
+else
+    value = summary.mineral_dissolved_moles;
 end
 end
 
@@ -558,7 +670,11 @@ function summary = addBenchmarkMetadata(summary, cfg, geometry, options)
 mesh = getNestedField(cfg, {'benchmark', 'mesh'}, []);
 if isstruct(mesh) && ~isempty(mesh)
     mesh.cell_count = mesh.nx .* mesh.ny;
+    mesh.grid_spacing_cm = meshGridSpacing(mesh);
     summary.benchmark_mesh = mesh;
+    summary.grid_spacing_cm = mesh.grid_spacing_cm;
+    summary.grid_resolution = string(getFieldOrDefault(mesh, ...
+        'resolution_label', sprintf('%dx%d', mesh.nx, mesh.ny)));
 elseif isstruct(geometry) && isfield(geometry, 'mesh_resolution')
     resolution = geometry.mesh_resolution;
     mesh = struct();
@@ -567,10 +683,34 @@ elseif isstruct(geometry) && isfield(geometry, 'mesh_resolution')
     mesh.cell_count = mesh.nx .* mesh.ny;
     mesh.resolution_label = string(getFieldOrDefault(geometry, ...
         'mesh_resolution_label', sprintf('%dx%d', mesh.nx, mesh.ny)));
+    mesh.grid_spacing_cm = meshGridSpacing(mesh);
     summary.benchmark_mesh = mesh;
+    summary.grid_spacing_cm = mesh.grid_spacing_cm;
+    summary.grid_resolution = mesh.resolution_label;
 end
 if isfield(options, 'acceptanceMatrix') && ~isempty(options.acceptanceMatrix)
     summary.acceptance_matrix = options.acceptanceMatrix;
+end
+end
+
+function value = configuredTimeStep(cfg, fallbackValue)
+value = getNestedField(cfg, {'time', 'rt', 'requestedDt_s'}, ...
+    getNestedField(cfg, {'time', 'rt', 'maxDt_s'}, fallbackValue));
+if ~(isscalar(value) && isfinite(value) && value > 0)
+    value = fallbackValue;
+end
+end
+
+function value = meshGridSpacing(mesh)
+value = NaN;
+if ~isstruct(mesh) || ~isfield(mesh, 'nx') || ~isfield(mesh, 'ny') || ...
+        isempty(mesh.nx) || isempty(mesh.ny)
+    return;
+end
+lengthX = getFieldOrDefault(mesh, 'domain_length_cm', NaN);
+lengthY = getFieldOrDefault(mesh, 'domain_height_cm', NaN);
+if isfinite(lengthX) && isfinite(lengthY) && mesh.nx > 0 && mesh.ny > 0
+    value = min(lengthX ./ mesh.nx, lengthY ./ mesh.ny);
 end
 end
 

@@ -42,6 +42,20 @@ verifyEqual(testCase, info.reject_reason, "geometry displacement exceeds toleran
 verifyGreaterThan(testCase, info.max_displacement_over_h, 0.25);
 end
 
+function testDisplacementCflUsesInterfaceLengthScaleWhenAvailable(testCase)
+geometry = geometryFixture();
+geometry.interface_h_cm = [1; 1];
+geometry.interface_length_scale_cm = [1e-5; 1];
+realizedMoles = [1e-6; 0];
+options = struct('molarVolume_cm3_mol', 2, 'maxDisplacementOverH', 0.25);
+
+info = rtm.geometry.AdvanceGeometryFromMineralMoles(geometry, realizedMoles, options);
+
+verifyEqual(testCase, info.displacement_over_h(1), 0.1, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyTrue(testCase, info.accepted);
+end
+
 function testRejectsSolidVolumeOvershootBeforeClipping(testCase)
 geometry = geometryFixture();
 geometry.solid_volume_cm3 = [1e-6; 2e-3];

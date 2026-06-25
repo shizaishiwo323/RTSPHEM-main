@@ -20,6 +20,7 @@ end
 
 boundaryMode = getFieldOrDefault(options, 'boundaryMode', 'closed');
 flowField = getFieldOrDefault(options, 'flowField', []);
+transport = buildTransportContext(spec, options);
 updated = components;
 ledger = initializeLedger(spec);
 for iComponent = 1:numel(spec.componentNames)
@@ -27,7 +28,7 @@ for iComponent = 1:numel(spec.componentNames)
     c = components.(fieldName);
     validateComponentField(c, spec, fieldName);
     [updated.(fieldName), scalarLedger] = advanceScalar(c, fieldName, ...
-        spec, dt, boundaryMode, flowField);
+        spec, dt, boundaryMode, flowField, transport);
     ledger.massInitial.(fieldName) = scalarLedger.massInitial;
     ledger.massFinal.(fieldName) = scalarLedger.massFinal;
     ledger.massChange.(fieldName) = scalarLedger.massChange;
@@ -38,7 +39,7 @@ ledger.maxBoundaryClosureError = max(abs(struct2array( ...
     ledger.boundaryClosureError)));
 end
 
-function [cNew, ledger] = advanceScalar(c, fieldName, spec, dt, boundaryMode, flowField)
+function [cNew, ledger] = advanceScalar(c, fieldName, spec, dt, boundaryMode, flowField, transport)
 if dt == 0
     cNew = c;
     ledger = scalarLedger(c, cNew, 0, spec, dt);
@@ -52,36 +53,42 @@ dy = spec.dy_cm;
 
 if ~isempty(flowField)
     [advInc, boundaryNetFlux] = velocityFieldAdvectionIncrement(c, ...
-        fieldName, spec, flowField, dx, dy, dt, boundaryMode);
+        fieldName, spec, flowField, dx, dy, dt, boundaryMode, transport);
 else
     [advInc, boundaryNetFlux] = advectionIncrement(c, fieldName, spec, u, ...
-        dx, dt, boundaryMode);
+        dx, dt, boundaryMode, transport);
 end
-cNew = c + diffusionIncrement(c, d, dx, dy, dt, boundaryMode) + advInc;
+cNew = c + diffusionIncrement(c, d, dx, dy, dt, transport) + advInc;
 ledger = scalarLedger(c, cNew, boundaryNetFlux, spec, dt);
 end
 
-function inc = diffusionIncrement(c, d, dx, dy, dt, boundaryMode)
-if d == 0
+function inc = diffusionIncrement(c, d, dx, dy, dt, transport)
+dCell = transport.effectiveDiffusivity_cm2_s;
+if isempty(dCell)
+    dCell = ones(size(c)) .* d;
+end
+dCell(~transport.diffusionMask) = 0;
+if all(dCell(:) == 0)
     inc = zeros(size(c));
     return;
 end
 
-left = [c(:, 1), c(:, 1:end-1)];
-right = [c(:, 2:end), c(:, end)];
-down = [c(1, :); c(1:end-1, :)];
-up = [c(2:end, :); c(end, :)];
-
-if strcmp(boundaryMode, 'split_inlet')
-    left = c;
+inc = zeros(size(c));
+if size(c, 2) > 1
+    dFaceX = harmonicMeanNonnegative(dCell(:, 1:end-1), dCell(:, 2:end));
+    deltaX = dFaceX .* dt .* (c(:, 2:end) - c(:, 1:end-1)) ./ dx.^2;
+    inc(:, 1:end-1) = inc(:, 1:end-1) + deltaX;
+    inc(:, 2:end) = inc(:, 2:end) - deltaX;
+end
+if size(c, 1) > 1
+    dFaceY = harmonicMeanNonnegative(dCell(1:end-1, :), dCell(2:end, :));
+    deltaY = dFaceY .* dt .* (c(2:end, :) - c(1:end-1, :)) ./ dy.^2;
+    inc(1:end-1, :) = inc(1:end-1, :) + deltaY;
+    inc(2:end, :) = inc(2:end, :) - deltaY;
+end
 end
 
-laplacian = (left - 2 .* c + right) ./ dx.^2 + ...
-    (down - 2 .* c + up) ./ dy.^2;
-inc = d .* dt .* laplacian;
-end
-
-function [inc, boundaryNetFlux] = advectionIncrement(c, fieldName, spec, u, dx, dt, boundaryMode)
+function [inc, boundaryNetFlux] = advectionIncrement(c, fieldName, spec, u, dx, dt, boundaryMode, transport)
 if u == 0
     inc = zeros(size(c));
     boundaryNetFlux = 0;
@@ -92,11 +99,22 @@ if u < 0
         'This smoke transport operator currently supports u >= 0 only.');
 end
 
+advectiveMask = transport.advectiveMask;
 inlet = inletColumn(fieldName, spec, c, boundaryMode);
-upwindLeft = [inlet, c(:, 1:end-1)];
-inc = -u .* dt ./ dx .* (c - upwindLeft);
-leftFlux = u .* sum(inlet) .* spec.dy_cm .* spec.thickness_cm;
-rightFlux = u .* sum(c(:, end)) .* spec.dy_cm .* spec.thickness_cm;
+fluxX = zeros(size(c, 1), size(c, 2) + 1);
+if ~strcmp(boundaryMode, 'closed')
+    fluxX(advectiveMask(:, 1), 1) = u .* inlet(advectiveMask(:, 1));
+end
+if size(c, 2) > 1
+    faceMask = advectiveMask(:, 1:end-1) & advectiveMask(:, 2:end);
+    fluxX(:, 2:end-1) = u .* c(:, 1:end-1) .* faceMask;
+end
+if ~strcmp(boundaryMode, 'closed')
+    fluxX(advectiveMask(:, end), end) = u .* c(advectiveMask(:, end), end);
+end
+inc = -dt ./ dx .* (fluxX(:, 2:end) - fluxX(:, 1:end-1));
+leftFlux = sum(fluxX(:, 1)) .* spec.dy_cm .* spec.thickness_cm;
+rightFlux = sum(fluxX(:, end)) .* spec.dy_cm .* spec.thickness_cm;
 if strcmp(boundaryMode, 'closed')
     leftFlux = 0;
     rightFlux = 0;
@@ -105,7 +123,7 @@ boundaryNetFlux = leftFlux - rightFlux;
 end
 
 function [inc, boundaryNetFlux] = velocityFieldAdvectionIncrement(c, ...
-    fieldName, spec, flowField, dx, dy, dt, boundaryMode)
+    fieldName, spec, flowField, dx, dy, dt, boundaryMode, transport)
 uCell = requireVelocityField(flowField, 'velocityX_cm_s', spec);
 if isfield(flowField, 'velocityY_cm_s') && ~isempty(flowField.velocityY_cm_s)
     vCell = requireVelocityField(flowField, 'velocityY_cm_s', spec);
@@ -114,6 +132,7 @@ else
 end
 
 [numY, numX] = size(c);
+advectiveMask = transport.advectiveMask;
 fluxX = zeros(numY, numX + 1);
 inlet = inletColumn(fieldName, spec, c, boundaryMode);
 for ixFace = 1:(numX + 1)
@@ -123,16 +142,22 @@ for ixFace = 1:(numX + 1)
         if ~strcmp(boundaryMode, 'closed')
             cUpwind(uFace >= 0) = inlet(uFace >= 0);
         end
+        faceMask = advectiveMask(:, 1);
     elseif ixFace == numX + 1
         uFace = uCell(:, end);
         cUpwind = c(:, end);
+        faceMask = advectiveMask(:, end);
     else
         uFace = 0.5 .* (uCell(:, ixFace - 1) + uCell(:, ixFace));
         cUpwind = c(:, ixFace - 1);
         reverse = uFace < 0;
         cUpwind(reverse) = c(reverse, ixFace);
+        faceMask = advectiveMask(:, ixFace - 1) & advectiveMask(:, ixFace);
     end
-    fluxX(:, ixFace) = uFace .* cUpwind;
+    if strcmp(boundaryMode, 'closed') && (ixFace == 1 || ixFace == numX + 1)
+        faceMask(:) = false;
+    end
+    fluxX(:, ixFace) = uFace .* cUpwind .* faceMask;
 end
 
 fluxY = zeros(numY + 1, numX);
@@ -141,7 +166,8 @@ for iyFace = 2:numY
     cUpwind = c(iyFace - 1, :);
     reverse = vFace < 0;
     cUpwind(reverse) = c(iyFace, reverse);
-    fluxY(iyFace, :) = vFace .* cUpwind;
+    faceMask = advectiveMask(iyFace - 1, :) & advectiveMask(iyFace, :);
+    fluxY(iyFace, :) = vFace .* cUpwind .* faceMask;
 end
 
 inc = -dt ./ dx .* (fluxX(:, 2:end) - fluxX(:, 1:end-1)) - ...
@@ -152,6 +178,56 @@ else
     boundaryNetFlux = (sum(fluxX(:, 1)) - sum(fluxX(:, end))) .* ...
         spec.dy_cm .* spec.thickness_cm;
 end
+end
+
+function transport = buildTransportContext(spec, options)
+substrateMask = getLogicalMaskOption(options, 'substrateMask', spec, false);
+blockedMask = getLogicalMaskOption(options, 'blockedMask', spec, false);
+transport.diffusionMask = ~substrateMask;
+transport.advectiveMask = ~(substrateMask | blockedMask);
+transport.effectiveDiffusivity_cm2_s = getDiffusivityFieldOption( ...
+    options, spec);
+end
+
+function mask = getLogicalMaskOption(options, fieldName, spec, defaultValue)
+if isfield(options, fieldName) && ~isempty(options.(fieldName))
+    mask = logical(options.(fieldName));
+    if ~isequal(size(mask), [spec.numY, spec.numX])
+        error('RTSPHEM:Precipitate:InvalidTransportMaskSize', ...
+            '%s must have size [numY, numX].', fieldName);
+    end
+else
+    mask = false(spec.numY, spec.numX);
+    mask(:) = defaultValue;
+end
+end
+
+function dCell = getDiffusivityFieldOption(options, spec)
+if isfield(options, 'effectiveDiffusivity_cm2_s') && ...
+        ~isempty(options.effectiveDiffusivity_cm2_s)
+    dCell = options.effectiveDiffusivity_cm2_s;
+elseif isfield(options, 'effectiveDiffusivity') && ...
+        ~isempty(options.effectiveDiffusivity)
+    dCell = options.effectiveDiffusivity;
+else
+    dCell = [];
+    return;
+end
+if ~isequal(size(dCell), [spec.numY, spec.numX])
+    error('RTSPHEM:Precipitate:InvalidDiffusivityFieldSize', ...
+        'effectiveDiffusivity_cm2_s must have size [numY, numX].');
+end
+if any(~isfinite(dCell(:))) || any(dCell(:) < 0)
+    error('RTSPHEM:Precipitate:InvalidDiffusivityFieldValue', ...
+        'effectiveDiffusivity_cm2_s must contain finite nonnegative values.');
+end
+end
+
+function h = harmonicMeanNonnegative(a, b)
+denom = a + b;
+h = zeros(size(denom));
+mask = denom > 0 & a > 0 & b > 0;
+h(mask) = 2 .* a(mask) .* b(mask) ./ denom(mask);
 end
 
 function velocity = requireVelocityField(flowField, fieldName, spec)

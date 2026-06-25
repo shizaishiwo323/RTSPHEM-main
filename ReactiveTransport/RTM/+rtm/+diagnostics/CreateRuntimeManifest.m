@@ -17,37 +17,60 @@ manifest.transport_backend = string(getNestedField(config, {'transport', 'backen
 manifest.operator_order = string(getNestedField(config, {'time', 'mode'}, 'transient_snia'));
 manifest.mass_tolerances = getFieldOrDefault(config, 'mass', struct());
 manifest.geometry = normalizeManifestValue(getFieldOrDefault(config, 'geometry', struct()));
+manifest.flow = normalizeManifestValue(getFieldOrDefault(config, 'flow', struct()));
 manifest.time = normalizeManifestValue(getFieldOrDefault(config, 'time', struct()));
 manifest.failure = normalizeManifestValue(getFieldOrDefault(config, 'failure', struct()));
+manifest.acceptance_tolerances = acceptanceTolerancesManifest(config);
 
 manifest.phreeqc = phreeqcManifest(config);
 manifest.git = gitManifest(overrides);
 manifest.matlab_version = string(version);
 manifest.platform = string(computer);
-manifest.units = unitsManifest();
+manifest.units = unitsManifest(config);
+end
+
+function value = acceptanceTolerancesManifest(config)
+value = struct();
+value.mass_absolute_tolerance_mol = getNestedField(config, ...
+    {'mass', 'absoluteTolerance_mol'}, 1e-14);
+value.mass_relative_tolerance = getNestedField(config, ...
+    {'mass', 'relativeTolerance'}, 1e-8);
+value.mass_global_relative_tolerance = getNestedField(config, ...
+    {'mass', 'globalRelativeTolerance'}, 1e-6);
+value.solid_absolute_tolerance_cm3 = getNestedField(config, ...
+    {'geometry', 'solidAbsoluteTolerance_cm3'}, 1e-14);
+value.solid_relative_tolerance = getNestedField(config, ...
+    {'geometry', 'solidRelativeTolerance'}, 1e-8);
+value.charge_absolute_tolerance_eq = getNestedField(config, ...
+    {'chemistry', 'chargeAbsoluteTolerance_eq'}, Inf);
+value.calcite_stoichiometry_absolute_tolerance_mol = getNestedField(config, ...
+    {'chemistry', 'calciteStoichiometryAbsoluteTolerance_mol'}, 1e-14);
+value.calcite_stoichiometry_relative_tolerance = getNestedField(config, ...
+    {'chemistry', 'calciteStoichiometryRelativeTolerance'}, 1e-8);
+value.max_displacement_over_h = getNestedField(config, ...
+    {'geometry', 'maxDisplacementOverH'}, 0.25);
+value.flow_absolute_tolerance_cm3_s = getNestedField(config, ...
+    {'flow', 'absoluteTolerance_cm3_s'}, 1e-12);
+value.flow_relative_tolerance = getNestedField(config, ...
+    {'flow', 'relativeTolerance'}, Inf);
 end
 
 function value = phreeqcManifest(config)
-databasePath = string(getNestedField(config, {'phreeqc', 'databasePath'}, ""));
+rtmDir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
+runtime = rtm.phreeqc.ResolveRuntime(rtmDir, config);
 value = struct();
-value.engine = string(getNestedField(config, {'phreeqc', 'engine'}, ...
-    getFieldOrDefault(config, 'phreeqcEngine', 'unknown')));
-value.engine_version = string(getNestedField(config, {'phreeqc', 'engineVersion'}, ""));
-value.com_progid = string(getNestedField(config, {'phreeqc', 'comProgId'}, ""));
+value.engine = runtime.engineType;
+value.engine_type = runtime.engineType;
+value.engine_version = runtime.engineVersion;
+value.com_progid = runtime.comProgId;
+value.is_available = logical(runtime.isAvailable);
 value.persist_session = logical(getNestedField(config, {'phreeqc', 'persistSession'}, false));
 value.use_run_string = logical(getNestedField(config, {'phreeqc', 'useRunString'}, false));
-value.database_policy = string(getNestedField(config, {'phreeqc', 'databasePolicy'}, ...
-    getFieldOrDefault(config, 'phreeqcDatabasePolicy', 'unknown')));
-value.database_name = string(getNestedField(config, {'phreeqc', 'databaseName'}, ""));
-value.database_path = databasePath;
-value.database_sha256 = "";
-value.database_size_bytes = 0;
-
-if strlength(databasePath) > 0 && exist(char(databasePath), 'file') == 2
-    fileInfo = dir(char(databasePath));
-    value.database_size_bytes = fileInfo.bytes;
-    value.database_sha256 = string(computeSha256(char(databasePath)));
-end
+value.database_policy = runtime.databasePolicy;
+value.database_name = runtime.databaseName;
+value.database_path = runtime.databasePath;
+value.database_sha256 = runtime.databaseSha256;
+value.database_size_bytes = runtime.databaseSizeBytes;
 end
 
 function value = gitManifest(overrides)
@@ -68,16 +91,9 @@ if value.branch == ""
 end
 end
 
-function value = unitsManifest()
-value = struct();
-value.length = "cm";
-value.area = "cm^2";
-value.volume = "cm^3";
-value.time = "s";
-value.component_state = "mol";
-value.concentration = "mol/cm^3";
-value.interface_rate = "mol/cm^2/s";
-value.cell_rate = "mol/s";
+function value = unitsManifest(config)
+value = rtm.units.NormalizeRtmUnits(getFieldOrDefault(config, ...
+    'units', struct()));
 end
 
 function value = normalizeManifestValue(value)
@@ -98,22 +114,6 @@ elseif isstruct(value)
         end
     end
 end
-end
-
-function hash = computeSha256(filePath)
-messageDigest = java.security.MessageDigest.getInstance('SHA-256');
-inputStream = java.io.FileInputStream(java.io.File(filePath));
-cleanup = onCleanup(@() inputStream.close());
-buffer = zeros(8192, 1, 'int8');
-while true
-    bytesRead = inputStream.read(buffer, 0, numel(buffer));
-    if bytesRead == -1
-        break;
-    end
-    messageDigest.update(buffer, 0, bytesRead);
-end
-hashBytes = typecast(messageDigest.digest(), 'uint8');
-hash = lower(reshape(dec2hex(hashBytes).', 1, []));
 end
 
 function value = getNestedField(structValue, path, defaultValue)

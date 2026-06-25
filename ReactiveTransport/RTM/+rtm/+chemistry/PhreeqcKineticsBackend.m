@@ -5,6 +5,7 @@ if nargin < 4 || isempty(options)
     options = struct();
 end
 rtm.state.ValidateState(state);
+rtm.chemistry.ValidatePhreeqcTransportBasis(state, options);
 validateGeometry(geometry, size(state.component_moles, 1));
 if ~(isscalar(dtSeconds) && isfinite(dtSeconds) && dtSeconds >= 0)
     error('RTSPHEM:Chemistry:InvalidTimeStep', ...
@@ -29,16 +30,40 @@ batchOptions = options;
 batchOptions.timeStepSize = dtSeconds;
 batchOptions.rateLaw = char(getOption(options, 'rateLaw', 'database_calcite'));
 runner = getRunBatchFunction(options);
-batchResult = runner(batchState, batchOptions);
+useReactionClusters = hasReactionClusters(options);
+if useReactionClusters
+    clusterOptions = batchOptions;
+    clusterOptions.runBatchFunction = runner;
+    clusterOptions.omitPrescribedCalciteReaction = true;
+    [batchResult, clusterRunInfo] = rtm.chemistry.RunPhreeqcReactionClusters( ...
+        state, geometry, hMolCm3, zeros(numCells, 1), ...
+        options.reactionClusters, clusterOptions);
+    rawBatchResult = clusterRunInfo.raw_batch_result;
+else
+    rawBatchResult = runner(batchState, batchOptions);
+    batchResult = rawBatchResult;
+end
 
 rawDissolved = realizedFromBatch(batchResult, numCells);
-actualDissolved = min(max(rawDissolved, 0), max(state.mineral_moles(:, calciteIndex), 0));
+mineralInventory = max(state.mineral_moles(:, calciteIndex), 0);
+actualDissolved = min(max(rawDissolved, 0), mineralInventory);
 componentDelta = componentDeltaFromBatch(state, batchState, batchResult, ...
     waterVolume, rawDissolved, actualDissolved);
 [componentDelta, roundoffInfo] = suppressTinyNegativeComponentRoundoff( ...
     componentDelta, state.component_moles, options);
+stoichDiagnostics = rtm.chemistry.ValidateCalciteComponentStoichiometry( ...
+    state, componentDelta, actualDissolved, clusterIds, options);
 mineralDelta = zeros(size(state.mineral_moles));
 mineralDelta(:, calciteIndex) = -actualDissolved;
+failedCells = failedCellsFromBatch(batchResult);
+errorMessage = string(getFieldOrDefault(batchResult, 'errorMessage', ""));
+runStatus = getPhreeqcRunStatus(rawBatchResult);
+inventoryLimited = rawDissolved > state.mineral_moles(:, calciteIndex) + ...
+    (1e-14 + 1e-12 .* max(rawDissolved, 1));
+if any(inventoryLimited)
+    errorMessage = appendErrorMessage(errorMessage, ...
+        "PHREEQC kinetics exceeded mineral inventory");
+end
 
 result = struct();
 result.component_delta_moles = componentDelta;
@@ -47,27 +72,54 @@ result.realized_interface_moles = actualDissolved;
 result.candidate_interface_moles = rawDissolved;
 result.interface_rate_mol_cm2_s = perAreaRate(actualDissolved, interfaceArea, dtSeconds);
 result.candidate_interface_rate_mol_cm2_s = perAreaRate(rawDissolved, interfaceArea, dtSeconds);
-result.inventory_limited = rawDissolved > state.mineral_moles(:, calciteIndex) + ...
-    (1e-14 + 1e-12 .* max(rawDissolved, 1));
+result.inventory_limited = inventoryLimited;
 result.reactant_limited = false(numCells, 1);
 result.pH = optionalResultVector(batchResult, 'pH', numCells, NaN);
 result.saturation_index = optionalResultVector(batchResult, 'calciteSI', numCells, NaN);
 result.charge_balance_residual_eq = optionalResultVector(batchResult, ...
     'chargeBalance', numCells, 0);
-result.converged = true;
-result.failed_cells = failedCellsFromBatch(batchResult);
-result.error_message = string(getFieldOrDefault(batchResult, ...
-    'errorMessage', ""));
+result.converged = phreeqcConverged(failedCells, errorMessage, runStatus);
+result.failed_cells = failedCells;
+result.error_message = errorMessage;
 result.cluster_ids = clusterIds;
 result.aux = struct('chemistry_mode', "phreeqc_kinetics", ...
     'mineral_delta_source', "phreeqc", ...
     'reaction_cluster_count', clusterInfo.count, ...
     'reaction_cluster_max_membership', clusterInfo.max_membership, ...
     'reaction_cluster_overlapping_cell_count', clusterInfo.overlapping_cell_count, ...
+    'phreeqc_clustered_reaction', useReactionClusters, ...
     'component_delta_roundoff_suppressed_moles', ...
         roundoffInfo.suppressed_moles_total, ...
     'component_delta_roundoff_suppressed_entries', ...
-        roundoffInfo.suppressed_entries);
+        roundoffInfo.suppressed_entries, ...
+    'calcite_stoichiometry_max_residual_moles', ...
+        stoichDiagnostics.max_absolute_residual_moles, ...
+    'calcite_stoichiometry_max_relative_residual', ...
+        stoichDiagnostics.max_relative_residual, ...
+    'phreeqc_session_reused', logical(getFieldOrDefault(rawBatchResult, ...
+        'phreeqcSessionReused', false)), ...
+    'phreeqc_input_written', logical(getFieldOrDefault(rawBatchResult, ...
+        'inputWritten', true)), ...
+    'phreeqc_run_method', string(getFieldOrDefault(rawBatchResult, ...
+        'phreeqcRunMethod', "")), ...
+    'phreeqc_run_status', double(runStatus), ...
+    'phreeqc_database_path', string(getFieldOrDefault(rawBatchResult, ...
+        'databasePath', "")));
+end
+
+function value = hasReactionClusters(options)
+value = isstruct(options) && isfield(options, 'reactionClusters') && ...
+    ~isempty(options.reactionClusters);
+end
+
+function value = appendErrorMessage(existingMessage, newMessage)
+existingMessage = string(existingMessage);
+newMessage = string(newMessage);
+if strlength(strtrim(existingMessage)) == 0
+    value = newMessage;
+else
+    value = existingMessage + "; " + newMessage;
+end
 end
 
 function [componentDelta, info] = suppressTinyNegativeComponentRoundoff( ...
@@ -95,41 +147,22 @@ failedCells = failedCells(:);
 failedCells = failedCells(isfinite(failedCells));
 end
 
+function value = phreeqcConverged(failedCells, errorMessage, runStatus)
+value = isempty(failedCells) && strlength(strtrim(errorMessage)) == 0 && ...
+    isequal(double(runStatus), 0);
+end
+
+function status = getPhreeqcRunStatus(batchResult)
+status = getFieldOrDefault(batchResult, 'runStatus', ...
+    getFieldOrDefault(batchResult, 'status', 0));
+if isempty(status) || ~(isscalar(status) && isfinite(status))
+    status = 1;
+end
+end
+
 function batchState = buildBatchState(state, geometry, hMolCm3)
-waterVolume = geometry.water_volume_cm3(:);
-batchState = struct();
-batchState.h_mol_cm3 = hMolCm3(:);
-batchState.ca_total_mol_cm3 = componentConcentration(state, 'Ca', waterVolume);
-batchState.c_total_mol_cm3 = componentConcentration(state, 'C', waterVolume);
-batchState.na_total_mol_cm3 = componentConcentration(state, 'Na', waterVolume);
-batchState.cl_total_mol_cm3 = componentConcentration(state, 'Cl', waterVolume);
-batchState.ca_mol_cm3 = batchState.ca_total_mol_cm3;
-batchState.c_mol_cm3 = batchState.c_total_mol_cm3;
-batchState.na_mol_cm3 = batchState.na_total_mol_cm3;
-batchState.cl_mol_cm3 = batchState.cl_total_mol_cm3;
-batchState.water_volume_cm3 = waterVolume;
-batchState.reaction_water_volume_cm3 = waterVolume;
-batchState.interface_area_cm2 = geometry.interface_area_cm2(:);
-batchState.calcite_moles = mineralMoles(state, 'Calcite', size(state.component_moles, 1));
-end
-
-function values = componentConcentration(state, componentName, waterVolume)
-idx = find(strcmp(state.component_names, componentName), 1);
-values = zeros(size(waterVolume));
-if isempty(idx)
-    return;
-end
-activeWater = waterVolume > 0;
-values(activeWater) = state.component_moles(activeWater, idx) ./ waterVolume(activeWater);
-end
-
-function values = mineralMoles(state, mineralName, numCells)
-idx = find(strcmp(state.mineral_names, mineralName), 1);
-if isempty(idx)
-    values = zeros(numCells, 1);
-else
-    values = state.mineral_moles(:, idx);
-end
+batchState = rtm.chemistry.BuildPhreeqcBasisState(state, geometry, ...
+    struct('h_mol_cm3', hMolCm3));
 end
 
 function componentDelta = componentDeltaFromBatch(state, batchState, batchResult, ...
@@ -165,6 +198,8 @@ switch componentName
         fieldNames = {'na_total_mol_cm3', 'na_mol_cm3'};
     case 'Cl'
         fieldNames = {'cl_total_mol_cm3', 'cl_mol_cm3'};
+    case 'Alkalinity'
+        fieldNames = {'alkalinity_mol_cm3'};
     otherwise
         fieldNames = {};
 end

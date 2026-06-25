@@ -23,6 +23,7 @@ end
 
 numCells = size(triangles, 1);
 cellVolumeCm3 = cellAreaCm2(:) .* thicknessCm;
+cellCentroidCm = zeros(numCells, 2);
 waterVolumeCm3 = zeros(numCells, 1);
 solidVolumeCm3 = zeros(numCells, 1);
 fluidFraction = zeros(numCells, 1);
@@ -30,6 +31,7 @@ interfaceAreaCm2 = zeros(numCells, 1);
 interfaceCentroidCm = nan(numCells, 2);
 interfaceNormal = nan(numCells, 2);
 interfaceHCm = zeros(numCells, 1);
+interfaceLengthScaleCm = zeros(numCells, 1);
 activeFluidCell = false(numCells, 1);
 cutCell = false(numCells, 1);
 
@@ -38,6 +40,7 @@ for iCell = 1:numCells
     points = verticesCm(vertexIds, :);
     values = levelSet(vertexIds);
     totalArea = cellAreaCm2(iCell);
+    cellCentroidCm(iCell, :) = mean(points, 1);
 
     waterArea = clipTriangleAreaBelowZero(points, values);
     waterArea = min(max(waterArea, 0), totalArea);
@@ -58,8 +61,14 @@ for iCell = 1:numCells
     end
 end
 
+activeInterface = interfaceAreaCm2 > 0;
+interfaceLengthScaleCm(activeInterface) = min( ...
+    sqrt(waterVolumeCm3(activeInterface) ./ max(interfaceAreaCm2(activeInterface), eps)), ...
+    sqrt(cellVolumeCm3(activeInterface)));
+
 geometry = struct();
 geometry.cell_volume_cm3 = cellVolumeCm3;
+geometry.cell_centroid_cm = cellCentroidCm;
 geometry.water_volume_cm3 = waterVolumeCm3;
 geometry.solid_volume_cm3 = solidVolumeCm3;
 geometry.fluid_fraction = fluidFraction;
@@ -67,6 +76,7 @@ geometry.interface_area_cm2 = interfaceAreaCm2;
 geometry.interface_centroid_cm = interfaceCentroidCm;
 geometry.interface_normal = interfaceNormal;
 geometry.interface_h_cm = interfaceHCm;
+geometry.interface_length_scale_cm = interfaceLengthScaleCm;
 geometry.active_fluid_cell = activeFluidCell;
 geometry.cut_cell = cutCell;
 geometry.level_set = levelSet;

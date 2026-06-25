@@ -19,6 +19,9 @@ relativeTolerance = getScalarOption(options, ...
     'rateRelativeTolerance', 1e-6, false);
 requiredConsecutivePasses = getIntegerOption(options, ...
     'requiredConsecutivePasses', 1);
+freezeGeometry = getLogicalOption(options, 'freezeGeometry', false);
+freezeMineralInventory = getLogicalOption(options, ...
+    'freezeMineralInventory', false);
 
 windowRates = zeros(0, 1);
 summaries = struct([]);
@@ -27,7 +30,17 @@ converged = false;
 reason = "max_windows";
 
 for iWindow = 1:maxWindows
-    summary = driver.runRtSubcycles(windowSeconds);
+    if freezeGeometry || freezeMineralInventory
+        if ~ismethod(driver, 'runFixedGeometryRtSubcycles')
+            error('RTSPHEM:Driver:FixedGeometryUnsupported', ...
+                'driver must provide runFixedGeometryRtSubcycles for freeze options.');
+        end
+        summary = driver.runFixedGeometryRtSubcycles(windowSeconds, struct( ...
+            'freezeGeometry', freezeGeometry, ...
+            'freezeMineralInventory', freezeMineralInventory));
+    else
+        summary = driver.runRtSubcycles(windowSeconds);
+    end
     summaries = appendSummary(summaries, summary);
 
     windowRate = realizedRateFromSummary(summary);
@@ -67,6 +80,8 @@ info.summaries = summaries;
 info.state = lastSummaryField(summaries, 'state', struct());
 info.geometry = lastSummaryField(summaries, 'geometry', struct());
 info.solver_state = lastSummaryField(summaries, 'solver_state', struct());
+info.fixed_geometry = freezeGeometry;
+info.fixed_mineral_inventory = freezeMineralInventory;
 end
 
 function validateDriver(driver)
@@ -106,6 +121,18 @@ end
 if ~(isscalar(value) && isfinite(value) && value >= 1 && value == round(value))
     error('RTSPHEM:Driver:InvalidSteadyStateOption', ...
         'options.%s must be a positive integer.', fieldName);
+end
+end
+
+function value = getLogicalOption(options, fieldName, defaultValue)
+if isfield(options, fieldName) && ~isempty(options.(fieldName))
+    value = logical(options.(fieldName));
+else
+    value = defaultValue;
+end
+if ~isscalar(value)
+    error('RTSPHEM:Driver:InvalidSteadyStateOption', ...
+        'options.%s must be scalar logical.', fieldName);
 end
 end
 

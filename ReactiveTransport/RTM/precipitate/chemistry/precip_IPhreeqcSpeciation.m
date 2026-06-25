@@ -71,7 +71,7 @@ for iSolution = 1:numSolutions
     lines(end + 1) = sprintf('C %.15g', max(samples.C_total(iSolution), 0) * 1000);
     lines(end + 1) = sprintf('Na %.15g', max(samples.Na_total(iSolution), 0) * 1000);
     lines(end + 1) = sprintf('Cl %.15g', max(samples.Cl_total(iSolution), 0) * 1000);
-    lines(end + 1) = sprintf('Alkalinity %.15g', max(samples.Alkalinity(iSolution), 0) * 1000);
+    lines(end + 1) = sprintf('Alkalinity %.15g', samples.Alkalinity(iSolution) * 1000);
 end
 
 lines(end + 1) = "SELECTED_OUTPUT";

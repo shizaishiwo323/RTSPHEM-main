@@ -8,6 +8,7 @@ function report = precip_RunYoonBenchmarkReadinessAudit(options)
 %   options.passiveTransportManifestPath (optional)
 %   options.caseComparisonManifestPath (optional)
 %   options.diffusionFeedbackManifestPath (optional)
+%   options.flowValidationManifestPath (optional)
 %   options.referenceCsv
 %   options.referenceDigitizationPackageDir (optional)
 %   options.outputRoot (optional)
@@ -58,6 +59,14 @@ if ~isempty(diffusionFeedbackManifestPath)
 else
     evidence.diffusionFeedbackManifest = struct();
 end
+flowValidationManifestPath = getFieldOrDefault(options, ...
+    'flowValidationManifestPath', '');
+if ~isempty(flowValidationManifestPath)
+    evidence.flowValidationManifest = loadJsonStruct( ...
+        flowValidationManifestPath);
+else
+    evidence.flowValidationManifest = struct();
+end
 
 referenceCsv = requireOption(options, 'referenceCsv');
 referencePackageDir = getFieldOrDefault(options, ...
@@ -88,6 +97,8 @@ manifest.caseComparisonManifestPath = char(string( ...
     caseComparisonManifestPath));
 manifest.diffusionFeedbackManifestPath = char(string( ...
     diffusionFeedbackManifestPath));
+manifest.flowValidationManifestPath = char(string( ...
+    flowValidationManifestPath));
 manifest.referenceCsv = char(string(referenceCsv));
 manifest.requirementsCsv = requirementsCsv;
 manifest.allReady = audit.allReady;

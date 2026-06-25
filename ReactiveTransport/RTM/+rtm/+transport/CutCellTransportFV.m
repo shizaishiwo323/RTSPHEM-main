@@ -151,6 +151,15 @@ for iComponent = 1:numComponents
     for iFace = 1:numel(boundary.faceCells)
         cellId = boundary.faceCells(iFace);
         velocityArea = boundary.velocityCmS(iFace) .* boundary.areaCm2(iFace);
+        if boundary.type(iFace) == "outflow"
+            if waterVolume(cellId) <= 0
+                continue;
+            end
+            [matrixRows, matrixCols, matrixVals, tripletCount] = addTriplet( ...
+                matrixRows, matrixCols, matrixVals, tripletCount, ...
+                cellId, cellId, dtSeconds .* velocityArea ./ waterVolume(cellId));
+            continue;
+        end
         diffusiveConductance = boundary.diffusionCoefficient(iFace, iComponent) .* ...
             boundary.areaCm2(iFace) ./ boundary.distanceCm(iFace);
         boundaryConcentration = boundary.concentration(iFace, iComponent);
@@ -248,11 +257,12 @@ data.faceCells = zeros(0, 1);
 data.areaCm2 = zeros(0, 1);
 data.distanceCm = zeros(0, 1);
 data.velocityCmS = zeros(0, 1);
+data.type = strings(0, 1);
 data.concentration = zeros(0, numComponents);
 data.diffusionCoefficient = zeros(0, numComponents);
 boundarySpecificFields = {'boundary_face_cells', 'boundary_face_area_cm2', ...
     'boundary_face_distance_cm', 'boundary_face_velocity_cm_s', ...
-    'boundary_concentration_mol_cm3'};
+    'boundary_concentration_mol_cm3', 'boundary_type'};
 hasAnySpecific = false(size(boundarySpecificFields));
 for iField = 1:numel(boundarySpecificFields)
     hasAnySpecific(iField) = isfield(options, boundarySpecificFields{iField}) && ...
@@ -270,14 +280,30 @@ end
 data.faceCells = faceCells;
 data.areaCm2 = columnOption(options.boundary_face_area_cm2, numFaces, ...
     'boundary_face_area_cm2');
-data.distanceCm = columnOption(options.boundary_face_distance_cm, numFaces, ...
-    'boundary_face_distance_cm');
 data.velocityCmS = columnOption(options.boundary_face_velocity_cm_s, numFaces, ...
     'boundary_face_velocity_cm_s');
-data.concentration = faceComponentOption(options.boundary_concentration_mol_cm3, ...
-    numFaces, numComponents, 'boundary_concentration_mol_cm3');
-data.diffusionCoefficient = faceComponentOption(options.diffusion_coefficient_cm2_s, ...
-    numFaces, numComponents, 'diffusion_coefficient_cm2_s');
+data.type = boundaryTypeOption(options, numFaces);
+isDirichlet = data.type == "dirichlet";
+isOutflow = data.type == "outflow";
+if any(~(isDirichlet | isOutflow))
+    error('RTSPHEM:Transport:UnsupportedBoundaryType', ...
+        'boundary_type must be dirichlet or outflow.');
+end
+if any(isOutflow & data.velocityCmS < 0)
+    error('RTSPHEM:Transport:InvalidBoundaryMeasure', ...
+        'Outflow boundary velocities must be nonnegative.');
+end
+data.distanceCm = ones(numFaces, 1);
+data.concentration = zeros(numFaces, numComponents);
+data.diffusionCoefficient = zeros(numFaces, numComponents);
+if any(isDirichlet)
+    data.distanceCm = columnOption(options.boundary_face_distance_cm, numFaces, ...
+        'boundary_face_distance_cm');
+    data.concentration = faceComponentOption(options.boundary_concentration_mol_cm3, ...
+        numFaces, numComponents, 'boundary_concentration_mol_cm3');
+    data.diffusionCoefficient = faceComponentOption(options.diffusion_coefficient_cm2_s, ...
+        numFaces, numComponents, 'diffusion_coefficient_cm2_s');
+end
 end
 
 function tf = hasAnyInternalFluxOption(options)
@@ -393,7 +419,7 @@ diffusiveDeltaMoles = zeros(numCells, numComponents);
 
 boundarySpecificFields = {'boundary_face_cells', 'boundary_face_area_cm2', ...
     'boundary_face_distance_cm', 'boundary_face_velocity_cm_s', ...
-    'boundary_concentration_mol_cm3'};
+    'boundary_concentration_mol_cm3', 'boundary_type'};
 hasAnySpecific = false(size(boundarySpecificFields));
 for iField = 1:numel(boundarySpecificFields)
     hasAnySpecific(iField) = isfield(options, boundarySpecificFields{iField}) && ...
@@ -402,16 +428,17 @@ end
 if ~any(hasAnySpecific)
     return;
 end
-boundaryFields = [boundarySpecificFields, {'diffusion_coefficient_cm2_s'}];
-hasAny = false(size(boundaryFields));
-for iField = 1:numel(boundaryFields)
-    hasAny(iField) = isfield(options, boundaryFields{iField}) && ...
-        ~isempty(options.(boundaryFields{iField}));
+commonFields = {'boundary_face_cells', 'boundary_face_area_cm2', ...
+    'boundary_face_velocity_cm_s'};
+hasCommon = false(size(commonFields));
+for iField = 1:numel(commonFields)
+    hasCommon(iField) = isfield(options, commonFields{iField}) && ...
+        ~isempty(options.(commonFields{iField}));
 end
-if ~all(hasAny)
-    missing = strjoin(boundaryFields(~hasAny), ', ');
+if ~all(hasCommon)
+    missing = strjoin(commonFields(~hasCommon), ', ');
     error('RTSPHEM:Transport:MissingBoundaryFluxOption', ...
-        'Boundary Dirichlet flux requires: %s.', missing);
+        'Boundary flux requires: %s.', missing);
 end
 
 faceCells = options.boundary_face_cells(:);
@@ -422,22 +449,48 @@ if any(faceCells < 1) || any(faceCells > numCells) || any(faceCells ~= round(fac
 end
 areaCm2 = columnOption(options.boundary_face_area_cm2, numFaces, ...
     'boundary_face_area_cm2');
-distanceCm = columnOption(options.boundary_face_distance_cm, numFaces, ...
-    'boundary_face_distance_cm');
 velocityCmS = columnOption(options.boundary_face_velocity_cm_s, numFaces, ...
     'boundary_face_velocity_cm_s');
-if any(areaCm2 < 0) || any(distanceCm <= 0)
+boundaryType = boundaryTypeOption(options, numFaces);
+isDirichlet = boundaryType == "dirichlet";
+isOutflow = boundaryType == "outflow";
+if any(~(isDirichlet | isOutflow))
+    error('RTSPHEM:Transport:UnsupportedBoundaryType', ...
+        'boundary_type must be dirichlet or outflow.');
+end
+if any(areaCm2 < 0) || any(isOutflow & velocityCmS < 0)
     error('RTSPHEM:Transport:InvalidBoundaryMeasure', ...
-        'Boundary areas must be nonnegative and distances must be positive.');
+        'Boundary areas and outflow velocities must be nonnegative.');
 end
 
-boundaryConcentration = faceComponentOption(options.boundary_concentration_mol_cm3, ...
-    numFaces, numComponents, 'boundary_concentration_mol_cm3');
-diffusionCoefficient = faceComponentOption(options.diffusion_coefficient_cm2_s, ...
-    numFaces, numComponents, 'diffusion_coefficient_cm2_s');
-if any(boundaryConcentration(:) < 0) || any(diffusionCoefficient(:) < 0)
-    error('RTSPHEM:Transport:InvalidBoundaryMeasure', ...
-        'Boundary concentrations and diffusion coefficients must be nonnegative.');
+distanceCm = ones(numFaces, 1);
+boundaryConcentration = zeros(numFaces, numComponents);
+diffusionCoefficient = zeros(numFaces, numComponents);
+if any(isDirichlet)
+    dirichletFields = {'boundary_face_distance_cm', ...
+        'boundary_concentration_mol_cm3', 'diffusion_coefficient_cm2_s'};
+    hasDirichlet = false(size(dirichletFields));
+    for iField = 1:numel(dirichletFields)
+        hasDirichlet(iField) = isfield(options, dirichletFields{iField}) && ...
+            ~isempty(options.(dirichletFields{iField}));
+    end
+    if ~all(hasDirichlet)
+        missing = strjoin(dirichletFields(~hasDirichlet), ', ');
+        error('RTSPHEM:Transport:MissingBoundaryFluxOption', ...
+            'Boundary Dirichlet flux requires: %s.', missing);
+    end
+    distanceCm = columnOption(options.boundary_face_distance_cm, numFaces, ...
+        'boundary_face_distance_cm');
+    boundaryConcentration = faceComponentOption( ...
+        options.boundary_concentration_mol_cm3, numFaces, numComponents, ...
+        'boundary_concentration_mol_cm3');
+    diffusionCoefficient = faceComponentOption(options.diffusion_coefficient_cm2_s, ...
+        numFaces, numComponents, 'diffusion_coefficient_cm2_s');
+    if any(distanceCm(isDirichlet) <= 0) || any(boundaryConcentration(:) < 0) || ...
+            any(diffusionCoefficient(:) < 0)
+        error('RTSPHEM:Transport:InvalidBoundaryMeasure', ...
+            'Boundary distances, concentrations, and diffusion coefficients must be nonnegative.');
+    end
 end
 
 waterVolume = geometry.water_volume_cm3(:);
@@ -448,11 +501,17 @@ cellConcentration(activeWater, :) = state.component_moles(activeWater, :) ./ ...
 
 for iFace = 1:numFaces
     cellId = faceCells(iFace);
-    advectiveFlux = velocityCmS(iFace) .* areaCm2(iFace) .* ...
-        boundaryConcentration(iFace, :);
-    diffusiveFlux = diffusionCoefficient(iFace, :) .* areaCm2(iFace) ./ ...
-        distanceCm(iFace) .* ...
-        (boundaryConcentration(iFace, :) - cellConcentration(cellId, :));
+    if boundaryType(iFace) == "outflow"
+        advectiveFlux = -velocityCmS(iFace) .* areaCm2(iFace) .* ...
+            cellConcentration(cellId, :);
+        diffusiveFlux = zeros(1, numComponents);
+    else
+        advectiveFlux = velocityCmS(iFace) .* areaCm2(iFace) .* ...
+            boundaryConcentration(iFace, :);
+        diffusiveFlux = diffusionCoefficient(iFace, :) .* areaCm2(iFace) ./ ...
+            distanceCm(iFace) .* ...
+            (boundaryConcentration(iFace, :) - cellConcentration(cellId, :));
+    end
     advectiveDelta = advectiveFlux .* dtSeconds;
     diffusiveDelta = diffusiveFlux .* dtSeconds;
     advectiveDeltaMoles(cellId, :) = advectiveDeltaMoles(cellId, :) + advectiveDelta;
@@ -470,6 +529,22 @@ end
 if numel(values) ~= numRows || any(~isfinite(values))
     error('RTSPHEM:Transport:OptionSizeMismatch', ...
         '%s must be scalar or have one value per boundary face.', fieldName);
+end
+end
+
+function types = boundaryTypeOption(options, numRows)
+if isfield(options, 'boundary_type') && ~isempty(options.boundary_type)
+    raw = options.boundary_type;
+else
+    raw = "dirichlet";
+end
+types = lower(strrep(strtrim(string(raw(:))), "-", "_"));
+if numel(types) == 1
+    types = repmat(types, numRows, 1);
+end
+if numel(types) ~= numRows
+    error('RTSPHEM:Transport:OptionSizeMismatch', ...
+        'boundary_type must be scalar or have one value per boundary face.');
 end
 end
 

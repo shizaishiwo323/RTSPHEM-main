@@ -58,6 +58,8 @@ flowSolver = strings(numSteps, 1);
 flowIsProxy = false(numSteps, 1);
 flowIsStokes = false(numSteps, 1);
 flowLinearResidualRelative = NaN(numSteps, 1);
+flowMaxDivergenceResidual = NaN(numSteps, 1);
+flowBoundaryClosureRelativeError = NaN(numSteps, 1);
 transportAcceptedDt = zeros(numSteps, 1);
 transportRequestedDt = zeros(numSteps, 1);
 transportTotalAdvancedDt = zeros(numSteps, 1);
@@ -91,15 +93,16 @@ for iStep = 1:numSteps
     end
     [state, transportStep] = advanceTransportIfRequested(state, spec, ...
         localDt, transportMode, transportOptions, flowField);
+    state = precip_UpdateCase5BoostState(state, spec, (iStep - 1) * dtS);
     [state, reactionStep] = advanceReaction(state, spec, localDt, ...
         reactionSubcycling);
     [state, flowStep] = precip_UpdateFlowMask(state, spec);
+    state = precip_UpdateCase5BoostState(state, spec, iStep * dtS);
     if flowStep.topologyChanged
         flowField = precip_RecomputeYoonFlowField(state, spec, flowSolverFcn);
         numFlowRecomputationsTotal = numFlowRecomputationsTotal + 1;
     end
     metrics = precip_ComputeYoonAreaMetrics(state, spec, regionMasks);
-    ledger = precip_ComputeComponentMassLedger(initialComponents, state.components, spec);
     reactionLedger = precip_ComputeYoonReactionMassLedger(initialState, ...
         state, spec);
 
@@ -107,8 +110,8 @@ for iStep = 1:numSteps
     areaTotal(iStep) = metrics.totalPrecipitatedArea_cm2;
     areaFirstPore(iStep) = metrics.firstPorePrecipitatedArea_cm2;
     areaFirstThreePores(iStep) = metrics.firstThreePoresPrecipitatedArea_cm2;
-    naRelative(iStep) = ledger.relative.Na_total;
-    clRelative(iStep) = ledger.relative.Cl_total;
+    naRelative(iStep) = reactionLedger.relative.Na_total_mol;
+    clRelative(iStep) = reactionLedger.relative.Cl_total_mol;
     numBlockedCells(iStep) = flowStep.numBlockedCells;
     numNewBlockedCells(iStep) = flowStep.numNewBlockedCells;
     topologyChanged(iStep) = flowStep.topologyChanged;
@@ -121,6 +124,10 @@ for iStep = 1:numSteps
     flowIsStokes(iStep) = logical(getFieldOrDefault(flowField, 'isStokes', false));
     flowLinearResidualRelative(iStep) = getFieldOrDefault(flowField, ...
         'linearResidualRelative', NaN);
+    flowMaxDivergenceResidual(iStep) = getFieldOrDefault(flowField, ...
+        'maxDivergenceResidual_s_inv', NaN);
+    flowBoundaryClosureRelativeError(iStep) = getFieldOrDefault(flowField, ...
+        'boundaryFluxClosureRelativeError', NaN);
     transportRequestedDt(iStep) = transportStep.requestedDt_s;
     transportAcceptedDt(iStep) = transportStep.acceptedDt_s;
     transportTotalAdvancedDt(iStep) = transportStep.totalAdvancedDt_s;
@@ -179,15 +186,19 @@ result.reactionDiagnostics = table(timeS, reactionRequestedDt, ...
 result.flowDiagnostics = table(timeS, numBlockedCells, numNewBlockedCells, ...
     topologyChanged, numFlowRecomputations, relativePermeability, ...
     pressureDropRelative, flowRateRelative, flowSolver, flowIsProxy, ...
-    flowIsStokes, flowLinearResidualRelative, 'VariableNames', {'time_s', ...
+    flowIsStokes, flowLinearResidualRelative, flowMaxDivergenceResidual, ...
+    flowBoundaryClosureRelativeError, 'VariableNames', {'time_s', ...
     'numBlockedCells', 'numNewBlockedCells', 'topologyChanged', ...
     'numFlowRecomputations', 'relativePermeability', ...
     'pressureDropRelative', 'flowRateRelative', 'flowSolver', ...
-    'flowIsProxy', 'flowIsStokes', 'flowLinearResidualRelative'});
+    'flowIsProxy', 'flowIsStokes', 'flowLinearResidualRelative', ...
+    'flowMaxDivergenceResidual_s_inv', ...
+    'flowBoundaryClosureRelativeError'});
 result.flowField = flowField;
 result.regionMaskSource = regionMasks.source;
 result.regionMaskFile = getFieldOrDefault(regionMasks, 'filePath', '');
 result.transportMode = transportMode;
+result.reactionSubcycling = reactionSubcycling;
 result.transportDiagnostics = table(timeS, transportCandidateName, ...
     transportRequestedDt, transportAcceptedDt, transportTotalAdvancedDt, ...
     transportAcceptedSubstepCount, transportRejectedSteps, ...
@@ -202,6 +213,7 @@ end
 function state = seedSplitInletComponents(state, spec, options)
 if isfield(options, 'initialState') && ~isempty(options.initialState)
     state = options.initialState;
+    state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
     return;
 end
 
@@ -212,6 +224,7 @@ for iComponent = 1:numel(spec.componentNames)
     state.components.(fieldName) = fractionA .* spec.inletA.(fieldName) + ...
         (1 - fractionA) .* spec.inletB.(fieldName);
 end
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
 end
 
 function [state, reactionStep] = advanceReaction(state, spec, dtS, reactionSubcycling)
@@ -280,51 +293,48 @@ switch transportMode
         transportStep.totalAdvancedDt_s = dtS;
         transportStep.acceptedSubstepCount = 1;
     case 'finite_volume'
-        [state.components, transportStep] = runFiniteVolumeTransportInterval( ...
-            state.components, spec, dtS, transportOptions, flowField);
+        [state, transportStep] = runMicrocontinuumTransportInterval( ...
+            state, spec, dtS, transportOptions, flowField);
     otherwise
         error('RTSPHEM:Precipitate:InvalidTransportMode', ...
             'Unsupported transportMode: %s.', transportMode);
 end
 end
 
-function [components, transportStep] = runFiniteVolumeTransportInterval(components, spec, totalDtS, transportOptions, flowField)
+function [state, transportStep] = runMicrocontinuumTransportInterval(state, spec, totalDtS, transportOptions, flowField)
 remainingDt = totalDtS;
 advancedDt = 0;
 acceptedSubstepCount = 0;
 rejectedStepCount = 0;
 maxBoundaryClosureError = 0;
 lastAcceptedDt = 0;
+shrinkFactor = 0.5;
+maxRejectedSteps = 8;
 if isstruct(flowField) && isfield(flowField, 'velocityX_cm_s') && ...
         ~isempty(flowField.velocityX_cm_s)
     transportOptions.flowField = flowField;
 end
-[stableDt, stabilityDiagnostics] = precip_ComputeTransportStableDt(spec, ...
+transportOptions = stateTransportOptions(state, transportOptions);
+[stableDt, stabilityDiagnostics] = precip_ComputeMicrocontinuumStableDt(state, spec, ...
     transportOptions);
 transportStepOptions = struct('boundaryMode', 'split_inlet');
 if isfield(transportOptions, 'flowField')
     transportStepOptions.flowField = transportOptions.flowField;
 end
-candidateFcn = @(candidateComponents, dt) ...
-    precip_AdvanceConservativeTransport2D(candidateComponents, spec, dt, ...
-    transportStepOptions);
+transportStepOptions = stateTransportOptions(state, transportStepOptions);
 
 while remainingDt > max(10 * eps(totalDtS), 1e-15)
-    componentsBeforeSubstep = components;
     attemptedDt = min(remainingDt, stableDt);
     if ~isfinite(attemptedDt)
         attemptedDt = remainingDt;
     end
-    subcycle = precip_RunTransportSubcycle(componentsBeforeSubstep, spec, ...
-        attemptedDt, candidateFcn, struct('massTolerance', Inf));
-    components = subcycle.components;
-    [~, boundaryLedger] = precip_AdvanceConservativeTransport2D( ...
-        componentsBeforeSubstep, spec, subcycle.acceptedDt_s, ...
-        transportStepOptions);
+    [state, acceptedDt, numRejected, boundaryLedger] = ...
+        acceptMicrocontinuumTransportSubstep(state, spec, attemptedDt, ...
+        transportStepOptions, shrinkFactor, maxRejectedSteps);
     acceptedSubstepCount = acceptedSubstepCount + 1;
-    rejectedStepCount = rejectedStepCount + subcycle.rejectedStepCount;
-    lastAcceptedDt = subcycle.acceptedDt_s;
-    advancedDt = advancedDt + subcycle.acceptedDt_s;
+    rejectedStepCount = rejectedStepCount + numRejected;
+    lastAcceptedDt = acceptedDt;
+    advancedDt = advancedDt + acceptedDt;
     remainingDt = max(totalDtS - advancedDt, 0);
     maxBoundaryClosureError = max(maxBoundaryClosureError, ...
         boundaryLedger.maxBoundaryClosureError);
@@ -340,6 +350,52 @@ transportStep.rejectedStepCount = rejectedStepCount;
 transportStep.maxBoundaryClosureError = maxBoundaryClosureError;
 transportStep.stableDt_s = stableDt;
 transportStep.stabilityLimiter = stabilityDiagnostics.limiter;
+end
+
+function [state, acceptedDt, rejectedStepCount, ledger] = ...
+    acceptMicrocontinuumTransportSubstep(state, spec, requestedDt, ...
+    transportStepOptions, shrinkFactor, maxRejectedSteps)
+trialDt = requestedDt;
+rejectedStepCount = 0;
+for iAttempt = 1:(maxRejectedSteps + 1)
+    [trialState, ledger] = precip_AdvanceMicrocontinuumTransport2D( ...
+        state, spec, trialDt, transportStepOptions);
+    if transportTrialAccepted(trialState)
+        state = trialState;
+        acceptedDt = trialDt;
+        return;
+    end
+    rejectedStepCount = rejectedStepCount + 1;
+    trialDt = trialDt * shrinkFactor;
+end
+error('RTSPHEM:Precipitate:TransportSubcycleFailed', ...
+    'Transport subcycle failed after %d rejected attempts.', maxRejectedSteps);
+end
+
+function accepted = transportTrialAccepted(state)
+nonnegativeComponents = {'Ca_total', 'C_total', 'Na_total', 'Cl_total'};
+accepted = true;
+for iComponent = 1:numel(nonnegativeComponents)
+    fieldName = nonnegativeComponents{iComponent};
+    if min(state.componentMoles.(fieldName)(:)) < -1e-18 || ...
+            min(state.components.(fieldName)(:)) < -1e-15
+        accepted = false;
+        return;
+    end
+end
+end
+
+function options = stateTransportOptions(state, options)
+if isfield(state, 'substrateMask') && ~isempty(state.substrateMask)
+    options.substrateMask = state.substrateMask;
+end
+if isfield(state, 'blockedMask') && ~isempty(state.blockedMask)
+    options.blockedMask = state.blockedMask;
+end
+if isfield(state, 'effectiveDiffusivity_cm2_s') && ...
+        ~isempty(state.effectiveDiffusivity_cm2_s)
+    options.effectiveDiffusivity_cm2_s = state.effectiveDiffusivity_cm2_s;
+end
 end
 
 function rows = initializeSnapshotRows(numTargets)

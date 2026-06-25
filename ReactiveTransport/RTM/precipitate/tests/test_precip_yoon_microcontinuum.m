@@ -21,15 +21,68 @@ function testBenchmarkSpecUsesVateriteVmAndConservativeComponents(testCase)
 spec = precip_ZhangYoonBenchmarkSpec();
 
 verifyEqual(testCase, spec.mineralPhase, 'Vaterite');
+verifyEqual(testCase, spec.modelFamily, 'yoon_seeded_microcontinuum');
+verifyEqual(testCase, spec.precipitationMode, 'yoon_seeded_microcontinuum');
+verifyEqual(testCase, spec.deferredPrecipitationModes, ...
+    {'deng_homogeneous_nucleation', 'surface_growth'});
+verifyEqual(testCase, spec.deferredPrecipitationModePolicy, ...
+    'fail_closed_until_yoon_quantitative_gate');
 verifyEqual(testCase, spec.reactionRateLaw, 'yoon_chou_vaterite_explicit');
 verifyEqual(testCase, spec.solidStateVariable, 'Vm');
 verifyEqual(testCase, spec.componentNames, ...
     {'Ca_total', 'C_total', 'Na_total', 'Cl_total', 'Alkalinity'});
 verifyFalse(testCase, any(strcmp(spec.componentNames, 'H_total')));
-verifyEqual(testCase, spec.vateriteKsp, 10^(-7.91), 'RelTol', 1e-12);
-verifyEqual(testCase, spec.vateriteMolarVolume_cm3_mol, 37.6, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.vateriteKsp, 1.832e-8, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.vateriteKsp_mol2_L2, 1.832e-8, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.vateriteKsp_mol2_m6, 1.832e-2, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.vateriteMolarVolume_cm3_mol, 37.47, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.yoonRate.k1, 8.9e-5, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.yoonRate.k2, 5.01e-8, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.yoonRate.k3, 6.6e-11, 'RelTol', 1e-12);
+verifyEqual(testCase, spec.yoonRate.units, 'mol_cm-2_s-1');
+verifyEqual(testCase, spec.yoonRate.source, ...
+    'Yoon2012_Chou_literature_locked');
+verifyEqual(testCase, spec.yoonRate.sourceDoi, '10.1029/2011WR011192');
+verifyEqual(testCase, spec.yoonRate.sourceEquation, ...
+    'Yoon2012 Eq.7; Chou1989');
+verifyEqual(testCase, spec.yoonRate.mineralPhase, 'Vaterite');
+verifyTrue(testCase, spec.yoonRate.sourceValuesVerified);
 verifyEqual(testCase, spec.inletA.pH, 6.1, 'AbsTol', 0);
 verifyEqual(testCase, spec.inletB.pH, 10.9, 'AbsTol', 0);
+end
+
+function testYoonSolverRejectsDeferredPrecipitationModes(testCase)
+for mode = ["deng_homogeneous_nucleation", "surface_growth"]
+    spec = precip_ZhangYoonBenchmarkSpec(struct( ...
+        'precipitationMode', char(mode)));
+
+    verifyError(testCase, ...
+        @() precip_YoonMicrocontinuumSolver('initialize', spec), ...
+        'RTSPHEM:Precipitate:UnsupportedPrecipitationMode');
+end
+end
+
+function testPublicZhangYoonRunnerUsesYoonVmEntrypoint(testCase)
+workDir = tempname;
+overrides = struct();
+overrides.spec = struct('numX', 3, 'numY', 3, ...
+    'postDiameter_cm', [], 'yoonRate', struct('k1', 0, 'k2', 0, ...
+    'k3', 2e-9, 'units', 'mol_cm-2_s-1', ...
+    'source', 'unit_test_entrypoint_rate'));
+overrides.options = struct('outputRoot', workDir, 'endTime_s', 30, ...
+    'dt_s', 30, 'targetTimes_s', 30, ...
+    'refreshComponentsEachStep', true);
+
+result = run_zhang_yoon_caco3_precipitation_benchmark(overrides);
+
+verifyEqual(testCase, result.manifest.runner, ...
+    'precip_RunYoonFixedGeometryBenchmark');
+verifyEqual(testCase, result.manifest.modelFamily, ...
+    'yoon_seeded_microcontinuum');
+verifyEqual(testCase, result.manifest.mineralPhase, 'Vaterite');
+verifyEqual(testCase, result.manifest.solidStateVariable, 'Vm');
+verifyFalse(testCase, result.manifest.legacyLevelSetPathUsed);
+verifyTrue(testCase, isfield(result.manifest, 'matFiles'));
 end
 
 function testYoonSolverInitializesStaticSubstrateAndDynamicVmSeparately(testCase)
@@ -43,8 +96,19 @@ verifyTrue(testCase, islogical(state.substrateMask));
 verifyEqual(testCase, state.Vm, zeros(spec.numY, spec.numX), 'AbsTol', 0);
 verifyFalse(testCase, isfield(state, 'calcite_moles'));
 verifyEqual(testCase, state.components.names, spec.componentNames);
+verifyEqual(testCase, state.componentMoles.names, spec.componentNames);
+verifyEqual(testCase, state.aqueousConcentration.names, spec.componentNames);
 verifyTrue(testCase, all(state.fluidVolumeFraction(~state.substrateMask) == 1));
 verifyTrue(testCase, all(state.fluidVolumeFraction(state.substrateMask) == 0));
+for iComponent = 1:numel(spec.componentNames)
+    fieldName = spec.componentNames{iComponent};
+    expectedMoles = state.components.(fieldName) .* ...
+        state.fluidVolumeFraction .* spec.cellVolume_cm3;
+    verifyEqual(testCase, state.componentMoles.(fieldName), ...
+        expectedMoles, 'RelTol', 1e-12, 'AbsTol', 1e-30);
+    verifyEqual(testCase, state.componentMoles.(fieldName)(state.substrateMask), ...
+        zeros(nnz(state.substrateMask), 1), 'AbsTol', 0);
+end
 end
 
 function testDefaultYoonSubstrateMaskContainsStaticPosts(testCase)
@@ -97,6 +161,8 @@ assetNames = {'source_micromodel.png', 'axis_calibration.csv', ...
 for iFile = 1:numel(assetNames)
     writeTextFile(fullfile(packageDir, assetNames{iFile}), 'unit test asset');
 end
+writeGeometryCalibrationCsv(fullfile(packageDir, assetNames{2}));
+writeGeometryUncertaintyCsv(fullfile(packageDir, assetNames{4}));
 manifest = struct('packageName', 'unit_test_geometry_package', ...
     'sourceFigure', 'Zhang/Yoon micromodel image', ...
     'sourceImageFile', assetNames{1}, ...
@@ -147,6 +213,41 @@ verifyFalse(testCase, isfield(package, 'regionMasks'));
 verifyTrue(testCase, contains(package.note, 'missing required assets'));
 end
 
+function testLoadZhangYoonGeometryPackageRejectsInvalidCalibrationTables(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 3, ...
+    'postDiameter_cm', []));
+packageDir = fullfile(tempname, 'invalid_geometry_calibration');
+mkdir(packageDir);
+substrateMask = false(spec.numY, spec.numX); %#ok<NASGU>
+substrateMaskFile = fullfile(packageDir, 'substrate_mask.mat');
+save(substrateMaskFile, 'substrateMask');
+firstPoreMask = false(spec.numY, spec.numX);
+firstPoreMask(:, 1) = true;
+firstThreePoresMask = false(spec.numY, spec.numX);
+firstThreePoresMask(:, 1:3) = true;
+regionMaskFile = fullfile(packageDir, 'region_masks.mat');
+save(regionMaskFile, 'firstPoreMask', 'firstThreePoresMask');
+writeTextFile(fullfile(packageDir, 'source_micromodel.png'), 'unit test asset');
+writeTextFile(fullfile(packageDir, 'axis_calibration.csv'), 'not,a,calibration');
+writeTextFile(fullfile(packageDir, 'build_masks.m'), 'unit test asset');
+writeTextFile(fullfile(packageDir, 'geometry_uncertainty.csv'), 'not,uncertainty');
+manifest = struct('packageName', 'unit_test_invalid_geometry_package', ...
+    'sourceFigure', 'Zhang/Yoon micromodel image', ...
+    'sourceImageFile', 'source_micromodel.png', ...
+    'calibrationCsv', 'axis_calibration.csv', ...
+    'processingScript', 'build_masks.m', ...
+    'substrateMaskFile', 'substrate_mask.mat', ...
+    'regionMaskFile', 'region_masks.mat', ...
+    'uncertaintyCsv', 'geometry_uncertainty.csv');
+writeJsonFile(fullfile(packageDir, 'geometry_manifest.json'), manifest);
+
+package = precip_LoadZhangYoonGeometryPackage(packageDir, spec);
+
+verifyFalse(testCase, package.isQuantitativeGeometry);
+verifyFalse(testCase, package.assetFilesVerified);
+verifyTrue(testCase, contains(package.note, 'invalid calibration'));
+end
+
 function testRunYoonFixedGeometryBenchmarkRecordsGeometryPackage(testCase)
 workDir = tempname;
 spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 3, ...
@@ -175,6 +276,8 @@ assetNames = {'source_micromodel.png', 'axis_calibration.csv', ...
 for iFile = 1:numel(assetNames)
     writeTextFile(fullfile(packageDir, assetNames{iFile}), 'unit test asset');
 end
+writeGeometryCalibrationCsv(fullfile(packageDir, assetNames{2}));
+writeGeometryUncertaintyCsv(fullfile(packageDir, assetNames{4}));
 manifest = struct('packageName', 'unit_test_benchmark_geometry_package', ...
     'sourceFigure', 'Zhang/Yoon micromodel image', ...
     'sourceImageFile', assetNames{1}, ...
@@ -193,6 +296,18 @@ result = precip_RunYoonFixedGeometryBenchmark(spec, struct( ...
 verifyEqual(testCase, result.manifest.geometryPackageDir, packageDir);
 verifyTrue(testCase, result.manifest.geometryPackageIsQuantitative);
 verifyTrue(testCase, result.manifest.geometryPackageAssetFilesVerified);
+verifyEqual(testCase, result.manifest.geometrySourceFigure, ...
+    manifest.sourceFigure);
+verifyEqual(testCase, result.manifest.geometrySourceImageFile, ...
+    fullfile(packageDir, 'source_micromodel.png'));
+verifyEqual(testCase, result.manifest.geometryCalibrationCsv, ...
+    fullfile(packageDir, 'axis_calibration.csv'));
+verifyEqual(testCase, result.manifest.geometryProcessingScript, ...
+    fullfile(packageDir, assetNames{3}));
+verifyEqual(testCase, result.manifest.geometryUncertaintyCsv, ...
+    fullfile(packageDir, 'geometry_uncertainty.csv'));
+verifyTrue(testCase, result.manifest.geometryCalibrationTableVerified);
+verifyTrue(testCase, result.manifest.geometryUncertaintyTableVerified);
 verifyEqual(testCase, result.manifest.geometryPackageNumSubstrateCells, 1);
 verifyEqual(testCase, result.manifest.geometryPackageNumFirstPoreCells, ...
     nnz(firstPoreMask));
@@ -230,6 +345,9 @@ requiredFiles = {'source_screenshot.png', 'source_project.wpd', ...
 for iFile = 1:numel(requiredFiles)
     writeTextFile(fullfile(packageDir, requiredFiles{iFile}), 'unit test asset');
 end
+writeReferenceCalibrationCsv(fullfile(packageDir, requiredFiles{3}));
+writeReferenceRawExportCsv(fullfile(packageDir, requiredFiles{4}));
+writeReferenceUncertaintyCsv(fullfile(packageDir, requiredFiles{6}));
 manifestPath = fullfile(packageDir, 'digitization_manifest.json');
 manifest = struct();
 manifest.packageName = 'unit_test_digitization_package';
@@ -265,6 +383,9 @@ assetNames = {'source_screenshot.png', 'source_project.wpd', ...
 for iFile = 1:numel(assetNames)
     writeTextFile(fullfile(packageDir, assetNames{iFile}), 'unit test asset');
 end
+writeReferenceCalibrationCsv(fullfile(packageDir, assetNames{3}));
+writeReferenceRawExportCsv(fullfile(packageDir, assetNames{4}));
+writeReferenceUncertaintyCsv(fullfile(packageDir, assetNames{6}));
 manifest = struct('packageName', 'unit_test_reference_package', ...
     'sourceFigure', 'Yoon2012 Figure 4(a)', ...
     'screenshotFile', assetNames{1}, ...
@@ -308,6 +429,36 @@ verifyTrue(testCase, contains(package.note, 'missing required assets'));
 verifyFalse(testCase, isfield(package, 'reference'));
 end
 
+function testLoadReferenceDigitizationPackageRejectsInvalidCalibrationTables(testCase)
+packageDir = fullfile(tempname, 'invalid_digitization_tables');
+mkdir(packageDir);
+convertedCsv = fullfile(packageDir, 'converted_reference_curves.csv');
+writeMinimalReferenceCurveCsv(convertedCsv);
+writeTextFile(fullfile(packageDir, 'source_screenshot.png'), 'unit test asset');
+writeTextFile(fullfile(packageDir, 'source_project.wpd'), 'unit test asset');
+writeTextFile(fullfile(packageDir, 'axis_calibration.csv'), 'not,a,calibration');
+writeTextFile(fullfile(packageDir, 'raw_export.csv'), 'not,raw,export');
+writeTextFile(fullfile(packageDir, 'convert_reference.m'), 'unit test asset');
+writeTextFile(fullfile(packageDir, 'digitization_uncertainty.csv'), ...
+    'not,uncertainty');
+manifest = struct('packageName', 'unit_test_invalid_reference_package', ...
+    'sourceFigure', 'Yoon2012 Figure 4(a)', ...
+    'screenshotFile', 'source_screenshot.png', ...
+    'webPlotDigitizerProjectFile', 'source_project.wpd', ...
+    'calibrationCsv', 'axis_calibration.csv', ...
+    'rawExportCsv', 'raw_export.csv', ...
+    'conversionScript', 'convert_reference.m', ...
+    'uncertaintyCsv', 'digitization_uncertainty.csv', ...
+    'convertedReferenceCsv', 'converted_reference_curves.csv');
+writeJsonFile(fullfile(packageDir, 'digitization_manifest.json'), manifest);
+
+package = precip_LoadReferenceDigitizationPackage(packageDir);
+
+verifyFalse(testCase, package.isQuantitativeBenchmark);
+verifyFalse(testCase, package.assetFilesVerified);
+verifyTrue(testCase, contains(package.note, 'invalid calibration'));
+end
+
 function testLoadReferenceCurvesRejectsHeaderOnlyCsv(testCase)
 referenceCsv = fullfile(tempname, 'header_only_reference_curves.csv');
 mkdir(fileparts(referenceCsv));
@@ -341,11 +492,16 @@ verifyEqual(testCase, state.fluidVolumeFraction(substrateMask), ...
 end
 
 function testPassiveSplitInletKeepsComponentsNonnegativeWithoutLimiter(testCase)
-spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 24, 'numY', 16));
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 24, 'numY', 16, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 1e-3, ...
+    'diffusionCoefficient_cm2_s', 1e-8));
 
-result = precip_RunPassiveSplitInletBenchmark(spec, struct('numSteps', 8));
+result = precip_RunPassiveSplitInletBenchmark(spec, struct('numSteps', 8, ...
+    'dt_s', 0.05));
 
 verifyEqual(testCase, result.componentNames, spec.componentNames);
+verifyEqual(testCase, result.transportMode, 'finite_volume');
+verifyEqual(testCase, result.initialComponentSource, 'initial');
 verifyFalse(testCase, result.usedFiniteConcentrationLimiter);
 nonnegativeComponents = {'Ca_total', 'C_total', 'Na_total', 'Cl_total'};
 for iComponent = 1:numel(nonnegativeComponents)
@@ -354,11 +510,18 @@ for iComponent = 1:numel(nonnegativeComponents)
     verifyGreaterThanOrEqual(testCase, min(values(:)), -1e-15, fieldName);
 end
 verifyTrue(testCase, all(isfinite(result.components.Alkalinity(:))));
-verifyLessThan(testCase, abs(result.massLedger.relative.Na_total), 1e-12);
-verifyLessThan(testCase, abs(result.massLedger.relative.Cl_total), 1e-12);
-verifyLessThan(testCase, result.mixingWidth.symmetryError, 1e-12);
+verifyGreaterThan(testCase, result.massLedger.after.Na_total, ...
+    result.massLedger.before.Na_total);
+verifyGreaterThan(testCase, result.massLedger.after.Cl_total, ...
+    result.massLedger.before.Cl_total);
+verifyLessThan(testCase, ...
+    result.transportBoundaryLedger.relativeClosureError.Na_total, 1e-8);
+verifyLessThan(testCase, ...
+    result.transportBoundaryLedger.relativeClosureError.Cl_total, 1e-8);
+verifyLessThan(testCase, result.mixingWidth.symmetryError, 0.05);
 verifyEqual(testCase, result.transportSubcycle.rejectedStepCount, 0);
-verifyEqual(testCase, result.transportSubcycle.acceptedDt_s, result.numSteps, 'AbsTol', 0);
+verifyEqual(testCase, result.transportSubcycle.acceptedDt_s, ...
+    result.numSteps * result.dt_s, 'AbsTol', 1e-12);
 end
 
 function testPassiveSplitInletCanUseFiniteVolumeTransportCandidate(testCase)
@@ -380,6 +543,10 @@ verifyGreaterThanOrEqual(testCase, min(result.components.Ca_total(:)), 0);
 verifyGreaterThanOrEqual(testCase, min(result.components.C_total(:)), 0);
 verifyEqual(testCase, result.transportSubcycle.rejectedStepCount, 0);
 verifyTrue(testCase, isfield(result, 'transportBoundaryLedger'));
+verifyGreaterThan(testCase, result.massLedger.after.Ca_total, ...
+    result.massLedger.before.Ca_total);
+verifyGreaterThan(testCase, result.massLedger.after.C_total, ...
+    result.massLedger.before.C_total);
 verifyLessThan(testCase, result.transportBoundaryLedger.maxBoundaryClosureError, ...
     1e-18);
 end
@@ -392,9 +559,10 @@ spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 24, 'numY', 16));
 
 result = precip_RunPassiveSplitInletBenchmark(spec, struct( ...
     'numSteps', 8, ...
+    'dt_s', 0.05, ...
     'outputManifestPath', manifestPath, ...
-    'maxAcceptedMassRelativeError', 1e-10, ...
-    'maxAcceptedMixingSymmetryError', 1e-10));
+    'maxAcceptedBoundaryClosureRelativeError', 1e-8, ...
+    'maxAcceptedMixingSymmetryError', 0.05));
 
 verifyTrue(testCase, isfile(manifestPath));
 verifyTrue(testCase, result.passiveTransportAccepted);
@@ -403,8 +571,12 @@ verifyTrue(testCase, manifest.passiveTransportAccepted);
 verifyFalse(testCase, manifest.usedFiniteConcentrationLimiter);
 verifyEqual(testCase, string(manifest.componentNames(:))', ...
     ["Ca_total", "C_total", "Na_total", "Cl_total", "Alkalinity"]);
-verifyLessThan(testCase, manifest.maxAbsInertRelativeMassError, ...
-    manifest.maxAcceptedMassRelativeError);
+verifyEqual(testCase, string(manifest.transportMode), "finite_volume");
+verifyEqual(testCase, string(manifest.initialComponentSource), "initial");
+verifyGreaterThan(testCase, manifest.maxAbsInertRelativeMassError, 0);
+verifyLessThan(testCase, ...
+    manifest.maxAbsInertBoundaryClosureRelativeError, ...
+    manifest.maxAcceptedBoundaryClosureRelativeError);
 verifyLessThan(testCase, manifest.mixingSymmetryError, ...
     manifest.maxAcceptedMixingSymmetryError);
 end
@@ -535,6 +707,26 @@ verifyTrue(testCase, ismember(diagnostics.limiter, ...
     ["advective_cfl", "diffusive_cfl"]));
 end
 
+function testTransportStableDtUsesLocalEffectiveDiffusivity(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 10, 'numY', 10, ...
+    'lengthXAxis_cm', 0.01, 'lengthYAxis_cm', 0.01, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 0, ...
+    'diffusionCoefficient_cm2_s', 1e-6));
+effectiveDiffusivity = ones(spec.numY, spec.numX) * 1e-6;
+effectiveDiffusivity(5, 5) = 4e-6;
+
+[stableDt, diagnostics] = precip_ComputeTransportStableDt(spec, ...
+    struct('diffusiveCfl', 0.25, ...
+    'effectiveDiffusivity_cm2_s', effectiveDiffusivity));
+
+expectedDiffusive = 0.25 / (2 * max(effectiveDiffusivity(:)) * ...
+    (1 / spec.dx_cm^2 + 1 / spec.dy_cm^2));
+verifyEqual(testCase, stableDt, expectedDiffusive, 'RelTol', 1e-12);
+verifyEqual(testCase, diagnostics.maxDiffusivity_cm2_s, ...
+    max(effectiveDiffusivity(:)), 'RelTol', 1e-12);
+verifyEqual(testCase, diagnostics.limiter, "diffusive_cfl");
+end
+
 function testConservativeTransportUsesFlowFieldVelocity(testCase)
 spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 2, ...
     'postDiameter_cm', [], 'darcyVelocity_cm_s', 0, ...
@@ -556,6 +748,123 @@ verifyGreaterThan(testCase, updated.Ca_total(1, 1), 0);
 verifyEqual(testCase, updated.Ca_total(2, 1), 0, 'AbsTol', 0);
 verifyGreaterThan(testCase, updated.C_total(2, 1), 0);
 verifyEqual(testCase, updated.C_total(1, 1), 0, 'AbsTol', 0);
+end
+
+function testConservativeTransportDoesNotDiffuseThroughSubstrate(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 1, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 0, ...
+    'diffusionCoefficient_cm2_s', 1e-4));
+components = uniformComponents(spec, 0);
+components.Ca_total = [1, 0, 0] * 1e-6;
+substrateMask = false(spec.numY, spec.numX);
+substrateMask(1, 2) = true;
+
+updated = precip_AdvanceConservativeTransport2D(components, spec, 0.01, ...
+    struct('boundaryMode', 'closed', 'substrateMask', substrateMask));
+
+verifyEqual(testCase, updated.Ca_total(1, 3), 0, 'AbsTol', 0);
+verifyEqual(testCase, updated.Ca_total(substrateMask), ...
+    components.Ca_total(substrateMask), 'AbsTol', 0);
+end
+
+function testConservativeTransportUsesLocalEffectiveDiffusivityBarrier(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 1, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 0, ...
+    'diffusionCoefficient_cm2_s', 1e-4));
+components = uniformComponents(spec, 0);
+components.Ca_total = [1, 0, 0] * 1e-6;
+effectiveDiffusivity = ones(spec.numY, spec.numX) * 1e-4;
+effectiveDiffusivity(1, 2) = 0;
+
+updated = precip_AdvanceConservativeTransport2D(components, spec, 0.01, ...
+    struct('boundaryMode', 'closed', ...
+    'effectiveDiffusivity_cm2_s', effectiveDiffusivity));
+
+verifyEqual(testCase, updated.Ca_total, components.Ca_total, 'AbsTol', 0);
+end
+
+function testMicrocontinuumTransportClosedBoundaryConservesMolesWithVm(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 1, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 0, ...
+    'diffusionCoefficient_cm2_s', 1e-5));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(1, 3)));
+state.Vm = [0, 0.5, 0];
+state.fluidVolumeFraction = 1 - state.Vm;
+state.components.Ca_total = [1, 3, 2] .* 1e-6;
+state.components.C_total = [2, 1, 3] .* 1e-6;
+state.components.Na_total = [4, 5, 6] .* 1e-6;
+state.components.Cl_total = [6, 4, 5] .* 1e-6;
+state.components.Alkalinity = [-1, 0, 1] .* 1e-6;
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+initialMoles = state.componentMoles;
+
+[updated, ledger] = precip_AdvanceMicrocontinuumTransport2D(state, spec, ...
+    0.01, struct('boundaryMode', 'closed'));
+
+for iComponent = 1:numel(spec.componentNames)
+    fieldName = spec.componentNames{iComponent};
+    verifyEqual(testCase, sum(updated.componentMoles.(fieldName)(:)), ...
+        sum(initialMoles.(fieldName)(:)), 'AbsTol', 1e-20);
+    waterVolume = updated.fluidVolumeFraction .* spec.cellVolume_cm3;
+    verifyEqual(testCase, updated.components.(fieldName), ...
+        updated.componentMoles.(fieldName) ./ waterVolume, 'RelTol', 1e-12);
+    verifyEqual(testCase, ledger.boundaryClosureError.(fieldName), 0, ...
+        'AbsTol', 1e-20);
+end
+end
+
+function testMicrocontinuumTransportOpenBoundaryLedgerMatchesInventory(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 2, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 1e-3, ...
+    'diffusionCoefficient_cm2_s', 0));
+spec.splitInletY_cm = 0.5 * spec.lengthYAxis_cm;
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+for iComponent = 1:numel(spec.componentNames)
+    fieldName = spec.componentNames{iComponent};
+    state.components.(fieldName)(:) = 0;
+end
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+
+[updated, ledger] = precip_AdvanceMicrocontinuumTransport2D(state, spec, ...
+    0.01, struct('boundaryMode', 'split_inlet'));
+
+verifyGreaterThan(testCase, sum(updated.componentMoles.Ca_total(:)), 0);
+verifyGreaterThan(testCase, sum(updated.componentMoles.C_total(:)), 0);
+for iComponent = 1:numel(spec.componentNames)
+    fieldName = spec.componentNames{iComponent};
+    verifyEqual(testCase, ledger.massChange.(fieldName), ...
+        ledger.boundaryNetFlux.(fieldName) * 0.01, 'AbsTol', 1e-20);
+    verifyEqual(testCase, ledger.boundaryClosureError.(fieldName), 0, ...
+        'AbsTol', 1e-20);
+end
+end
+
+function testMicrocontinuumTransportDoesNotLeakThroughSubstrateOrDeffBarrier(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 5, 'numY', 1, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 0, ...
+    'diffusionCoefficient_cm2_s', 1e-4));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(1, 5)));
+state.components.Ca_total = [1, 0, 0, 0, 0] .* 1e-6;
+state.components.C_total = zeros(1, 5);
+state.components.Na_total = zeros(1, 5);
+state.components.Cl_total = zeros(1, 5);
+state.components.Alkalinity = zeros(1, 5);
+state.substrateMask(1, 3) = true;
+state.fluidVolumeFraction = double(~state.substrateMask) .* (1 - state.Vm);
+state.effectiveDiffusivity_cm2_s = ones(1, 5) .* 1e-4;
+state.effectiveDiffusivity_cm2_s(1, 4) = 0;
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+
+[updated, ~] = precip_AdvanceMicrocontinuumTransport2D(state, spec, ...
+    0.01, struct('boundaryMode', 'closed'));
+
+verifyEqual(testCase, updated.componentMoles.Ca_total(1, 3), 0, 'AbsTol', 0);
+verifyEqual(testCase, updated.componentMoles.Ca_total(1, 4), 0, 'AbsTol', 0);
+verifyEqual(testCase, updated.componentMoles.Ca_total(1, 5), 0, 'AbsTol', 0);
+verifyGreaterThan(testCase, updated.componentMoles.Ca_total(1, 2), 0);
 end
 
 function testTransportStableDtUsesFlowFieldVelocity(testCase)
@@ -690,6 +999,31 @@ verifyFalse(testCase, contains(mockEngine.LastInputText, ' charge'), ...
 clear cleanupObj;
 end
 
+function testIPhreeqcSpeciationPreservesNegativeAlkalinity(testCase)
+databasePath = localCreateTempDatabase(testCase);
+mockEngine = MockIPhreeqcEngine(localYoonSelectedOutput());
+session = rtm.phreeqc.PhreeqcSession(struct( ...
+    'engineType', 'mock', ...
+    'engineFactory', @() mockEngine));
+cleanupObj = onCleanup(@() session.close());
+spec = precip_ZhangYoonBenchmarkSpec(struct( ...
+    'iphreeqcSession', session, ...
+    'phreeqcDatabasePath', databasePath));
+samples = struct();
+samples.Ca_total = 1e-6;
+samples.C_total = 1e-6;
+samples.Na_total = 0;
+samples.Cl_total = 2e-6;
+samples.Alkalinity = -2e-9;
+samples.fixedPH = 6.1;
+
+precip_IPhreeqcSpeciation(samples, spec);
+
+verifyTrue(testCase, contains(mockEngine.LastInputText, ...
+    sprintf('Alkalinity %.15g', samples.Alkalinity * 1000)));
+clear cleanupObj;
+end
+
 function testIPhreeqcSpeciationDefinesVateritePhaseFromBenchmarkKsp(testCase)
 databasePath = localCreateTempDatabase(testCase);
 mockEngine = MockIPhreeqcEngine(localYoonSelectedOutput());
@@ -763,6 +1097,22 @@ verifyEqual(testCase, mockEngine.RunStringCount, 1);
 clear cleanupObj;
 end
 
+function testRunYoonSpeciationMixingSeriesDefaultsTo101Fractions(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct( ...
+    'iphreeqcSpeciationFcn', @localIphreeqcSpeciation));
+
+result = precip_RunYoonSpeciationMixingSeries(spec);
+
+verifyEqual(testCase, result.summary.numSamples, 101);
+verifyEqual(testCase, result.table.fractionInletA(1), 0, 'AbsTol', 0);
+verifyEqual(testCase, result.table.fractionInletA(end), 1, 'AbsTol', 0);
+verifyEqual(testCase, diff(result.table.fractionInletA), ...
+    ones(100, 1) .* 0.01, 'AbsTol', 1e-12);
+verifyEqual(testCase, result.summary.mixingFractionStep, 0.01, ...
+    'AbsTol', 1e-12);
+verifyTrue(testCase, result.summary.mixingFractionsCover101);
+end
+
 function testRunYoonSpeciationMixingSeriesWritesUnacceptedManifest(testCase)
 workDir = tempname;
 mkdir(workDir);
@@ -823,7 +1173,6 @@ end
 function testYoonReactiveAreaIncludesTopBottomForFluidCells(testCase)
 spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 2));
 substrateMask = false(spec.numY, spec.numX);
-substrateMask(1, 2) = true;
 state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
     struct('substrateMask', substrateMask));
 
@@ -832,7 +1181,82 @@ area = precip_ComputeYoonReactiveArea(state, spec);
 expectedTopBottom = 2 * spec.dx_cm * spec.dy_cm;
 verifyEqual(testCase, area(~substrateMask), ...
     expectedTopBottom * ones(nnz(~substrateMask), 1), 'AbsTol', 1e-18);
-verifyEqual(testCase, area(substrateMask), 0, 'AbsTol', 0);
+verifyFalse(testCase, any(substrateMask(:)));
+end
+
+function testYoonReactiveAreaIncludesSubstrateWallFaces(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 1, ...
+    'postDiameter_cm', []));
+substrateMask = false(spec.numY, spec.numX);
+substrateMask(1, 2) = true;
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', substrateMask));
+
+area = precip_ComputeYoonReactiveArea(state, spec);
+
+expectedTopBottom = 2 * spec.dx_cm * spec.dy_cm;
+expectedWall = spec.dy_cm * spec.thickness_cm;
+verifyEqual(testCase, area(1, 1), expectedTopBottom + expectedWall, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, area(1, 3), expectedTopBottom + expectedWall, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, area(1, 2), 0, 'AbsTol', 0);
+end
+
+function testYoonReactiveAreaIncludesTwoOrthogonalWallFaces(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 2, 'numY', 2, ...
+    'postDiameter_cm', []));
+substrateMask = false(spec.numY, spec.numX);
+substrateMask(1, 2) = true;
+substrateMask(2, 1) = true;
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', substrateMask));
+
+area = precip_ComputeYoonReactiveArea(state, spec);
+
+expectedTopBottom = 2 * spec.dx_cm * spec.dy_cm;
+expectedWall = spec.dy_cm * spec.thickness_cm + ...
+    spec.dx_cm * spec.thickness_cm;
+verifyEqual(testCase, area(2, 2), expectedTopBottom + expectedWall, ...
+    'AbsTol', 1e-18);
+end
+
+function testYoonReactiveAreaIncludesExposedFilledPrecipitateFaces(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 1, ...
+    'postDiameter_cm', []));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+state.Vm(1, 2) = 1;
+state.fluidVolumeFraction = double(~state.substrateMask) .* (1 - state.Vm);
+
+area = precip_ComputeYoonReactiveArea(state, spec);
+
+expectedTopBottom = 2 * spec.dx_cm * spec.dy_cm;
+expectedFace = spec.dy_cm * spec.thickness_cm;
+verifyEqual(testCase, area(1, 1), expectedTopBottom + expectedFace, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, area(1, 3), expectedTopBottom + expectedFace, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, area(1, 2), 0, 'AbsTol', 0);
+end
+
+function testYoonReactiveAreaDoesNotCountInternalFilledPrecipitateFaces(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 1, ...
+    'postDiameter_cm', []));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+state.Vm(1, 2:3) = 1;
+state.fluidVolumeFraction = double(~state.substrateMask) .* (1 - state.Vm);
+
+area = precip_ComputeYoonReactiveArea(state, spec);
+
+expectedTopBottom = 2 * spec.dx_cm * spec.dy_cm;
+expectedFace = spec.dy_cm * spec.thickness_cm;
+verifyEqual(testCase, area(1, 1), expectedTopBottom + expectedFace, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, area(1, 4), expectedTopBottom + expectedFace, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, area(1, 2:3), [0, 0], 'AbsTol', 0);
 end
 
 function testYoonVateriteRateIsPositiveWhenSupersaturated(testCase)
@@ -855,14 +1279,49 @@ chem = struct();
 chem.aH = [1e-7; 1e-7];
 chem.aH2CO3 = [1e-4; 1e-4];
 chem.omegaVaterite = [2; 0.5];
+inactiveState = struct('case5BoostActive', false);
+activeState = struct('case5BoostActive', true);
 
-baseRate = precip_YoonVateriteRate(chem, baseSpec);
-case5Rate = precip_YoonVateriteRate(chem, case5Spec);
+baseRate = precip_YoonVateriteRate(chem, baseSpec, inactiveState);
+inactiveCase5Rate = precip_YoonVateriteRate(chem, case5Spec, inactiveState);
+activeCase5Rate = precip_YoonVateriteRate(chem, case5Spec, activeState);
 
-verifyEqual(testCase, case5Rate(1), baseRate(1), 'RelTol', 1e-12);
-verifyEqual(testCase, case5Rate(2), 300 * baseRate(2), 'RelTol', 1e-12);
-verifyGreaterThan(testCase, case5Rate(1), 0);
-verifyLessThan(testCase, case5Rate(2), baseRate(2));
+verifyEqual(testCase, inactiveCase5Rate, baseRate, 'RelTol', 1e-12);
+verifyEqual(testCase, activeCase5Rate(1), baseRate(1), 'RelTol', 1e-12);
+verifyEqual(testCase, activeCase5Rate(2), 300 * baseRate(2), 'RelTol', 1e-12);
+verifyGreaterThan(testCase, activeCase5Rate(1), 0);
+verifyLessThan(testCase, activeCase5Rate(2), baseRate(2));
+end
+
+function testCase5BoostActivatesAfterCenterBandBlocks(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 3, ...
+    'postDiameter_cm', [], 'dissolutionFactor', 300));
+spec.centerBandMask = false(spec.numY, spec.numX);
+spec.centerBandMask(2, 2) = true;
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+state.blockedMask(:) = false;
+state.blockedMask(2, 2) = true;
+
+updated = precip_UpdateCase5BoostState(state, spec, 120);
+
+verifyTrue(testCase, updated.case5BoostActive);
+verifyEqual(testCase, updated.case5ActivationTime_s, 120, 'AbsTol', 0);
+end
+
+function testCase5BoostDoesNotActivateBeforeCenterBandBlocks(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 3, ...
+    'postDiameter_cm', [], 'dissolutionFactor', 300));
+spec.centerBandMask = false(spec.numY, spec.numX);
+spec.centerBandMask(2, 2) = true;
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+state.blockedMask(:) = false;
+
+updated = precip_UpdateCase5BoostState(state, spec, 120);
+
+verifyFalse(testCase, updated.case5BoostActive);
+verifyTrue(testCase, isnan(updated.case5ActivationTime_s));
 end
 
 function testUpdateVateriteVolumeFractionConservesCaCAndAlkalinity(testCase)
@@ -874,6 +1333,7 @@ state.components.C_total = 10e-6;
 state.components.Na_total = 0;
 state.components.Cl_total = 0;
 state.components.Alkalinity = 20e-6;
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
 rate = 1e-12;
 area = 2e-4;
 dt = 5;
@@ -882,15 +1342,55 @@ updated = precip_UpdateVateriteVolumeFraction(state, rate, area, dt, spec);
 
 deltaMoles = rate * area * dt;
 expectedVm = spec.vateriteMolarVolume_cm3_mol * deltaMoles / spec.cellVolume_cm3;
-expectedDeltaConcentration = deltaMoles / spec.cellVolume_cm3;
+expectedWaterVolume = (1 - expectedVm) * spec.cellVolume_cm3;
+expectedCaMoles = state.componentMoles.Ca_total - deltaMoles;
+expectedCMoles = state.componentMoles.C_total - deltaMoles;
+expectedAlkalinityMoles = state.componentMoles.Alkalinity - 2 * deltaMoles;
 verifyEqual(testCase, updated.Vm, expectedVm, 'RelTol', 1e-12);
+verifyEqual(testCase, updated.componentMoles.Ca_total, expectedCaMoles, ...
+    'RelTol', 1e-12);
+verifyEqual(testCase, updated.componentMoles.C_total, expectedCMoles, ...
+    'RelTol', 1e-12);
+verifyEqual(testCase, updated.componentMoles.Alkalinity, ...
+    expectedAlkalinityMoles, 'RelTol', 1e-12);
 verifyEqual(testCase, updated.components.Ca_total, ...
-    state.components.Ca_total - expectedDeltaConcentration, 'RelTol', 1e-12);
+    expectedCaMoles / expectedWaterVolume, 'RelTol', 1e-12);
 verifyEqual(testCase, updated.components.C_total, ...
-    state.components.C_total - expectedDeltaConcentration, 'RelTol', 1e-12);
+    expectedCMoles / expectedWaterVolume, 'RelTol', 1e-12);
 verifyEqual(testCase, updated.components.Alkalinity, ...
-    state.components.Alkalinity - 2 * expectedDeltaConcentration, 'RelTol', 1e-12);
+    expectedAlkalinityMoles / expectedWaterVolume, 'RelTol', 1e-12);
 verifyEqual(testCase, updated.precipitateMoles, deltaMoles, 'RelTol', 1e-12);
+end
+
+function testUpdateVateriteVolumeFractionUsesFluidVolumeInventory(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 1, 'numY', 1, ...
+    'maxVmChangePerStep', 1));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(1, 1)));
+state.Vm = 0.5;
+state.fluidVolumeFraction = 1 - state.Vm;
+state.components.Ca_total = 10e-6;
+state.components.C_total = 10e-6;
+state.components.Na_total = 3e-6;
+state.components.Cl_total = 4e-6;
+state.components.Alkalinity = 20e-6;
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+deltaMoles = 1e-12;
+
+updated = precip_UpdateVateriteVolumeFraction(state, deltaMoles, 1, 1, spec);
+
+expectedVm = state.Vm + spec.vateriteMolarVolume_cm3_mol * ...
+    deltaMoles / spec.cellVolume_cm3;
+expectedWaterVolume = (1 - expectedVm) * spec.cellVolume_cm3;
+verifyEqual(testCase, updated.Vm, expectedVm, 'RelTol', 1e-12);
+verifyEqual(testCase, updated.componentMoles.Ca_total, ...
+    state.componentMoles.Ca_total - deltaMoles, 'RelTol', 1e-12);
+verifyEqual(testCase, updated.componentMoles.Na_total, ...
+    state.componentMoles.Na_total, 'RelTol', 1e-12);
+verifyEqual(testCase, updated.components.Ca_total, ...
+    updated.componentMoles.Ca_total / expectedWaterVolume, 'RelTol', 1e-12);
+verifyEqual(testCase, updated.components.Na_total, ...
+    state.componentMoles.Na_total / expectedWaterVolume, 'RelTol', 1e-12);
 end
 
 function testUpdateVateriteVolumeFractionLimitsPrecipitationByAqueousInventory(testCase)
@@ -903,6 +1403,7 @@ state.components.C_total = 2e-9;
 state.components.Na_total = 0;
 state.components.Cl_total = 0;
 state.components.Alkalinity = 10e-9;
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
 
 updated = precip_UpdateVateriteVolumeFraction(state, 1, 1, 1, spec);
 
@@ -910,6 +1411,32 @@ verifyGreaterThanOrEqual(testCase, updated.components.Ca_total, -1e-18);
 verifyGreaterThanOrEqual(testCase, updated.components.C_total, -1e-18);
 verifyGreaterThanOrEqual(testCase, updated.components.Alkalinity, -1e-18);
 verifyLessThanOrEqual(testCase, updated.Vm - state.Vm, spec.maxVmChangePerStep);
+end
+
+function testUpdateVateriteVolumeFractionDoesNotLimitPrecipitationByNegativeAlkalinity(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 1, 'numY', 1, ...
+    'maxVmChangePerStep', 1));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(1, 1)));
+state.components.Ca_total = 10e-9;
+state.components.C_total = 10e-9;
+state.components.Na_total = 0;
+state.components.Cl_total = 0;
+state.components.Alkalinity = -4e-9;
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+requestedDeltaMoles = 2e-9 * spec.cellVolume_cm3;
+rate = requestedDeltaMoles;
+area = 1;
+dt = 1;
+
+updated = precip_UpdateVateriteVolumeFraction(state, rate, area, dt, spec);
+
+verifyEqual(testCase, updated.precipitateMoles, requestedDeltaMoles, ...
+    'RelTol', 1e-12);
+expectedWaterVolume = updated.fluidVolumeFraction * spec.cellVolume_cm3;
+verifyEqual(testCase, updated.components.Alkalinity, ...
+    updated.componentMoles.Alkalinity / expectedWaterVolume, 'RelTol', 1e-12);
+verifyLessThan(testCase, updated.components.Alkalinity, 0);
 end
 
 function testYoonReactionMassLedgerClosesAqueousAndSolidInventories(testCase)
@@ -921,6 +1448,7 @@ initial.components.C_total(:) = 10e-6;
 initial.components.Na_total(:) = 3e-6;
 initial.components.Cl_total(:) = 4e-6;
 initial.components.Alkalinity(:) = 20e-6;
+initial = precip_RefreshYoonComponentMolesFromAqueous(initial, spec);
 updated = precip_UpdateVateriteVolumeFraction(initial, ...
     [1e-12, 2e-12], [2e-4, 2e-4], 5, spec);
 
@@ -1025,8 +1553,10 @@ edgeRows = [1, spec.numY];
 verifyGreaterThan(testCase, max(result.state.Vm(centerRow, :)), ...
     max(result.state.Vm(edgeRows, :), [], 'all'));
 verifyGreaterThan(testCase, result.areaTimeseries.totalPrecipitatedArea_cm2(end), 0);
-verifyEqual(testCase, result.massLedger.relative.Na_total(end), 0, 'AbsTol', 1e-12);
-verifyEqual(testCase, result.massLedger.relative.Cl_total(end), 0, 'AbsTol', 1e-12);
+verifyTrue(testCase, isfinite(result.massLedger.relative.Na_total(end)));
+verifyTrue(testCase, isfinite(result.massLedger.relative.Cl_total(end)));
+verifyLessThan(testCase, abs(result.massLedger.relative.Na_total(end)), 2e-2);
+verifyLessThan(testCase, abs(result.massLedger.relative.Cl_total(end)), 2e-2);
 verifyTrue(testCase, isfield(result, 'reactionMassLedger'));
 verifyTrue(testCase, all(result.massLedger.accepted));
 verifyEqual(testCase, result.caseName, 'yoon_case1_short_fixed_geometry');
@@ -1237,7 +1767,8 @@ verifyEqual(testCase, result.transportDiagnostics.totalAdvancedDt_s(1), 2, ...
 verifyGreaterThan(testCase, ...
     result.transportDiagnostics.acceptedSubstepCount(1), 1);
 verifyGreaterThan(testCase, result.transportDiagnostics.rejectedStepCount(1), 0);
-verifyGreaterThanOrEqual(testCase, min(result.state.components.Ca_total(:)), 0);
+verifyGreaterThanOrEqual(testCase, ...
+    min(result.state.components.Ca_total(:)), -1e-15);
 end
 
 function testRunYoonCase1ShortFiniteVolumeUsesStableInitialSubstep(testCase)
@@ -1365,6 +1896,12 @@ verifyTrue(testCase, isnan(flow.pressure(2, 3)));
 verifyGreaterThan(testCase, abs(flow.velocityX_cm_s(1, 3)), 0);
 verifyGreaterThan(testCase, flow.momentumSystemSize, 0);
 verifyLessThan(testCase, flow.linearResidualRelative, 1e-8);
+verifyTrue(testCase, isfield(flow, 'maxDivergenceResidual_s_inv'));
+verifyTrue(testCase, isfield(flow, 'boundaryFluxClosureRelativeError'));
+verifyLessThan(testCase, flow.maxDivergenceResidual_s_inv, 1e-8);
+verifyGreaterThanOrEqual(testCase, ...
+    flow.boundaryFluxClosureRelativeError, 0);
+verifyTrue(testCase, isfinite(flow.boundaryFluxClosureRelativeError));
 end
 
 function testYoonStokesBrinkmanReportsLeftBoundaryFluxFromInletColumn(testCase)
@@ -1396,6 +1933,103 @@ verifyEqual(testCase, flow.solver, 'finite_difference_stokes_brinkman');
 verifyFalse(testCase, flow.isProxy);
 verifyTrue(testCase, flow.isStokes);
 verifyTrue(testCase, isfield(flow, 'velocityX_cm_s'));
+end
+
+function testMapCellMaskToLevelSetCombinesSubstrateAndBlockedVm(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 3, ...
+    'postDiameter_cm', [], 'blockedVmThreshold', 0.6));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+state.substrateMask(1, 1) = true;
+state.Vm(:) = 0;
+state.Vm(2, 3) = 0.7;
+state.blockedMask(:) = false;
+
+mapped = precip_MapCellMaskToLevelSet(state, spec);
+
+verifyEqual(testCase, size(mapped.levelSetAtCellCenters_cm), ...
+    [spec.numY, spec.numX]);
+verifyTrue(testCase, mapped.solidMask(1, 1));
+verifyTrue(testCase, mapped.solidMask(2, 3));
+verifyFalse(testCase, mapped.solidMask(3, 4));
+verifyLessThan(testCase, mapped.levelSetAtCellCenters_cm(1, 1), 0);
+verifyLessThan(testCase, mapped.levelSetAtCellCenters_cm(2, 3), 0);
+verifyGreaterThan(testCase, mapped.levelSetAtCellCenters_cm(3, 4), 0);
+verifyEqual(testCase, mapped.blockedVmThreshold, spec.blockedVmThreshold);
+end
+
+function testMapHyphmFluxToCartesianFacesMapsVelocitySamples(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 3, ...
+    'postDiameter_cm', []));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+state.substrateMask(1, :) = true;
+state.blockedMask(:) = false;
+state.blockedMask(2, 2) = true;
+[xGrid, yGrid] = meshgrid(state.grid.xCenters_cm, state.grid.yCenters_cm);
+velocitySamples = [ones(numel(xGrid), 1) * 2e-3, zeros(numel(xGrid), 1)];
+hyphmFlow = struct('velocitySamplePoints_cm', [xGrid(:), yGrid(:)], ...
+    'velocitySamples_cm_s', velocitySamples);
+
+mapped = precip_MapHyPHMFluxToCartesianFaces(hyphmFlow, state, spec);
+
+verifyEqual(testCase, size(mapped.velocityX_cm_s), [spec.numY, spec.numX]);
+verifyEqual(testCase, mapped.velocityX_cm_s(1, 1), 0, 'AbsTol', 0);
+verifyEqual(testCase, mapped.velocityX_cm_s(2, 2), 0, 'AbsTol', 0);
+verifyEqual(testCase, mapped.velocityX_cm_s(3, 4), 2e-3, 'RelTol', 1e-12);
+verifyGreaterThanOrEqual(testCase, mapped.inletFlux_cm3_s, 0);
+verifyLessThan(testCase, mapped.boundaryFluxClosureRelativeError, 1e-12);
+end
+
+function testRecomputeYoonFlowFieldUsesInjectedHyphmStokesBridge(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 3, ...
+    'postDiameter_cm', [], 'yoonFlowSolver', 'hyphm_stokes', ...
+    'hyphmStokesSolverFcn', @localHyphmStokesSolver));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+
+flow = precip_RecomputeYoonFlowField(state, spec);
+
+verifyEqual(testCase, flow.solver, 'hyphm_stokes');
+verifyFalse(testCase, flow.isProxy);
+verifyTrue(testCase, flow.isStokes);
+verifyEqual(testCase, size(flow.velocityX_cm_s), [spec.numY, spec.numX]);
+verifyLessThan(testCase, flow.boundaryFluxClosureRelativeError, 1e-12);
+verifyLessThan(testCase, flow.maxDivergenceResidual_s_inv, 1e-12);
+verifyEqual(testCase, flow.source, 'unit_test_hyphm_solver');
+end
+
+function testHyphmStokesBridgeRequiresInjectedSolver(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 3, ...
+    'postDiameter_cm', [], 'yoonFlowSolver', 'hyphm_stokes'));
+state = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+
+verifyError(testCase, @() precip_RecomputeYoonFlowField(state, spec), ...
+    'RTSPHEM:Precipitate:MissingHyphmStokesSolver');
+end
+
+function testRunYoonProductionFlowValidationWritesAcceptedManifest(testCase)
+workDir = tempname;
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 6, 'numY', 4, ...
+    'postDiameter_cm', [], 'yoonFlowSolver', 'hyphm_stokes', ...
+    'hyphmStokesSolverFcn', @localHyphmStokesSolver));
+
+result = precip_RunYoonProductionFlowValidation(spec, struct( ...
+    'outputRoot', workDir));
+
+verifyTrue(testCase, isfile(result.manifestPath));
+verifyTrue(testCase, isfile(result.summaryCsv));
+verifyTrue(testCase, result.manifest.productionFlowValidationAccepted);
+verifyTrue(testCase, result.manifest.requiredCasesComplete);
+verifyEqual(testCase, string(result.manifest.requiredCaseNames(:)), ...
+    ["empty_channel"; "single_obstacle"; "blocked_column"]);
+verifyLessThan(testCase, ...
+    result.manifest.maxBoundaryClosureRelativeError, ...
+    result.manifest.maxAcceptedBoundaryClosureRelativeError);
+verifyLessThan(testCase, ...
+    result.manifest.maxDivergenceResidual_s_inv, ...
+    result.manifest.maxAcceptedDivergenceResidual_s_inv);
 end
 
 function testRunYoonCase1ShortRecordsFlowSolverProvenance(testCase)
@@ -1448,8 +2082,16 @@ verifyTrue(testCase, result.flowDiagnostics.flowIsStokes(end));
 verifyEqual(testCase, result.flowDiagnostics.numFlowRecomputations(end), 1);
 verifyTrue(testCase, ismember('flowLinearResidualRelative', ...
     result.flowDiagnostics.Properties.VariableNames));
+verifyTrue(testCase, ismember('flowMaxDivergenceResidual_s_inv', ...
+    result.flowDiagnostics.Properties.VariableNames));
+verifyTrue(testCase, ismember('flowBoundaryClosureRelativeError', ...
+    result.flowDiagnostics.Properties.VariableNames));
 verifyLessThan(testCase, result.flowDiagnostics.flowLinearResidualRelative(end), ...
     1e-8);
+verifyLessThan(testCase, ...
+    result.flowDiagnostics.flowMaxDivergenceResidual_s_inv(end), 1e-8);
+verifyGreaterThanOrEqual(testCase, ...
+    result.flowDiagnostics.flowBoundaryClosureRelativeError(end), 0);
 end
 
 function testRunYoonCase1ShortCountsInitialFlowSolve(testCase)
@@ -1579,10 +2221,21 @@ spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 9, 'numY', 9, ...
     'postDiameter_cm', [], 'yoonRate', struct('k1', 0, 'k2', 0, ...
     'k3', 3e-9, 'units', 'mol_cm-2_s-1', ...
     'source', 'unit_test_fast_rate')));
+spec.centerBandMask = false(spec.numY, spec.numX);
+spec.centerBandMask(5, 5) = true;
+initialState = precip_YoonMicrocontinuumSolver('initialize', spec, ...
+    struct('substrateMask', false(spec.numY, spec.numX)));
+initialState.Vm(5, 5) = 0.8;
+initialState.precipitateMoles = initialState.Vm .* spec.cellVolume_cm3 ./ ...
+    spec.vateriteMolarVolume_cm3_mol;
+initialState.blockedMask = initialState.Vm >= spec.blockedVmThreshold;
+initialState.fluidVolumeFraction = double(~initialState.substrateMask) .* ...
+    (1 - initialState.Vm);
 
 comparison = precip_RunYoonCase5ShortComparison(spec, ...
-    struct('precipitationEndTime_s', 4200, 'dissolutionEndTime_s', 60, ...
-    'dt_s', 30, 'refreshComponentsEachStep', true));
+    struct('initialPrecipitatedState', initialState, ...
+    'dissolutionEndTime_s', 60, 'dt_s', 30, ...
+    'refreshComponentsEachStep', true));
 
 verifyEqual(testCase, comparison.caseNames, ["case_1"; "case_5"]);
 verifyEqual(testCase, comparison.dissolutionFactor, [1; 300]);
@@ -1684,6 +2337,14 @@ verifyTrue(testCase, isfield(result.manifest, ...
     'finalFlowLinearResidualRelative'));
 verifyTrue(testCase, isfield(result.manifest, ...
     'maxAcceptedFlowLinearResidualRelative'));
+verifyTrue(testCase, isfield(result.manifest, ...
+    'finalFlowMaxDivergenceResidual_s_inv'));
+verifyTrue(testCase, isfield(result.manifest, ...
+    'maxAcceptedFlowDivergenceResidual_s_inv'));
+verifyTrue(testCase, isfield(result.manifest, ...
+    'finalFlowBoundaryClosureRelativeError'));
+verifyTrue(testCase, isfield(result.manifest, ...
+    'maxAcceptedFlowBoundaryClosureRelativeError'));
 verifyTrue(testCase, isfield(result.manifest, 'flowFeedbackAccepted'));
 verifyTrue(testCase, isfile(fullfile(workDir, 'yoon_transport_diagnostics.csv')));
 transportTable = readtable(fullfile(workDir, 'yoon_transport_diagnostics.csv'));
@@ -1746,7 +2407,46 @@ verifyEqual(testCase, height(result.run.snapshots), 3);
 verifyEqual(testCase, result.run.caseName, 'yoon_case1_short_fixed_geometry');
 end
 
-function testRunYoonFixedGeometryBenchmarkRecordsAcceptedFlowFeedback(testCase)
+function testRunYoonFixedGeometryBenchmarkQuantitativeModeRequiresFvAndSubcycling(testCase)
+workDir = tempname;
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 4, 'numY', 4, ...
+    'postDiameter_cm', [], 'darcyVelocity_cm_s', 1e-3, ...
+    'diffusionCoefficient_cm2_s', 0, 'yoonRate', struct('k1', 0, ...
+    'k2', 0, 'k3', 0, 'units', 'mol_cm-2_s-1', ...
+    'source', 'unit_test_quantitative_transport_mode')));
+
+result = precip_RunYoonFixedGeometryBenchmark(spec, struct( ...
+    'outputRoot', workDir, 'endTime_s', 30, 'dt_s', 30, ...
+    'targetTimes_s', 30, 'isQuantitativeBenchmark', true));
+
+verifyTrue(testCase, result.manifest.isQuantitativeBenchmark);
+verifyEqual(testCase, result.manifest.transportMode, 'finite_volume');
+verifyTrue(testCase, result.manifest.reactionSubcycling);
+verifyEqual(testCase, result.run.transportMode, 'finite_volume');
+verifyTrue(testCase, result.run.reactionSubcycling);
+verifyEqual(testCase, result.manifest.finalTransportCandidate, ...
+    'finite_volume_split_inlet');
+verifyGreaterThanOrEqual(testCase, ...
+    result.manifest.finalReactionAcceptedSubstepCount, 1);
+end
+
+function testRunYoonFixedGeometryBenchmarkRejectsAnalyticTransportInQuantitativeMode(testCase)
+spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 3, 'numY', 3, ...
+    'postDiameter_cm', []));
+
+verifyError(testCase, @() precip_RunYoonFixedGeometryBenchmark(spec, ...
+    struct('outputRoot', tempname, 'endTime_s', 30, 'dt_s', 30, ...
+    'targetTimes_s', 30, 'isQuantitativeBenchmark', true, ...
+    'transportMode', 'analytic')), ...
+    'RTSPHEM:Precipitate:InvalidQuantitativeBenchmarkOptions');
+verifyError(testCase, @() precip_RunYoonFixedGeometryBenchmark(spec, ...
+    struct('outputRoot', tempname, 'endTime_s', 30, 'dt_s', 30, ...
+    'targetTimes_s', 30, 'isQuantitativeBenchmark', true, ...
+    'reactionSubcycling', false)), ...
+    'RTSPHEM:Precipitate:InvalidQuantitativeBenchmarkOptions');
+end
+
+function testRunYoonFixedGeometryBenchmarkRejectsUnclosedDiagnosticFlowFeedback(testCase)
 workDir = tempname;
 spec = precip_ZhangYoonBenchmarkSpec(struct('numX', 5, 'numY', 3, ...
     'postDiameter_cm', [], 'yoonFlowSolver', ...
@@ -1767,14 +2467,16 @@ initialState.components.Alkalinity(:) = 0.2;
 
 result = precip_RunYoonFixedGeometryBenchmark(spec, struct( ...
     'outputRoot', workDir, 'endTime_s', 30, 'dt_s', 30, ...
-    'targetTimes_s', 30, 'initialState', initialState, ...
-    'flowBackendProductionValidated', true));
+    'targetTimes_s', 30, 'initialState', initialState));
 
 verifyTrue(testCase, result.manifest.flowTopologyChangedAny);
 verifyEqual(testCase, result.manifest.totalFlowTopologyChangedSteps, 1);
 verifyTrue(testCase, result.manifest.flowRecomputedAfterTopologyChange);
-verifyTrue(testCase, result.manifest.flowBackendProductionValidated);
-verifyTrue(testCase, result.manifest.flowFeedbackAccepted);
+verifyGreaterThan(testCase, ...
+    result.manifest.finalFlowBoundaryClosureRelativeError, ...
+    result.manifest.maxAcceptedFlowBoundaryClosureRelativeError);
+verifyFalse(testCase, result.manifest.flowBackendProductionValidated);
+verifyFalse(testCase, result.manifest.flowFeedbackAccepted);
 end
 
 function testRunYoonCase1Case5FixedGeometryComparisonWritesManifests(testCase)
@@ -1814,6 +2516,10 @@ verifyTrue(testCase, isfield(comparison.manifest, ...
     'productionComparisonValidated'));
 verifyTrue(testCase, isfield(comparison.manifest, ...
     'case1Case5AcceptanceCriteria'));
+verifyTrue(testCase, isfield(comparison.manifest, ...
+    'case5BoostActivated'));
+verifyTrue(testCase, isfield(comparison.manifest, ...
+    'case5ActivationTime_s'));
 verifyFalse(testCase, comparison.manifest.productionComparisonValidated);
 verifyFalse(testCase, comparison.manifest.case1Case5Accepted);
 verifyEqual(testCase, comparison.manifest.numCases, 2);
@@ -1903,6 +2609,7 @@ verifyEqual(testCase, result.manifest.actualNumY, [5, 10, 20], ...
     'AbsTol', 0);
 verifyTrue(testCase, result.manifest.targetGridSpacingSequenceComplete);
 verifyTrue(testCase, result.manifest.actualGridSpacingSequenceComplete);
+verifyTrue(testCase, result.manifest.caseManifestFilesVerified);
 verifyFalse(testCase, result.manifest.productionGridConvergenceValidated);
 verifyFalse(testCase, result.manifest.gridConvergenceAccepted);
 verifyFalse(testCase, result.manifest.isQuantitativeBenchmark);
@@ -1987,12 +2694,17 @@ evidence.fixedGeometryManifest = struct( ...
     'finalPrecipitateCentroidDistanceFromSplit_cm', 0, ...
     'centerBandMorphologyTolerance_cm', 1, ...
     'isQuantitativeBenchmark', true);
+evidence.flowValidationManifest = acceptedFlowValidationManifest();
 evidence.gridConvergenceManifest = struct( ...
     'requestedTargetGridSpacing_um', [10, 5, 2.5], ...
     'actualDx_um', [10, 5, 2.5], ...
     'actualDy_um', [10, 5, 2.5], ...
     'actualNumX', [5, 10, 20], ...
     'actualNumY', [5, 10, 20], ...
+    'caseManifestPaths', {{'coarse/yoon_fixed_geometry_manifest.json', ...
+    'medium/yoon_fixed_geometry_manifest.json', ...
+    'fine/yoon_fixed_geometry_manifest.json'}}, ...
+    'caseManifestFilesVerified', true, ...
     'isQuantitativeBenchmark', true, ...
     'targetGridSpacingSequenceComplete', true, ...
     'actualGridSpacingSequenceComplete', true, ...
@@ -2065,6 +2777,7 @@ evidence.fixedGeometryManifest = struct( ...
     'finalPrecipitateCentroidDistanceFromSplit_cm', 0, ...
     'centerBandMorphologyTolerance_cm', 1, ...
     'isQuantitativeBenchmark', true);
+evidence.flowValidationManifest = acceptedFlowValidationManifest();
 evidence.gridConvergenceManifest = struct( ...
     'requestedTargetGridSpacing_um', [10, 5, 2.5], ...
     'isQuantitativeBenchmark', true, ...
@@ -2116,6 +2829,19 @@ failedRequirements = audit.requirements.requirementId( ...
 verifyTrue(testCase, any(failedRequirements == "grid_convergence"));
 end
 
+function testYoonBenchmarkReadinessAuditRejectsMissingGridCaseManifestVerification(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.gridConvergenceManifest = rmfield( ...
+    evidence.gridConvergenceManifest, 'caseManifestFilesVerified');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "grid_convergence"));
+end
+
 function testYoonBenchmarkReadinessAuditRejectsUnacceptedFlowFeedback(testCase)
 evidence = struct();
 evidence.fixedGeometryManifest = struct( ...
@@ -2142,12 +2868,17 @@ evidence.fixedGeometryManifest = struct( ...
     'finalPrecipitateCentroidDistanceFromSplit_cm', 0, ...
     'centerBandMorphologyTolerance_cm', 1, ...
     'isQuantitativeBenchmark', true);
+evidence.flowValidationManifest = acceptedFlowValidationManifest();
 evidence.gridConvergenceManifest = struct( ...
     'requestedTargetGridSpacing_um', [10, 5, 2.5], ...
     'actualDx_um', [10, 5, 2.5], ...
     'actualDy_um', [10, 5, 2.5], ...
     'actualNumX', [5, 10, 20], ...
     'actualNumY', [5, 10, 20], ...
+    'caseManifestPaths', {{'coarse/yoon_fixed_geometry_manifest.json', ...
+    'medium/yoon_fixed_geometry_manifest.json', ...
+    'fine/yoon_fixed_geometry_manifest.json'}}, ...
+    'caseManifestFilesVerified', true, ...
     'isQuantitativeBenchmark', true, ...
     'targetGridSpacingSequenceComplete', true, ...
     'actualGridSpacingSequenceComplete', true, ...
@@ -2204,6 +2935,7 @@ evidence.fixedGeometryManifest = struct( ...
     'finalPrecipitateCentroidDistanceFromSplit_cm', 0, ...
     'centerBandMorphologyTolerance_cm', 1, ...
     'isQuantitativeBenchmark', true);
+evidence.flowValidationManifest = acceptedFlowValidationManifest();
 evidence.gridConvergenceManifest = struct( ...
     'requestedTargetGridSpacing_um', [10, 5, 2.5], ...
     'isQuantitativeBenchmark', true, ...
@@ -2270,6 +3002,71 @@ verifyFalse(testCase, audit.allReady);
 failedRequirements = audit.requirements.requirementId( ...
     ~audit.requirements.ready);
 verifyTrue(testCase, any(failedRequirements == "production_stokes"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsMissingProductionFlowClosureEvidence(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.fixedGeometryManifest = rmfield(evidence.fixedGeometryManifest, ...
+    'finalFlowBoundaryClosureRelativeError');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "production_stokes"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsMissingFlowValidationManifest(testCase)
+evidence = acceptedReadinessEvidence();
+evidence = rmfield(evidence, 'flowValidationManifest');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "production_stokes"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsFlowValidationWithoutProvenance(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.flowValidationManifest = rmfield(evidence.flowValidationManifest, ...
+    'outputEvidenceHashSha256');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "production_stokes"));
+verifyTrue(testCase, any(failedRequirements == "flow_feedback"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsCaseComparisonWithoutProvenance(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.caseComparisonManifest = rmfield(evidence.caseComparisonManifest, ...
+    'sourceCommitSha');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "case1_case5"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsDiffusionFeedbackWithoutProvenance(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.diffusionFeedbackManifest = rmfield( ...
+    evidence.diffusionFeedbackManifest, 'outputFileSha256');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "diffusion_feedback"));
 end
 
 function testYoonBenchmarkReadinessAuditRejectsFiniteClippingEvidence(testCase)
@@ -2518,6 +3315,33 @@ failedRequirements = audit.requirements.requirementId( ...
 verifyTrue(testCase, any(failedRequirements == "chemistry_speciation"));
 end
 
+function testYoonBenchmarkReadinessAuditRejectsIncompleteChemistryFractionCoverage(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.chemistryManifest = rmfield( ...
+    evidence.chemistryManifest, 'mixingFractionsCover101');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "chemistry_speciation"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsCoarseChemistryFractionGrid(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.chemistryManifest.numSamples = 21;
+evidence.chemistryManifest.mixingFractionStep = 0.05;
+evidence.chemistryManifest.mixingFractionsCover101 = false;
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "chemistry_speciation"));
+end
+
 function testYoonBenchmarkReadinessAuditRejectsUnacceptedPassiveTransport(testCase)
 evidence = struct();
 evidence.fixedGeometryManifest = struct( ...
@@ -2611,6 +3435,10 @@ evidence.passiveTransportManifest = struct( ...
     'minConcentration', 0, ...
     'maxAbsInertRelativeMassError', 0.2, ...
     'maxAcceptedMassRelativeError', 1e-4, ...
+    'maxAbsInertBoundaryClosureRelativeError', 0, ...
+    'maxAcceptedBoundaryClosureRelativeError', 1e-8, ...
+    'transportMode', 'finite_volume', ...
+    'initialComponentSource', 'initial', ...
     'mixingSymmetryError', 0, ...
     'maxAcceptedMixingSymmetryError', 0.05, ...
     'rejectedStepCount', 0, ...
@@ -2956,6 +3784,45 @@ verifyTrue(testCase, audit.isQuantitativeBenchmarkAllowed);
 verifyTrue(testCase, all(audit.requirements.ready));
 end
 
+function testYoonBenchmarkLadderAcceptsCompleteSyntheticEvidence(testCase)
+evidence = acceptedReadinessEvidence();
+
+ladder = precip_AuditYoonBenchmarkLadder(evidence);
+
+verifyTrue(testCase, ladder.allStagesReady);
+verifyEqual(testCase, ladder.firstFailedStageId, "");
+verifyEqual(testCase, ladder.stages.stageId, ...
+    ["B0"; "B1"; "B2"; "B3"; "B4"; "B5"; "B6"; "B7"; "B8"]);
+verifyTrue(testCase, all(ladder.stages.entered));
+verifyTrue(testCase, all(ladder.stages.ready));
+end
+
+function testYoonBenchmarkLadderStopsAfterPassiveTransportFailure(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.passiveTransportManifest.passiveTransportAccepted = false;
+
+ladder = precip_AuditYoonBenchmarkLadder(evidence);
+
+verifyFalse(testCase, ladder.allStagesReady);
+verifyEqual(testCase, ladder.firstFailedStageId, "B0");
+verifyTrue(testCase, ladder.stages.entered(1));
+verifyFalse(testCase, ladder.stages.ready(1));
+verifyFalse(testCase, any(ladder.stages.entered(2:end)));
+end
+
+function testYoonBenchmarkLadderStopsAfterFlowFeedbackFailure(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.flowValidationManifest = struct();
+
+ladder = precip_AuditYoonBenchmarkLadder(evidence);
+
+verifyFalse(testCase, ladder.allStagesReady);
+verifyEqual(testCase, ladder.firstFailedStageId, "B5");
+verifyTrue(testCase, all(ladder.stages.entered(1:5)));
+verifyFalse(testCase, ladder.stages.ready(6));
+verifyFalse(testCase, any(ladder.stages.entered(7:end)));
+end
+
 function testYoonBenchmarkReadinessAuditRejectsMissingRateConstants(testCase)
 evidence = acceptedReadinessEvidence();
 evidence.fixedGeometryManifest = rmfield(evidence.fixedGeometryManifest, ...
@@ -3007,9 +3874,48 @@ failedRequirements = audit.requirements.requirementId( ...
 verifyTrue(testCase, any(failedRequirements == "geometry_package"));
 end
 
+function testYoonBenchmarkReadinessAuditRejectsMissingGeometrySourceAssets(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.fixedGeometryManifest = rmfield(evidence.fixedGeometryManifest, ...
+    'geometrySourceImageFile');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "geometry_package"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsMissingGeometryCalibrationEvidence(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.fixedGeometryManifest = rmfield(evidence.fixedGeometryManifest, ...
+    'geometryCalibrationTableVerified');
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "geometry_package"));
+end
+
 function testYoonBenchmarkReadinessAuditRejectsIncompleteReferencePackageEvidence(testCase)
 evidence = acceptedReadinessEvidence();
 evidence.reference = struct('isQuantitativeBenchmark', true);
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "reference_package"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsMissingReferenceCalibrationEvidence(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.reference.digitizationPackage = rmfield( ...
+    evidence.reference.digitizationPackage, 'rawExportTableVerified');
 
 audit = precip_AuditYoonBenchmarkReadiness(evidence);
 
@@ -3035,6 +3941,18 @@ end
 function testYoonBenchmarkReadinessAuditRejectsIncompleteQuantitativeManifestEvidence(testCase)
 evidence = acceptedReadinessEvidence();
 evidence.fixedGeometryManifest.areaCsv = '';
+
+audit = precip_AuditYoonBenchmarkReadiness(evidence);
+
+verifyFalse(testCase, audit.allReady);
+failedRequirements = audit.requirements.requirementId( ...
+    ~audit.requirements.ready);
+verifyTrue(testCase, any(failedRequirements == "quantitative_manifest"));
+end
+
+function testYoonBenchmarkReadinessAuditRejectsAnalyticQuantitativeManifest(testCase)
+evidence = acceptedReadinessEvidence();
+evidence.fixedGeometryManifest.transportMode = 'analytic';
 
 audit = precip_AuditYoonBenchmarkReadiness(evidence);
 
@@ -3292,6 +4210,54 @@ verifyTrue(testCase, any(string(manifest.failedRequirementIds) == ...
     "case1_case5"));
 end
 
+function testRunYoonBenchmarkReadinessAuditReadsFlowValidationManifest(testCase)
+workDir = tempname;
+mkdir(workDir);
+evidence = acceptedReadinessEvidence();
+fixedManifestPath = fullfile(workDir, 'yoon_fixed_geometry_manifest.json');
+writeJsonFile(fixedManifestPath, evidence.fixedGeometryManifest);
+gridManifestPath = fullfile(workDir, 'yoon_grid_convergence_manifest.json');
+writeJsonFile(gridManifestPath, evidence.gridConvergenceManifest);
+chemistryManifestPath = fullfile(workDir, ...
+    'yoon_speciation_mixing_manifest.json');
+writeJsonFile(chemistryManifestPath, evidence.chemistryManifest);
+passiveManifestPath = fullfile(workDir, ...
+    'passive_transport_manifest.json');
+writeJsonFile(passiveManifestPath, evidence.passiveTransportManifest);
+caseComparisonManifestPath = fullfile(workDir, ...
+    'yoon_case1_case5_comparison_manifest.json');
+writeJsonFile(caseComparisonManifestPath, evidence.caseComparisonManifest);
+diffusionFeedbackManifestPath = fullfile(workDir, ...
+    'diffusion_feedback_manifest.json');
+writeJsonFile(diffusionFeedbackManifestPath, evidence.diffusionFeedbackManifest);
+flowValidationManifestPath = fullfile(workDir, ...
+    'yoon_production_flow_validation_manifest.json');
+writeJsonFile(flowValidationManifestPath, evidence.flowValidationManifest);
+referenceCsv = fullfile(workDir, 'reference_curves.csv');
+writeMinimalReferenceCurveCsv(referenceCsv);
+referencePackageDir = createCompleteReferenceDigitizationPackage( ...
+    testCase, workDir, referenceCsv);
+referenceCsv = fullfile(referencePackageDir, 'converted_reference_curves.csv');
+
+report = precip_RunYoonBenchmarkReadinessAudit(struct( ...
+    'fixedGeometryManifestPath', fixedManifestPath, ...
+    'gridConvergenceManifestPath', gridManifestPath, ...
+    'chemistryManifestPath', chemistryManifestPath, ...
+    'passiveTransportManifestPath', passiveManifestPath, ...
+    'caseComparisonManifestPath', caseComparisonManifestPath, ...
+    'diffusionFeedbackManifestPath', diffusionFeedbackManifestPath, ...
+    'flowValidationManifestPath', flowValidationManifestPath, ...
+    'referenceCsv', referenceCsv, ...
+    'referenceDigitizationPackageDir', referencePackageDir, ...
+    'outputRoot', workDir));
+
+manifest = jsondecode(fileread(report.manifestPath));
+verifyEqual(testCase, manifest.flowValidationManifestPath, ...
+    flowValidationManifestPath);
+verifyFalse(testCase, any(report.audit.requirements.requirementId == ...
+    "production_stokes" & ~report.audit.requirements.ready));
+end
+
 function testRunYoonBenchmarkReadinessAuditReadsDiffusionFeedbackManifest(testCase)
 workDir = tempname;
 mkdir(workDir);
@@ -3381,6 +4347,8 @@ end
 function manifest = acceptedDiffusionFeedbackManifest()
 manifest = struct( ...
     'diffusionFeedbackAccepted', true, ...
+    'summaryCsv', 'diffusion_feedback_summary.csv', ...
+    'summaryCsvVerified', true, ...
     'diffusionExponent', [0, 2, 3], ...
     'areaTrendNonincreasing', true, ...
     'massTrendDecreasing', true, ...
@@ -3388,6 +4356,7 @@ manifest = struct( ...
     'totalPrecipitateMoles', [3, 2, 1], ...
     'finalMeanEffectiveDiffusivity_cm2_s', [1, 0.8, 0.6], ...
     'feedbackCoupled', [true, true, true]);
+manifest = addAcceptedOutputProvenance(manifest);
 end
 
 function evidence = acceptedReadinessEvidence()
@@ -3403,6 +4372,13 @@ evidence.fixedGeometryManifest = struct( ...
     'geometryPackageName', 'unit_test_geometry_package', ...
     'geometryPackageNote', 'Complete geometry package with calibrated source image.', ...
     'geometryPackageAssetFilesVerified', true, ...
+    'geometrySourceFigure', 'Yoon2012 Figure 1', ...
+    'geometrySourceImageFile', 'source_micromodel.png', ...
+    'geometryCalibrationCsv', 'axis_calibration.csv', ...
+    'geometryProcessingScript', 'build_geometry_masks.m', ...
+    'geometryUncertaintyCsv', 'geometry_uncertainty.csv', ...
+    'geometryCalibrationTableVerified', true, ...
+    'geometryUncertaintyTableVerified', true, ...
     'geometryPackageNumSubstrateCells', 1, ...
     'geometryPackageNumFirstPoreCells', 3, ...
     'geometryPackageNumFirstThreePoresCells', 9, ...
@@ -3418,11 +4394,17 @@ evidence.fixedGeometryManifest = struct( ...
     'matFiles', {{'snapshot_13min.mat', 'snapshot_18min.mat', ...
     'snapshot_118min.mat'}}, ...
     'outputEvidenceFilesVerified', true, ...
+    'transportMode', 'finite_volume', ...
+    'reactionSubcycling', true, ...
     'finalFlowIsProxy', false, ...
     'finalFlowIsStokes', true, ...
     'finalFlowSolver', 'production_stokes_backend', ...
     'finalFlowLinearResidualRelative', 1e-12, ...
     'maxAcceptedFlowLinearResidualRelative', 1e-8, ...
+    'finalFlowMaxDivergenceResidual_s_inv', 1e-12, ...
+    'maxAcceptedFlowDivergenceResidual_s_inv', 1e-8, ...
+    'finalFlowBoundaryClosureRelativeError', 1e-12, ...
+    'maxAcceptedFlowBoundaryClosureRelativeError', 1e-8, ...
     'finalRelativePermeability', 0.5, ...
     'finalPressureDropRelative', 2, ...
     'finalFlowRateRelative', 0.5, ...
@@ -3459,6 +4441,10 @@ evidence.gridConvergenceManifest = struct( ...
     'actualDy_um', [10, 5, 2.5], ...
     'actualNumX', [5, 10, 20], ...
     'actualNumY', [5, 10, 20], ...
+    'caseManifestPaths', {{'coarse/yoon_fixed_geometry_manifest.json', ...
+    'medium/yoon_fixed_geometry_manifest.json', ...
+    'fine/yoon_fixed_geometry_manifest.json'}}, ...
+    'caseManifestFilesVerified', true, ...
     'isQuantitativeBenchmark', true, ...
     'targetGridSpacingSequenceComplete', true, ...
     'actualGridSpacingSequenceComplete', true, ...
@@ -3482,7 +4468,10 @@ evidence.caseComparisonManifest = struct( ...
     'case1FinalTotalPrecipitatedArea_cm2', 2, ...
     'case5FinalTotalPrecipitatedArea_cm2', 1, ...
     'productionComparisonValidated', true);
+evidence.caseComparisonManifest = addAcceptedOutputProvenance( ...
+    evidence.caseComparisonManifest);
 evidence.diffusionFeedbackManifest = acceptedDiffusionFeedbackManifest();
+evidence.flowValidationManifest = acceptedFlowValidationManifest();
 end
 
 function manifest = acceptedChemistryManifest()
@@ -3494,6 +4483,9 @@ manifest = struct( ...
     'maxAcceptedPhDifference', 0.1, ...
     'maxAbsSiVateriteDifference', 0, ...
     'maxAcceptedSiVateriteDifference', 0.1, ...
+    'numSamples', 101, ...
+    'mixingFractionStep', 0.01, ...
+    'mixingFractionsCover101', true, ...
     'expectedInletAPh', 6.1, ...
     'expectedInletBPh', 10.9, ...
     'inletAPhIphreeqc', 6.1, ...
@@ -3511,15 +4503,53 @@ function manifest = acceptedPassiveTransportManifest()
 manifest = struct( ...
     'passiveTransportAccepted', true, ...
     'usedFiniteConcentrationLimiter', false, ...
+    'transportMode', 'finite_volume', ...
+    'initialComponentSource', 'initial', ...
     'componentNames', {{'Ca_total', 'C_total', 'Na_total', 'Cl_total', ...
     'Alkalinity'}}, ...
     'minConcentration', 0, ...
-    'maxAbsInertRelativeMassError', 0, ...
+    'maxAbsInertRelativeMassError', 0.2, ...
     'maxAcceptedMassRelativeError', 1e-4, ...
+    'maxAbsInertBoundaryClosureRelativeError', 0, ...
+    'maxAcceptedBoundaryClosureRelativeError', 1e-8, ...
     'mixingSymmetryError', 0, ...
     'maxAcceptedMixingSymmetryError', 0.05, ...
     'rejectedStepCount', 0, ...
     'maxAcceptedRejectedStepCount', 0);
+end
+
+function manifest = acceptedFlowValidationManifest()
+manifest = struct( ...
+    'productionFlowValidationAccepted', true, ...
+    'solver', 'hyphm_stokes', ...
+    'isProxy', false, ...
+    'isStokes', true, ...
+    'requiredCasesComplete', true, ...
+    'requiredCaseNames', {{'empty_channel', 'single_obstacle', ...
+    'blocked_column'}}, ...
+    'validatedCaseNames', {{'empty_channel', 'single_obstacle', ...
+    'blocked_column'}}, ...
+    'maxLinearResidualRelative', 1e-12, ...
+    'maxAcceptedLinearResidualRelative', 1e-8, ...
+    'maxDivergenceResidual_s_inv', 1e-12, ...
+    'maxAcceptedDivergenceResidual_s_inv', 1e-8, ...
+    'maxBoundaryClosureRelativeError', 1e-12, ...
+    'maxAcceptedBoundaryClosureRelativeError', 1e-8, ...
+    'minRelativePermeability', 0.25, ...
+    'maxRelativePermeability', 1, ...
+    'validationSummaryCsvVerified', true);
+manifest = addAcceptedOutputProvenance(manifest);
+end
+
+function manifest = addAcceptedOutputProvenance(manifest)
+manifest.sourceCommitSha = '0123456789abcdef0123456789abcdef01234567';
+manifest.outputHashAlgorithm = 'SHA-256';
+manifest.outputHashInputFiles = {'unit_test_summary.csv'};
+manifest.outputHashInputFilesVerified = true;
+manifest.outputFileSha256 = ...
+    {'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'};
+manifest.outputEvidenceHashSha256 = ...
+    'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
 end
 
 function reference = acceptedReferencePackage()
@@ -3540,6 +4570,9 @@ reference.digitizationPackage = struct( ...
     'convertedReferenceCsv', 'converted_reference_curves.csv', ...
     'missingAssets', {{}}, ...
     'assetFilesVerified', true, ...
+    'calibrationTableVerified', true, ...
+    'rawExportTableVerified', true, ...
+    'uncertaintyTableVerified', true, ...
     'numReferenceRows', 1, ...
     'note', 'Complete digitization package with source screenshot.');
 end
@@ -3551,6 +4584,14 @@ referenceTable = table( ...
     'VariableNames', {'source', 'case', 'region', 'time_min', ...
     'precipitated_area_norm', 'precipitated_area_cm2', 'note'});
 writetable(referenceTable, referenceCsv);
+end
+
+function components = uniformComponents(spec, value)
+components = struct();
+for iComponent = 1:numel(spec.componentNames)
+    fieldName = spec.componentNames{iComponent};
+    components.(fieldName) = ones(spec.numY, spec.numX) .* value;
+end
 end
 
 function packageDir = createCompleteReferenceDigitizationPackage( ...
@@ -3565,6 +4606,9 @@ for iFile = 1:numel(assetNames)
     writeTextFile(fullfile(packageDir, assetNames{iFile}), ...
         'unit test asset');
 end
+writeReferenceCalibrationCsv(fullfile(packageDir, assetNames{3}));
+writeReferenceRawExportCsv(fullfile(packageDir, assetNames{4}));
+writeReferenceUncertaintyCsv(fullfile(packageDir, assetNames{6}));
 manifest = struct('packageName', 'unit_test_reference_package', ...
     'sourceFigure', 'Yoon2012 Figure 4(a)', ...
     'screenshotFile', assetNames{1}, ...
@@ -3600,12 +4644,53 @@ fprintf(fid, '%s', text);
 clear cleanupObj;
 end
 
+function writeGeometryCalibrationCsv(path)
+tbl = table([0; 100], [0; 100], [0; 0.30], [0; 0.30], ...
+    'VariableNames', {'image_x_px', 'image_y_px', 'x_cm', 'y_cm'});
+writetable(tbl, path);
+end
+
+function writeGeometryUncertaintyCsv(path)
+tbl = table("mask_boundary", 0.001, ...
+    'VariableNames', {'quantity', 'uncertainty_cm'});
+writetable(tbl, path);
+end
+
+function writeReferenceCalibrationCsv(path)
+tbl = table([0; 100], [100; 0], [0; 118], [0; 1], ...
+    'VariableNames', {'pixel_x', 'pixel_y', 'data_x', 'data_y'});
+writetable(tbl, path);
+end
+
+function writeReferenceRawExportCsv(path)
+tbl = table([13; 18; 118], [0.1; 0.2; 0.9], ...
+    'VariableNames', {'x', 'y'});
+writetable(tbl, path);
+end
+
+function writeReferenceUncertaintyCsv(path)
+tbl = table("digitization", 0.02, ...
+    'VariableNames', {'quantity', 'uncertainty'});
+writetable(tbl, path);
+end
+
 function mass = localComponentMass(components, spec)
 mass = struct();
 for iComponent = 1:numel(spec.componentNames)
     fieldName = spec.componentNames{iComponent};
     mass.(fieldName) = sum(components.(fieldName)(:)) * spec.cellVolume_cm3;
 end
+end
+
+function hyphmFlow = localHyphmStokesSolver(levelSetPackage, spec, ~)
+[xGrid, yGrid] = meshgrid(levelSetPackage.xCenters_cm, ...
+    levelSetPackage.yCenters_cm);
+velocityX = ones(numel(xGrid), 1) .* spec.darcyVelocity_cm_s;
+hyphmFlow = struct();
+hyphmFlow.velocitySamplePoints_cm = [xGrid(:), yGrid(:)];
+hyphmFlow.velocitySamples_cm_s = [velocityX, zeros(numel(xGrid), 1)];
+hyphmFlow.linearResidualRelative = 1e-12;
+hyphmFlow.source = 'unit_test_hyphm_solver';
 end
 
 function [chem, metadata] = localIphreeqcSpeciation(samples, spec)

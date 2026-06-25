@@ -61,6 +61,22 @@ verifyTrue(testCase, all(geometry.active_fluid_cell));
 verifyTrue(testCase, all(geometry.cut_cell));
 end
 
+function testInterfaceLengthScaleUsesLocalWaterVolumeAndInterfaceArea(testCase)
+mesh.vertices_cm = [0 0; 1 0; 1 1; 0 1];
+mesh.triangles = [1 2 4; 2 3 4];
+levelSet = mesh.vertices_cm(:, 1) - 0.5;
+
+geometry = rtm.geometry.BuildCutCellMetrics(mesh, levelSet);
+
+expectedScale = min(sqrt(geometry.water_volume_cm3 ./ ...
+    max(geometry.interface_area_cm2, eps)), sqrt(geometry.cell_volume_cm3));
+verifyTrue(testCase, isfield(geometry, 'interface_length_scale_cm'));
+verifyEqual(testCase, geometry.interface_length_scale_cm, expectedScale, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyGreaterThanOrEqual(testCase, geometry.interface_length_scale_cm, ...
+    zeros(size(geometry.interface_length_scale_cm)));
+end
+
 function testHyphmGridFieldNamesAreAccepted(testCase)
 grid.coordV = [0 0; 1 0; 0 1];
 grid.V0T = [1 2 3];

@@ -50,6 +50,101 @@ verifyTrue(testCase, any(report.failure_reasons == "error exceeds tolerance"));
 verifyTrue(testCase, any(report.failure_reasons == "observed order below tolerance"));
 end
 
+function testSeparatesTimeAndGridRefinementDimensions(testCase)
+runs = [
+    benchmarkRunWithDimensions("grid128_dt5p4", 1/128, 5.4, 1.0 + 5.4^2, true)
+    benchmarkRunWithDimensions("grid128_dt0p54", 1/128, 0.54, 1.0 + 0.54^2, true)
+    benchmarkRunWithDimensions("grid128_dt0p054", 1/128, 0.054, 1.0 + 0.054^2, true)
+    ];
+
+report = rtm.benchmark.BuildConvergenceReport(runs, ...
+    struct('observableName', 'front_position_cm', ...
+    'refinementDimension', 'time', ...
+    'errorTolerance', Inf, ...
+    'minObservedOrder', 1.8));
+
+verifyTrue(testCase, report.accepted);
+verifyEqual(testCase, report.refinement_dimension, "time");
+verifyEqual(testCase, report.refinement_field, "time_step_s");
+verifyEqual(testCase, report.refinement_scales, [5.4; 0.54; 0.054], ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, report.grid_spacings_cm, repmat(1/128, 3, 1), ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, report.time_steps_s, [5.4; 0.54; 0.054], ...
+    'AbsTol', 1e-18);
+verifyGreaterThan(testCase, min(report.observed_orders), 1.8);
+end
+
+function testUsesGridSpacingForGridRefinement(testCase)
+runs = [
+    benchmarkRunWithDimensions("grid128_dt0p054", 1/128, 0.054, 1.0 + 4/128^2, true)
+    benchmarkRunWithDimensions("grid256_dt0p054", 1/256, 0.054, 1.0 + 4/256^2, true)
+    benchmarkRunWithDimensions("grid512_dt0p054", 1/512, 0.054, 1.0 + 4/512^2, true)
+    ];
+
+report = rtm.benchmark.BuildConvergenceReport(runs, ...
+    struct('observableName', 'solid_volume_cm3', ...
+    'refinementDimension', 'grid', ...
+    'errorTolerance', Inf, ...
+    'minObservedOrder', 1.8));
+
+verifyTrue(testCase, report.accepted);
+verifyEqual(testCase, report.refinement_dimension, "grid");
+verifyEqual(testCase, report.refinement_field, "grid_spacing_cm");
+verifyEqual(testCase, report.refinement_scales, [1/128; 1/256; 1/512], ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, report.time_steps_s, repmat(0.054, 3, 1), ...
+    'AbsTol', 1e-18);
+verifyGreaterThan(testCase, min(report.observed_orders), 1.8);
+end
+
+function testReportsTwoDimensionalGridTimeMatrix(testCase)
+runs = [
+    benchmarkRunWithDimensions("grid128_dt5p4", 1/128, 5.4, 10.0, true)
+    benchmarkRunWithDimensions("grid128_dt0p54", 1/128, 0.54, 1.0, true)
+    benchmarkRunWithDimensions("grid256_dt5p4", 1/256, 5.4, 8.0, false)
+    benchmarkRunWithDimensions("grid256_dt0p54", 1/256, 0.54, 0.8, true)
+    ];
+runs(1).grid_resolution = "128x64";
+runs(2).grid_resolution = "128x64";
+runs(3).grid_resolution = "256x128";
+runs(4).grid_resolution = "256x128";
+
+report = rtm.benchmark.BuildConvergenceReport(runs, ...
+    struct('observableName', 'mean_effective_rate_mol_cm2_s', ...
+    'refinementDimension', 'time', ...
+    'errorTolerance', Inf));
+
+verifyTrue(testCase, isfield(report, 'refinement_matrix'));
+verifyEqual(testCase, report.refinement_matrix.grid_resolutions, ...
+    ["128x64"; "256x128"]);
+verifyEqual(testCase, report.refinement_matrix.grid_spacings_cm, ...
+    [1/128; 1/256], 'AbsTol', 1e-18);
+verifyEqual(testCase, report.refinement_matrix.time_steps_s, [5.4, 0.54], ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, report.refinement_matrix.observable_values, ...
+    [10.0, 1.0; 8.0, 0.8], 'AbsTol', 1e-18);
+verifyEqual(testCase, report.refinement_matrix.accepted_runs, ...
+    [true, true; false, true]);
+verifyTrue(testCase, isfield(report, 'joint_acceptance_matrix'));
+verifyEqual(testCase, report.joint_acceptance_matrix.accepted_runs, ...
+    [true, true; false, true]);
+verifyTrue(testCase, isfield(report, 'time_convergence_report'));
+verifyEqual(testCase, string({report.time_convergence_report.grid_resolution}'), ...
+    ["128x64"; "256x128"]);
+verifyEqual(testCase, report.time_convergence_report(1).time_steps_s, ...
+    [5.4, 0.54], 'AbsTol', 1e-18);
+verifyEqual(testCase, report.time_convergence_report(1).observable_values, ...
+    [10.0, 1.0], 'AbsTol', 1e-18);
+verifyTrue(testCase, isfield(report, 'grid_convergence_report'));
+verifyEqual(testCase, [report.grid_convergence_report.time_step_s]', ...
+    [5.4; 0.54], 'AbsTol', 1e-18);
+verifyEqual(testCase, report.grid_convergence_report(2).grid_resolutions, ...
+    ["128x64"; "256x128"]);
+verifyEqual(testCase, report.grid_convergence_report(2).observable_values, ...
+    [1.0; 0.8], 'AbsTol', 1e-18);
+end
+
 function testRejectsRejectedBenchmarkRuns(testCase)
 runs = [
     benchmarkRun("dt5p4", 5.4, 1.20, true)
@@ -163,4 +258,11 @@ run.refinement_scale = refinementScale;
 run.observable_value = value;
 run.accepted = accepted;
 run.summary = struct('accepted_steps', 1, 'rejected_steps', double(~accepted));
+end
+
+function run = benchmarkRunWithDimensions(name, gridSpacingCm, timeStepS, ...
+        value, accepted)
+run = benchmarkRun(name, timeStepS, value, accepted);
+run.grid_spacing_cm = gridSpacingCm;
+run.time_step_s = timeStepS;
 end

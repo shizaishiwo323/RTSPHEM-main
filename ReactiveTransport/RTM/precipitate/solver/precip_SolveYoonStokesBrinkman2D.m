@@ -24,11 +24,15 @@ baselineMobileMask = ~substrateMask;
 
 cellDepth = getSpecValue(spec, 'depth_cm', ...
     getSpecValue(spec, 'thickness_cm', 1));
+dx = getSpecValue(spec, 'dx_cm', getSpecValue(spec, 'cellSize_cm', 1));
 dy = getSpecValue(spec, 'dy_cm', getSpecValue(spec, 'cellSize_cm', 1));
+inletVelocity = getSpecValue(spec, 'darcyVelocity_cm_s', 0);
 outletFlux = computeBoundaryFlux(velocityX, mobileMask(:, end), 'right', dy, ...
     cellDepth);
 baselineOutletFlux = computeBoundaryFlux(baselineVelocityX, ...
     baselineMobileMask(:, end), 'right', dy, cellDepth);
+inletFlux = computeBoundaryFlux(velocityX, mobileMask(:, 1), 'left', dy, ...
+    cellDepth);
 relativePermeability = min(max(outletFlux / max(baselineOutletFlux, eps), ...
     0), 1);
 
@@ -39,9 +43,12 @@ flow.isStokes = true;
 flow.pressure = pressure;
 flow.velocityX_cm_s = velocityX;
 flow.velocityY_cm_s = velocityY;
-flow.inletFlux_cm3_s = computeBoundaryFlux(velocityX, mobileMask(:, 1), ...
-    'left', dy, cellDepth);
+flow.inletFlux_cm3_s = inletFlux;
 flow.outletFlux_cm3_s = outletFlux;
+flow.boundaryFluxClosureRelativeError = ...
+    abs(inletFlux - outletFlux) / max([abs(inletFlux), abs(outletFlux), eps]);
+flow.maxDivergenceResidual_s_inv = computeMaxContinuityResidual( ...
+    velocityX, velocityY, mobileMask, inletVelocity, dx, dy);
 flow.baselineOutletFlux_cm3_s = baselineOutletFlux;
 flow.relativePermeability = relativePermeability;
 flow.pressureDropRelative = max(solveInfo.pressureSpan, eps) / ...
@@ -260,6 +267,46 @@ switch side
             'Unsupported flow boundary side: %s.', side);
 end
 flux = sum(max(columnVelocity(boundaryMask), 0)) * dy * depth;
+end
+
+function maxResidual = computeMaxContinuityResidual(velocityX, velocityY, ...
+    mobileMask, inletVelocity, dx, dy)
+[numY, numX] = size(mobileMask);
+referenceCell = choosePressureReferenceCell(mobileMask);
+residuals = zeros(nnz(mobileMask), 1);
+index = 0;
+for iy = 1:numY
+    for ix = 1:numX
+        if ~mobileMask(iy, ix) || ...
+                (iy == referenceCell(1) && ix == referenceCell(2))
+            continue;
+        end
+
+        residual = 0;
+        if ix > 1 && mobileMask(iy, ix - 1)
+            residual = residual - velocityX(iy, ix - 1) / (2 * dx);
+        elseif ix == 1
+            residual = residual - inletVelocity / (2 * dx);
+        end
+        if ix < numX && mobileMask(iy, ix + 1)
+            residual = residual + velocityX(iy, ix + 1) / (2 * dx);
+        end
+        if iy > 1 && mobileMask(iy - 1, ix)
+            residual = residual - velocityY(iy - 1, ix) / (2 * dy);
+        end
+        if iy < numY && mobileMask(iy + 1, ix)
+            residual = residual + velocityY(iy + 1, ix) / (2 * dy);
+        end
+
+        index = index + 1;
+        residuals(index) = residual;
+    end
+end
+if index == 0
+    maxResidual = 0;
+else
+    maxResidual = max(abs(residuals(1:index)));
+end
 end
 
 function info = makeInfo(linearSystemSize, residual, relativeResidual, ...

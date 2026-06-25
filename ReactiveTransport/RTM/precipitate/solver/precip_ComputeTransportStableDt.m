@@ -27,7 +27,7 @@ if ~isempty(flowField)
 else
     maxV = 0;
 end
-d = max(getFieldOrDefault(spec, 'diffusionCoefficient_cm2_s', 0), 0);
+d = maxDiffusivity(spec, options);
 if u > 0 || maxV > 0
     xLimit = Inf;
     yLimit = Inf;
@@ -66,6 +66,7 @@ diagnostics.limiter = limiter;
 diagnostics.advectiveCfl = advectiveCfl;
 diagnostics.diffusiveCfl = diffusiveCfl;
 diagnostics.maxVelocity_cm_s = max(u, maxV);
+diagnostics.maxDiffusivity_cm2_s = d;
 end
 
 function [maxU, maxV] = maxVelocityFromFlowField(flowField, spec)
@@ -101,4 +102,26 @@ if isfield(s, fieldName) && ~isempty(s.(fieldName))
 else
     value = defaultValue;
 end
+end
+
+function d = maxDiffusivity(spec, options)
+if isfield(options, 'effectiveDiffusivity_cm2_s') && ...
+        ~isempty(options.effectiveDiffusivity_cm2_s)
+    dField = options.effectiveDiffusivity_cm2_s;
+elseif isfield(options, 'effectiveDiffusivity') && ...
+        ~isempty(options.effectiveDiffusivity)
+    dField = options.effectiveDiffusivity;
+else
+    d = max(getFieldOrDefault(spec, 'diffusionCoefficient_cm2_s', 0), 0);
+    return;
+end
+if ~isequal(size(dField), [spec.numY, spec.numX])
+    error('RTSPHEM:Precipitate:InvalidDiffusivityFieldSize', ...
+        'effectiveDiffusivity_cm2_s must have size [numY, numX].');
+end
+if any(~isfinite(dField(:))) || any(dField(:) < 0)
+    error('RTSPHEM:Precipitate:InvalidDiffusivityFieldValue', ...
+        'effectiveDiffusivity_cm2_s must contain finite nonnegative values.');
+end
+d = max(dField(:));
 end

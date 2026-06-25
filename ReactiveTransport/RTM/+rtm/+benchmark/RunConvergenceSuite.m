@@ -25,11 +25,14 @@ for iRun = 1:numel(refinementScales)
         'index', iRun, ...
         'refinement_scale', refinementScales(iRun), ...
         'suite_name', suiteName);
+    runInfo = addPlannedRefinementMetadata(runInfo, options, iRun);
     runs(iRun).name = char(runNames(iRun));
     runs(iRun).refinement_scale = refinementScales(iRun);
+    runs(iRun) = copyPhysicalRefinementFields(runs(iRun), runInfo);
     try
         summary = options.runFunction(refinementScales(iRun), runInfo);
         runs(iRun).summary = summary;
+        runs(iRun) = copyPhysicalRefinementFields(runs(iRun), summary);
         try
             observableValue = options.observableFunction(summary);
             runs(iRun).observable_value = validateObservableValue(observableValue);
@@ -70,6 +73,8 @@ reportOptions.referenceTargetRunNamePattern = getOption(options, ...
     'referenceTargetRunNamePattern', "");
 reportOptions.observableMaximumTolerance = getOption(options, ...
     'observableMaximumTolerance', Inf);
+reportOptions.refinementDimension = getOption(options, ...
+    'refinementDimension', 'refinement_scale');
 report = rtm.benchmark.BuildConvergenceReport(reportRuns, reportOptions);
 if isfield(options, 'acceptanceMatrix') && ~isempty(options.acceptanceMatrix)
     report.acceptance_matrix = options.acceptanceMatrix;
@@ -94,8 +99,62 @@ run.name = '';
 run.refinement_scale = NaN;
 run.observable_value = NaN;
 run.accepted = false;
+run.time_step_s = [];
+run.grid_spacing_cm = [];
+run.grid_resolution = "";
 run.summary = struct();
 run.failure_message = "";
+end
+
+function run = copyPhysicalRefinementFields(run, summary)
+run.time_step_s = scalarSummaryField(summary, 'time_step_s', run.time_step_s);
+run.grid_spacing_cm = scalarSummaryField(summary, 'grid_spacing_cm', ...
+    run.grid_spacing_cm);
+run.grid_resolution = stringSummaryField(summary, 'grid_resolution', ...
+    run.grid_resolution);
+end
+
+function runInfo = addPlannedRefinementMetadata(runInfo, options, index)
+if ~isfield(options, 'acceptanceCases') || isempty(options.acceptanceCases) || ...
+        index > numel(options.acceptanceCases)
+    return;
+end
+caseSpec = options.acceptanceCases(index);
+if isfield(caseSpec, 'time_step_s') && ~isempty(caseSpec.time_step_s)
+    runInfo.time_step_s = caseSpec.time_step_s;
+end
+if isfield(caseSpec, 'grid_resolution') && ~isempty(caseSpec.grid_resolution)
+    runInfo.grid_resolution = string(caseSpec.grid_resolution);
+end
+if isfield(caseSpec, 'grid_spacing_cm') && ~isempty(caseSpec.grid_spacing_cm)
+    runInfo.grid_spacing_cm = caseSpec.grid_spacing_cm;
+end
+end
+
+function value = scalarSummaryField(summary, fieldName, defaultValue)
+value = defaultValue;
+if ~isstruct(summary) || ~isfield(summary, fieldName) || isempty(summary.(fieldName))
+    return;
+end
+candidate = summary.(fieldName);
+if ~(isscalar(candidate) && isfinite(candidate) && candidate > 0)
+    error('RTSPHEM:Benchmark:InvalidConvergenceRuns', ...
+        'summary.%s must be a positive finite scalar when present.', fieldName);
+end
+value = candidate;
+end
+
+function value = stringSummaryField(summary, fieldName, defaultValue)
+value = defaultValue;
+if ~isstruct(summary) || ~isfield(summary, fieldName) || isempty(summary.(fieldName))
+    return;
+end
+candidate = string(summary.(fieldName));
+if ~isscalar(candidate)
+    error('RTSPHEM:Benchmark:InvalidConvergenceRuns', ...
+        'summary.%s must be scalar text when present.', fieldName);
+end
+value = candidate;
 end
 
 function scales = requireRefinementScales(options)
@@ -192,10 +251,12 @@ if ~isstruct(summary) || isempty(summary)
     return;
 end
 keepFields = {'time_s', 'accepted_steps', 'rejected_steps', 'run_name', ...
-    'accepted', 'failure_message', 'initial_porosity', ...
+    'accepted', 'failure_message', 'time_step_s', 'grid_spacing_cm', ...
+    'grid_resolution', 'initial_porosity', ...
     'initial_surface_area_cm2', 'initial_solid_volume_cm3', ...
     'initial_mineral_moles', 'final_mineral_moles', ...
-    'mineral_dissolved_moles', 'solid_volume_change_cm3', ...
+    'mineral_dissolved_moles', 'reaction_realized_moles', ...
+    'solid_volume_change_cm3', ...
     'final_solid_volume_cm3', 'final_surface_area_cm2', ...
     'final_porosity', 'mean_effective_rate_mol_cm2_s', ...
     'max_component_mass_residual_moles', 'max_displacement_over_h', ...

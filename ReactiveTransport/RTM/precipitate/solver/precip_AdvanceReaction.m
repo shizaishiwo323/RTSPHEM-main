@@ -16,7 +16,7 @@ end
 
 samples = stateComponentsToSamples(state, spec);
 [chem, chemistryMetadata] = precip_SpeciateYoonComponents(samples, spec);
-rate = reshape(precip_YoonVateriteRate(chem, spec), size(state.Vm));
+rate = reshape(precip_YoonVateriteRate(chem, spec, state), size(state.Vm));
 area = precip_ComputeYoonReactiveArea(state, spec);
 
 updated = precip_UpdateVateriteVolumeFraction(state, rate, area, dt, spec);

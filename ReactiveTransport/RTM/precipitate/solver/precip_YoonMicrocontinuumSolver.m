@@ -30,6 +30,7 @@ end
 end
 
 function state = initializeState(spec, options)
+validateYoonSeededMode(spec);
 [xCenters, yCenters] = cellCenters(spec);
 [substrateMask, geometry] = buildSubstrateMask(spec, xCenters, yCenters, ...
     options);
@@ -44,6 +45,7 @@ end
 
 state = struct();
 state.modelFamily = spec.modelFamily;
+state.precipitationMode = spec.precipitationMode;
 state.grid.xCenters_cm = xCenters;
 state.grid.yCenters_cm = yCenters;
 state.grid.dx_cm = spec.dx_cm;
@@ -55,6 +57,26 @@ state.Vm = vm;
 state.blockedMask = vm >= spec.blockedVmThreshold;
 state.components = components;
 state.fluidVolumeFraction = double(~substrateMask) .* (1 - vm);
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+state = precip_RefreshYoonAqueousFromComponentMoles(state, spec);
+state.effectiveDiffusivity_cm2_s = precip_UpdateEffectiveDiffusivity( ...
+    state, spec);
+state.case5BoostActive = false;
+state.case5ActivationTime_s = NaN;
+end
+
+function validateYoonSeededMode(spec)
+modelFamily = string(getFieldOrDefault(spec, 'modelFamily', ""));
+precipitationMode = string(getFieldOrDefault(spec, 'precipitationMode', ""));
+if modelFamily ~= "yoon_seeded_microcontinuum" || ...
+        precipitationMode ~= "yoon_seeded_microcontinuum"
+    error('RTSPHEM:Precipitate:UnsupportedPrecipitationMode', ...
+        ['The Yoon micro-continuum solver only supports ', ...
+        'precipitationMode = yoon_seeded_microcontinuum. ', ...
+        'Deferred modes such as deng_homogeneous_nucleation and ', ...
+        'surface_growth must remain separate until the Yoon ', ...
+        'quantitative gate is complete.']);
+end
 end
 
 function [xCenters, yCenters] = cellCenters(spec)

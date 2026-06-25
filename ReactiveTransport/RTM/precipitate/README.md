@@ -7,23 +7,47 @@ in `ReactiveTransport/RTM/PNM_beauty3.m`.
 
 ## Purpose
 
-- Run a copied precipitation solver: `precip_PNM_beauty3.m`.
-- Couple split CaCl2 / Na2CO3 inlet transport to signed PHREEQC calcite
-  reaction results.
-- Preserve PHREEQC calcite sign convention:
-  - positive calcite delta means precipitation / solid growth;
-  - negative calcite delta means dissolution / solid retreat.
+- Run the Yoon seeded micro-continuum benchmark scaffold with Vaterite as the
+  mineral phase and `Vm` as the precipitated-solid state variable.
+- Keep the public Zhang/Yoon entrypoint on
+  `precip_ZhangYoonBenchmarkSpec` plus
+  `precip_RunYoonFixedGeometryBenchmark`.
+- Preserve the older signed Calcite level-set solver only as a legacy
+  diagnostic path.
 - Export local diagnostic area-time curves and 13, 18, and 118 min snapshots
   for comparison with Zhang 2010 experiment 3 and Yoon 2012 Case 1 / Case 5.
 
+## Model Layering
+
+The current benchmark path is deliberately limited to
+`modelFamily = yoon_seeded_microcontinuum` and
+`precipitationMode = yoon_seeded_microcontinuum`. It represents the Yoon
+seeded-growth reproduction in which top/bottom surfaces and micromodel walls
+provide the initial reactive area.
+
+Later Deng-style modes such as `deng_homogeneous_nucleation` and
+`surface_growth` are deferred until the Yoon quantitative gate is complete.
+`precip_YoonMicrocontinuumSolver` fails closed if either mode is requested, so
+random nuclei fields such as `nucleiNumberDensity`, `crystalMoles`,
+`crystalSurfaceArea`, `nucleationEventCount`, and `randomSeed` do not silently
+enter the Zhang/Yoon benchmark state.
+
 ## Main Entry Points
 
-Run the local Zhang/Yoon benchmark:
+Run the local Zhang/Yoon benchmark through the authoritative Yoon/Vm
+entrypoint:
 
 ```matlab
 addpath('C:\Users\imgw\Documents\Codex\RTSPHEM-main\ReactiveTransport\RTM\precipitate');
 result = run_zhang_yoon_caco3_precipitation_benchmark();
-disp(result.resultsDir);
+disp(result.manifestPath);
+```
+
+Run the legacy signed Calcite level-set diagnostic:
+
+```matlab
+legacy = run_legacy_signed_calcite_levelset_diagnostic();
+disp(legacy.resultsDir);
 ```
 
 Run the new Yoon micro-continuum foundation smokes:
@@ -89,7 +113,7 @@ auditReport = precip_RunYoonBenchmarkReadinessAudit(struct( ...
 disp(auditReport.audit.requirements);
 ```
 
-Build only the benchmark configuration:
+Build only the legacy level-set diagnostic configuration:
 
 ```matlab
 cfg = precip_ConfigureZhangYoonBenchmark();
@@ -103,11 +127,16 @@ Run helper and integration tests:
 
 ## Key Files
 
-- `run_zhang_yoon_caco3_precipitation_benchmark.m`: user-facing runner.
+- `run_zhang_yoon_caco3_precipitation_benchmark.m`: user-facing Zhang/Yoon
+  Yoon/Vm runner; it calls `precip_ZhangYoonBenchmarkSpec` and
+  `precip_RunYoonFixedGeometryBenchmark`.
+- `run_legacy_signed_calcite_levelset_diagnostic.m`: legacy signed Calcite
+  level-set diagnostic wrapper around `precip_PNM_beauty3`.
 - `precip_ConfigureZhangYoonBenchmark.m`: geometry, flow, chemistry, PHREEQC,
-  comparison-time, and output configuration.
-- `precip_PNM_beauty3.m`: copied precipitation solver. Precipitation-specific
-  solver edits belong here, not in the original `PNM_beauty3.m`.
+  comparison-time, and output configuration for the legacy diagnostic path.
+- `precip_PNM_beauty3.m`: copied legacy precipitation solver. It is retained
+  for signed Calcite level-set diagnostics, not as the authoritative Yoon/Vm
+  benchmark path.
 - `precip_RunPhreeqcCalciteBatchSigned.m`: signed PHREEQC batch runner.
 - `precip_WritePhreeqcSpeciesTable.m`: local PHREEQC species CSV export,
   including signed calcite amount/rate diagnostics.
@@ -153,16 +182,39 @@ Run helper and integration tests:
   dynamic `Vm`, blocked-mask, and conservative component state without
   level-set or Calcite inventory assumptions.
 - `solver/precip_RunPassiveSplitInletBenchmark.m`: no-reaction split-inlet
-  conservative transport smoke for Ca/C/Na/Cl/alkalinity fields. It can write a
-  `passive_transport_manifest.json` acceptance record with nonnegativity,
-  inert-mass, mixing-symmetry, and subcycle diagnostics.
+  conservative transport smoke for Ca/C/Na/Cl/alkalinity fields. The default
+  path starts from DI-water initial components and advances real
+  micro-continuum finite-volume split-inlet steps with reaction disabled. It
+  can write a `passive_transport_manifest.json` acceptance record with
+  nonnegativity, inert boundary-closure, mixing-symmetry, and substep
+  diagnostics. It records the real initial-to-final inventory change separately
+  from the split-inlet boundary-flux closure ledger.
 - `solver/precip_AdvanceConservativeTransport2D.m`: explicit no-clipping
   finite-volume smoke transport step for conservative components, including
   closed-boundary mass conservation checks and split-inlet boundary-flux
-  ledger diagnostics.
+  ledger diagnostics. It supports substrate masks, blocked-cell advection
+  masks, and local `effectiveDiffusivity_cm2_s` face fluxes.
+- `solver/precip_AdvanceMicrocontinuumTransport2D.m`: state-based
+  finite-volume transport step whose conservative variable is
+  `state.componentMoles`. It assembles mol/s face fluxes, updates inventories,
+  and then recovers water-phase `components`/`aqueousConcentration` from
+  `fluidVolumeFraction * cellVolume`.
+- `solver/precip_AssembleComponentFaceFluxes.m`: assembles component face
+  fluxes for micro-continuum transport, with static substrate cells blocking
+  advection and diffusion, blocked `Vm` cells blocking advection, and local
+  `effectiveDiffusivity_cm2_s` controlling diffusive faces.
+- `solver/precip_ComputeMicrocontinuumStableDt.m`: state-aware CFL wrapper
+  that passes substrate, blocked, velocity, and local diffusivity fields into
+  the transport stable-step calculation.
+- `solver/precip_RefreshYoonComponentMolesFromAqueous.m` and
+  `solver/precip_RefreshYoonAqueousFromComponentMoles.m`: synchronize the
+  Yoon state between conservative cell inventories and water-phase
+  concentrations. `componentMoles` is the mass-audit state; concentrations are
+  used for chemistry and output.
 - `solver/precip_ComputeTransportStableDt.m`: computes explicit transport
   stable step limits from advective and diffusive CFL controls for the
-  finite-volume Yoon path.
+  finite-volume Yoon path, including local maximum effective diffusivity when
+  supplied by the Yoon state.
 - `solver/precip_RunTransportSubcycle.m`: reject/shrink/retry controller for
   conservative transport candidates; rejects negative components and
   mass-balance drift instead of clipping concentrations.
@@ -180,6 +232,7 @@ Run helper and integration tests:
   conservative components before each reaction step and records transport
   subcycle diagnostics. When the active flow field exposes velocity arrays,
   finite-volume transport uses those velocities for CFL and upwind advection.
+  It records whether `reactionSubcycling` was used.
 - `solver/precip_UpdateFlowMask.m`: updates Yoon blocked-cell masks using
   `Vm >= 0.6` and reports topology-change diagnostics.
 - `solver/precip_RecomputeYoonFlowField.m`: flow recomputation adapter called
@@ -199,13 +252,29 @@ Run helper and integration tests:
   flux, residual, and explicit `isStokes = true` provenance. It is an
   auditable Stokes-family diagnostic hook, not yet a production-validated
   replacement for the final benchmark Stokes backend.
+- `solver/precip_MapCellMaskToLevelSet.m`: converts Yoon `substrateMask`,
+  `blockedMask`, and `Vm >= blockedVmThreshold` cells into a
+  positive-fluid/negative-solid level-set package for HyPHM-side Stokes calls.
+- `solver/precip_MapHyPHMFluxToCartesianFaces.m`: maps injected HyPHM velocity
+  samples back to Yoon cell-centered `velocityX_cm_s`/`velocityY_cm_s` fields
+  and records inlet/outlet flux closure plus divergence diagnostics.
+- `solver/precip_SolveYoonHyPHMStokes.m`: fail-closed bridge for
+  `spec.yoonFlowSolver = 'hyphm_stokes'`. It requires an injected
+  `spec.hyphmStokesSolverFcn` or `options.hyphmStokesSolverFcn`, maps the Yoon
+  mask to a level set, calls that solver, and maps returned velocity samples
+  back to the Yoon finite-volume transport grid.
+- `solver/precip_RunYoonProductionFlowValidation.m`: runs independent
+  `hyphm_stokes` validation cases (`empty_channel`, `single_obstacle`,
+  `blocked_column`) and writes a production-flow manifest with linear
+  residual, divergence residual, inlet/outlet closure, and permeability bounds.
 - `solver/precip_RunYoonDiffusionFeedbackSensitivity.m`: runs short
   fixed-geometry Case 2/1/3 smokes for `n = 0/2/3` and reports area, total
   precipitate inventory, and mean `D_eff`. It can also write a
   `diffusion_feedback_manifest.json` acceptance record for readiness audits.
 - `solver/precip_RunYoonCase5ShortComparison.m`: compares short Case 1 and
   Case 5 dissolution from the same precipitated state, applying
-  `dissolutionFactor = 300` only to undersaturated dissolution rates.
+  `dissolutionFactor = 300` only to undersaturated dissolution rates after the
+  center-band blocked-cell activation condition is met.
 - `solver/precip_RunYoonFixedGeometryBenchmark.m`: fixed-geometry diagnostic
   runner that captures default 13/18/118 min `Vm` snapshots, exports `.mat`
   files and area metrics, and writes `yoon_fixed_geometry_manifest.json`. The
@@ -213,18 +282,24 @@ Run helper and integration tests:
   precipitate centroid relative to the split inlet. It also records
   flow-feedback evidence fields for `Vm >= 0.6` topology changes, flow
   recomputation, production-validation provenance, and `flowFeedbackAccepted`.
+  Geometry package evidence includes `geometryCalibrationTableVerified` and
+  `geometryUncertaintyTableVerified`, so placeholder calibration files cannot
+  satisfy the quantitative geometry gate.
   Target-time evidence includes `capturedTargetTimes_s`,
   `missingTargetTimes_s`, `numSnapshots`, and `targetSnapshotsComplete`, so
   readiness can distinguish requested 13/18/118 min targets from actually
-  exported snapshots.
+  exported snapshots. If `isQuantitativeBenchmark = true` is requested, the
+  runner requires `transportMode = 'finite_volume'` and
+  `reactionSubcycling = true`; explicit analytic transport or disabled
+  reaction subcycling is rejected before the run starts.
 - `solver/precip_RunYoonCase1Case5FixedGeometryComparison.m`: runs the
   fixed-geometry diagnostic path for Case 1 (`dissolutionFactor = 1`) and Case
   5 (`dissolutionFactor = 300`) into separate case folders, then writes
   `yoon_case1_case5_comparison_summary.csv` and
   `yoon_case1_case5_comparison_manifest.json`. The manifest records
   acceptance-criteria fields for target-time coverage, reaction-mass ledgers,
-  dissolution-only Case 5 factor provenance, final Case 5 precipitate/area
-  trends, and production comparison validation.
+  delayed/dissolution-only Case 5 factor provenance, activation time, final
+  Case 5 precipitate/area trends, and production comparison validation.
 - `solver/precip_RunYoonGridConvergenceSmoke.m`: multi-grid diagnostic wrapper
   around the fixed-geometry runner. It writes
   `yoon_grid_convergence_summary.csv` and
@@ -255,20 +330,27 @@ Run helper and integration tests:
   persistent `rtm.phreeqc.PhreeqcSession`, and parses pH, activities, and
   Vaterite SI. The input defines a `PHASES` entry for Vaterite from
   `spec.vateriteKsp` because the bundled `phreeqc.dat` does not include that
-  phase. Unit tests use a mock engine; a local three-point IPhreeqcCOM smoke has
-  run, but this is not yet full quantitative PHREEQC/Yoon acceptance.
+  phase and preserves signed Alkalinity values instead of clipping acidic
+  samples to zero. Unit tests use a mock engine; a local three-point IPhreeqcCOM
+  smoke has run, but this is not yet full quantitative PHREEQC/Yoon acceptance.
 - `chemistry/precip_RunYoonSpeciationMixingSeries.m`: builds the
-  `f = 0:0.05:1` zero-dimensional mixing series, compares local Yoon carbonate
+  `f = 0:0.01:1` zero-dimensional mixing series, compares local Yoon carbonate
   equilibrium against an optional PHREEQC speciation backend, and reports pH/SI
   differences plus peak supersaturation locations. It can also write a
   `yoon_speciation_mixing_manifest.json` acceptance record for readiness
-  audits.
+  audits, including 101-point mixing-fraction coverage evidence.
 - `chemistry/precip_YoonVateriteRate.m`: signed Yoon/Chou-style Vaterite rate
-  evaluator. Current constants are smoke defaults pending literature lock-down.
-- `precipitation/precip_ComputeYoonReactiveArea.m`: top/bottom reactive area
-  for fluid cells in the Yoon path.
+  evaluator. Defaults are locked to the Yoon/Chou Vaterite constants in
+  `mol_cm-2_s-1`.
+- `precipitation/precip_ComputeYoonReactiveArea.m`: Yoon reactive area for
+  fluid cells, including top/bottom area, vertical faces adjacent to static
+  substrate, and exposed vertical faces adjacent to fully filled `Vm = 1`
+  precipitate cells.
 - `precipitation/precip_UpdateVateriteVolumeFraction.m`: stoichiometric
-  Ca/C/alkalinity and dynamic `Vm` update.
+  Ca/C/alkalinity and dynamic `Vm` update. Precipitation is limited by Ca/C and
+  available `Vm`, not by a nonnegative Alkalinity assumption. The update
+  subtracts accepted Vaterite moles from `state.componentMoles` and then
+  recomputes water-phase concentration using the reduced fluid volume.
 - `precipitation/precip_UpdateEffectiveDiffusivity.m`: computes
   `D_eff = D * (1 - Vm)^n`.
 - `diagnostics/precip_ComputeYoonAreaMetrics.m`: Yoon-style projected
@@ -367,16 +449,25 @@ Important files include:
   `productionComparisonValidated`.
 - `yoon_speciation_mixing_manifest.json`: optional chemistry cross-validation
   manifest from `precip_RunYoonSpeciationMixingSeries`, recording pH/SI
-  differences, acceptance thresholds, PHREEQC backend provenance, and
+  differences, acceptance thresholds, PHREEQC backend provenance,
+  `numSamples`, `mixingFractionStep`, `mixingFractionsCover101`, and
   `chemistrySpeciationAccepted`.
 - `passive_transport_manifest.json`: optional no-reaction split-inlet transport
   manifest from `precip_RunPassiveSplitInletBenchmark`, recording limiter use,
-  minimum component concentration, inert relative mass error, mixing symmetry,
-  rejected substeps, acceptance thresholds, and `passiveTransportAccepted`.
+  transport mode, initial component source, minimum component concentration,
+  inert inventory change, inert boundary-closure relative error, mixing
+  symmetry, rejected substeps, acceptance thresholds, and
+  `passiveTransportAccepted`.
 - `diffusion_feedback_manifest.json`: optional Case 2/1/3 diffusion-feedback
   sensitivity manifest from `precip_RunYoonDiffusionFeedbackSensitivity`,
   recording the `n = 0/2/3` sequence, final areas, precipitate inventory,
   effective diffusivity, trend checks, and `diffusionFeedbackAccepted`.
+- `yoon_production_flow_validation_manifest.json`: optional production Stokes
+  validation manifest from `precip_RunYoonProductionFlowValidation`, recording
+  required case coverage, HyPHM Stokes provenance, maximum linear/divergence
+  residuals, inlet/outlet boundary-closure error, permeability bounds, and
+  `productionFlowValidationAccepted`. Readiness audits require this manifest
+  for the `production_stokes` gate.
 - `yoon_benchmark_readiness_requirements.csv` and
   `yoon_benchmark_readiness_manifest.json`: optional readiness audit outputs
   from `precip_RunYoonBenchmarkReadinessAudit`, listing each quantitative
@@ -459,14 +550,21 @@ signed Calcite/level-set path. It currently covers benchmark constants,
 static-substrate/dynamic-`Vm` initialization, no-reaction split-inlet component
 fields, conservative mass-ledger diagnostics, and single-cell carbonate
 speciation smokes. It also has unit-tested core reaction operators for
-top/bottom reactive area, signed Vaterite rate sign, stoichiometric `Vm`
-updates, effective diffusivity feedback, and a fixed-geometry reaction step.
+top/bottom plus vertical exposed-face reactive area, signed Vaterite rate sign,
+stoichiometric `Vm` updates, effective diffusivity feedback, and a
+fixed-geometry reaction step.
 The Yoon smoke path stores conservative component fields consistently with the
 finite-volume transport and mass ledgers, so the reaction update subtracts
 Vaterite stoichiometric amounts from bulk cell component inventories while
 `fluidVolumeFraction` records pore-volume feedback. A dedicated reaction mass
 ledger checks `Ca_total + precipitate`, `C_total + precipitate`, and
 `Alkalinity + 2*precipitate` closure for fixed-inventory reaction steps.
+Default Yoon/Chou constants are now source-locked in centimeter units
+(`k1 = 8.9e-5`, `k2 = 5.01e-8`, `k3 = 6.6e-11 mol_cm-2_s-1`), with
+`Ksp = 1.832e-8 mol2_L-2` and `vateriteMolarVolume_cm3_mol = 37.47`.
+Alkalinity is treated as a signed conservative component: PHREEQC input keeps
+negative values, and the reaction limiter no longer treats Alkalinity as a
+nonnegative elemental inventory.
 The reaction step now calls `precip_SpeciateYoonComponents`, making aqueous
 speciation an explicit backend choice. `yoon_equilibrium` is the current default;
 `iphreeqc_speciation` can call an injected `spec.iphreeqcSpeciationFcn` that
@@ -478,12 +576,15 @@ for reproducibility with the bundled `phreeqc.dat`. It is covered by
 mock-session tests, and a local three-point IPhreeqcCOM smoke produced a
 supersaturated mixed sample (`SI_Vaterite` about 2.51 with the current
 component/pH constraints). PHREEQC-vs-`yoon_equilibrium` quantitative acceptance
-over the full mixing series remains pending. A 21-point local IPhreeqcCOM
+over the full mixing series remains pending. A 101-point local IPhreeqcCOM
 mixing-series smoke runs through `precip_RunYoonSpeciationMixingSeries`; in the
 current setup PHREEQC peaks near `fractionInletA = 0.45` with `SI_Vaterite`
 about 2.51, while the local Yoon equilibrium peak is at 0.5. This is a
-diagnostic discrepancy to resolve, not a benchmark acceptance. The dispatcher
-still errors clearly when the function handle is absent.
+diagnostic discrepancy to resolve, not a benchmark acceptance. Readiness now
+requires the chemistry manifest to record the full `0:0.01:1` fraction grid
+through `numSamples = 101`, `mixingFractionStep = 0.01`, and
+`mixingFractionsCover101 = true`. The dispatcher still errors clearly when the
+function handle is absent.
 The Case 1 smoke driver can optionally use `reactionSubcycling = true` to cover
 each macro step with substeps limited by `maxVmChangePerStep`; it writes
 reaction diagnostics through the fixed-geometry runner. This turns the former
@@ -502,7 +603,9 @@ appear. It can also use `spec.yoonFlowSolver = 'finite_volume_darcy_pressure'`
 to solve a topology-aware finite-volume Darcy pressure problem with left/right
 Dirichlet pressure and no-flow top/bottom boundaries, or
 `spec.yoonFlowSolver = 'finite_difference_stokes_brinkman'` to solve a small
-cell-centered Stokes-Brinkman system on the Yoon grid. Flow diagnostics and the
+cell-centered Stokes-Brinkman system on the Yoon grid. The
+`spec.yoonFlowSolver = 'hyphm_stokes'` bridge now exists for injected HyPHM
+Stokes solvers and errors if no solver function is supplied. Flow diagnostics and the
 fixed-geometry manifest now record `flowSolver`, `flowIsProxy`, and
 `flowIsStokes`. If no hook or solver override is supplied, the driver records a
 clearly marked blocked-fraction proxy. In `transportMode = 'finite_volume'`,
@@ -512,16 +615,17 @@ therefore does not alter finite-volume transport. The Stokes-Brinkman path is a
 tested diagnostic hook; it still needs production validation and grid
 convergence before supporting quantitative Zhang/Yoon claims.
 Short Case 5 dissolution smokes verify that `dissolutionFactor = 300` is
-applied only when the Vaterite rate is negative, and that Case 5 loses
-precipitate inventory faster than Case 1 from the same initial precipitated
-state.
+applied only when the center band has first blocked and the local Vaterite rate
+is negative. Before activation, Case 5 uses the same dissolution rate as Case 1;
+after activation, it loses precipitate inventory faster from the same initial
+blocked precipitated state.
 `precip_RunYoonCase1Case5FixedGeometryComparison` now packages fixed-geometry
 Case 1 and Case 5 diagnostic runs side by side, using the same target-time
 snapshot/export machinery as the Case 1 runner and recording the per-case
 manifest paths plus final area and inventory summaries. Its manifest exposes
 the acceptance ingredients rather than only a hard-coded flag: target-time
 coverage, reaction-mass acceptance, dissolution-only Case 5 factor provenance,
-Case 5 final precipitate/area trend checks, and
+Case 5 boost activation/time provenance, final precipitate/area trend checks, and
 `productionComparisonValidated`. This creates the planned Case 1/Case 5 output
 scaffold, but it remains non-quantitative until the coupled production run,
 exact geometry, digitized masks, and grid convergence are available.
@@ -573,6 +677,10 @@ optional `transportMode = 'finite_volume'` path uses the explicit conservative
 transport candidate with a split-inlet boundary-flux ledger. This is a
 unit-tested transport operator and diagnostic path, not yet the full coupled
 transport-reaction benchmark loop.
+Finite-volume transport now uses state-derived substrate masks, blocked-cell
+advection masks, and local `effectiveDiffusivity_cm2_s` in the actual face
+fluxes and CFL estimate; the passive finite-volume ledger compares the initial
+and final inventories instead of comparing the final state with itself.
 The short Case 1 driver can now run the same `transportMode = 'finite_volume'`
 candidate inside its time loop before the reaction step and exports
 `yoon_transport_diagnostics.csv` through the fixed-geometry runner. The
@@ -596,11 +704,17 @@ tolerance, and `productionGridConvergenceValidated = true`. Smoke runs leave
 that production-validation flag false until the production 10/5/2.5 um study is
 actually executed with exact geometry and validated coupling. The readiness
 gate consumes both `gridConvergenceAccepted` and the underlying criteria fields:
-`targetGridSpacingSequenceComplete`, `gridConvergenceWithinTolerance`,
-`productionGridConvergenceValidated`, finite
+`targetGridSpacingSequenceComplete`, `actualGridSpacingSequenceComplete`,
+`gridConvergenceWithinTolerance`, `productionGridConvergenceValidated`, finite
 `maxRelativeTotalAreaDifferenceFromFinest`, and finite
-`gridConvergenceTolerance`. `isQuantitativeBenchmark` alone is not sufficient
-to pass the grid-convergence requirement.
+`gridConvergenceTolerance`. It also requires actual exported grid evidence:
+`actualDx_um`, `actualDy_um`, `actualNumX`, and `actualNumY` must show the
+10/5/2.5 um sequence and increasing grid counts as spacing decreases. The
+manifest must also carry nonempty `caseManifestPaths` and
+`caseManifestFilesVerified = true` so each grid case has a verified
+fixed-geometry manifest.
+`isQuantitativeBenchmark` alone is not sufficient to pass the grid-convergence
+requirement.
 `precip_AuditYoonBenchmarkReadiness` provides the final conservative gate for
 quantitative claims. Current smoke outputs are expected to fail this audit
 because they lack complete quantitative reference/geometry packages,
@@ -609,19 +723,30 @@ provenance. Reference evidence must include a complete digitization package
 with source figure, screenshot, WebPlotDigitizer project, calibration, raw
 export, conversion script, uncertainty record, converted CSV, note, and empty
 `missingAssets`. The package must also carry `assetFilesVerified = true` from
-the loader and `numReferenceRows > 0`, so a hand-authored provenance shell
-cannot pass without verified files and nonempty converted reference data.
+the loader, verified calibration/raw-export/uncertainty tables, and
+`numReferenceRows > 0`, so a hand-authored provenance shell cannot pass
+without verified files, machine-readable digitization tables, and nonempty
+converted reference data.
 `isQuantitativeBenchmark = true` alone is not sufficient.
 Fixed-geometry evidence must also carry
 `flowFeedbackAccepted = true`, which requires an observed `Vm >= 0.6`
-topology change, a recomputed Stokes flow field, and explicit
-`flowBackendProductionValidated = true`. The readiness gate checks those
-fields directly, including topology-change count, recomputation count,
-Stokes/non-proxy provenance, nonempty `finalFlowSolver`,
+topology change, a recomputed Stokes flow field, and
+`flowBackendProductionValidated = true` derived from the final flow evidence.
+The fixed-geometry runner now computes that validation state from the
+Stokes/non-proxy solver provenance, nonempty `finalFlowSolver`,
 `finalFlowLinearResidualRelative`, `maxAcceptedFlowLinearResidualRelative`, and
-production-validation provenance. It also requires finite post-feedback flow
+the recorded residual threshold instead of accepting a hand-authored option.
+It also records and gates `finalFlowMaxDivergenceResidual_s_inv` against
+`maxAcceptedFlowDivergenceResidual_s_inv`, and
+`finalFlowBoundaryClosureRelativeError` against
+`maxAcceptedFlowBoundaryClosureRelativeError`.
+The readiness gate checks those fields directly, including topology-change
+count and recomputation count. It also requires finite post-feedback flow
 metrics: `finalRelativePermeability` between 0 and 1,
-`finalPressureDropRelative >= 1`, and `finalFlowRateRelative >= 0`. Geometry
+`finalPressureDropRelative >= 1`, and `finalFlowRateRelative >= 0`. In
+addition, `production_stokes` now requires the independent
+`yoon_production_flow_validation_manifest.json` to accept the required HyPHM
+Stokes validation cases before final benchmark claims. Geometry
 evidence must also include nonempty package directory/name/note, substrate mask
 file, and region mask file fields from the calibrated geometry package. It must
 also include `geometryPackageAssetFilesVerified = true`,
@@ -664,8 +789,9 @@ current fixed-geometry comparison manifest is still marked false because it is
 a diagnostic scaffold rather than the production 13/18/118 min comparison. Its
 criteria fields make that failure auditable instead of opaque. The readiness
 gate checks those criteria fields directly: target-time completeness,
-reaction-mass acceptance, dissolution-only Case 5 factor provenance, Case 5
-final precipitate/area trend checks, finite nonnegative Case 1/Case 5 final
+reaction-mass acceptance, delayed/dissolution-only Case 5 factor provenance,
+Case 5 boost activation/time evidence, final precipitate/area trend checks,
+finite nonnegative Case 1/Case 5 final
 moles and area values supporting those trends, and
 `productionComparisonValidated` must all be present and accepted.
 Diffusion-feedback sensitivity evidence must carry
@@ -682,8 +808,9 @@ nonempty fixed-geometry output evidence fields: `outputRoot`, `snapshotDir`,
 `areaCsv`, `flowDiagnosticsCsv`, `transportDiagnosticsCsv`,
 `reactionMassLedgerCsv`, `reactionDiagnosticsCsv`, and a nonempty `matFiles`
 snapshot list. `outputEvidenceFilesVerified = true` must also confirm those
-paths were checked after export. A standalone quantitative flag is not
-sufficient.
+paths were checked after export. It also requires `transportMode =
+'finite_volume'` and `reactionSubcycling = true`. A standalone quantitative
+flag is not sufficient.
 `precip_RunYoonBenchmarkReadinessAudit` writes the same gate result to CSV/JSON
 so each benchmark run can carry an explicit machine-readable pass/fail record.
 

@@ -6,6 +6,7 @@ function setupOnce(testCase)
 rtmDir = fileparts(fileparts(mfilename('fullpath')));
 testCase.TestData.rtmDir = rtmDir;
 addpath(rtmDir);
+addpath(fullfile(rtmDir, 'couplePhreeqc'));
 addpath(fullfile(rtmDir, 'couplePhreeqc', 'tests'));
 end
 
@@ -166,6 +167,107 @@ verifyEqual(testCase, result.state.component_moles, ...
     'RelTol', 1e-12, 'AbsTol', 1e-18);
 verifyEqual(testCase, result.diagnostics.component_absolute_residual_moles, ...
     0, 'AbsTol', 1e-18);
+verifyTrue(testCase, isfield(result.diagnostics, 'full_mass_ledger'));
+verifyEqual(testCase, ...
+    result.diagnostics.full_mass_ledger.transport_boundary_delta_moles_total, ...
+    expectedBoundaryDelta, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, ...
+    result.diagnostics.full_mass_ledger.component_residual_moles, 0, ...
+    'AbsTol', 1e-18);
+end
+
+function testDriverAppliesConfiguredFlowFaceFluxesToTransport(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 1;
+cfg.transport.options.diffusion_coefficient_cm2_s = 0;
+cfg.flow.face_fluxes = twoCellFlow();
+cfg.flow.absoluteTolerance_cm3_s = 1;
+state = strictTwoCellState();
+geometry = twoCellTransportGeometry();
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+result = driver.runOneStep(1);
+
+verifyTrue(testCase, result.diagnostics.accepted);
+verifyEqual(testCase, result.state.component_moles, [0.9; 0.1], ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.transport_ledger.internal_flux_delta_moles_total, ...
+    0, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.transport_ledger.boundary_delta_moles_total, ...
+    0, 'AbsTol', 1e-18);
+verifyTrue(testCase, isfield(result, 'flow_diagnostics'));
+verifyEqual(testCase, result.flow_diagnostics.inlet_flow_cm3_s, 0, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, result.flow_diagnostics.outlet_flow_cm3_s, 0, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, ...
+    result.flow_diagnostics.inlet_outlet_relative_residual, 0, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, result.flow_diagnostics.cell_divergence_cm3_s, ...
+    [-0.1; 0.1], 'AbsTol', 1e-18);
+end
+
+function testDriverRejectsConfiguredFlowImbalance(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 1;
+cfg.transport.options.diffusion_coefficient_cm2_s = 0;
+cfg.flow.face_fluxes = imbalancedBoundaryFlow();
+cfg.flow.absoluteTolerance_cm3_s = 1e-12;
+cfg.flow.relativeTolerance = 1e-8;
+cfg.transport.options.boundary_concentration_mol_cm3 = [1; 0];
+cfg.failure.shrinkFactor = 0.5;
+state = strictTwoCellState();
+geometry = twoCellTransportGeometry();
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+result = driver.runOneStep(1);
+
+verifyFalse(testCase, result.diagnostics.accepted);
+verifyEqual(testCase, result.transaction_status, 'rolled_back');
+verifyTrue(testCase, any(result.diagnostics.reasons == ...
+    "flow diagnostics failed"));
+verifyTrue(testCase, any(result.diagnostics.reasons == ...
+    "inlet/outlet flow imbalance exceeds tolerance"));
+verifyFalse(testCase, result.flow_diagnostics.accepted);
+verifyEqual(testCase, result.state.component_moles, state.component_moles, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, result.solver_state.dt_s, 0.5, 'AbsTol', 1e-18);
+end
+
+function testDriverSolvesConfiguredHyphmStokesFlowBeforeTransport(testCase)
+called = false;
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 1;
+cfg.transport.options.diffusion_coefficient_cm2_s = 0;
+cfg.flow.hyphmStokes = struct('solverFunction', @mockStokesSolver, ...
+    'validateDivergence', true, 'absoluteTolerance_cm3_s', 1e-12);
+cfg.flow.absoluteTolerance_cm3_s = 1;
+state = strictTwoCellState();
+geometry = twoCellTransportGeometry();
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+result = driver.runOneStep(1);
+
+verifyTrue(testCase, called);
+verifyTrue(testCase, result.diagnostics.accepted);
+verifyEqual(testCase, result.state.component_moles, [0.9; 0.1], ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+
+    function hyphm = mockStokesSolver(inputGeometry, ~)
+        called = true;
+        verifyEqual(testCase, inputGeometry.water_volume_cm3, [1; 1]);
+        hyphm = struct();
+        hyphm.internal_face_cells = [1 2];
+        hyphm.internal_face_flux_cm3_s = 0.1;
+        hyphm.internal_face_area_cm2 = 1;
+        hyphm.internal_face_distance_cm = 1;
+    end
 end
 
 function testPhreeqcKineticsModeRunsThroughSharedDriver(testCase)
@@ -230,7 +332,7 @@ driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
 
 result = driver.runOneStep(1);
 
-expectedDissolved = 2e-7 * 1000 * 1e-4;
+expectedDissolved = 2e-7 * 1e-4;
 verifyTrue(testCase, result.diagnostics.accepted);
 verifyEqual(testCase, result.transaction_status, 'committed');
 verifyEqual(testCase, result.reaction_result.realized_interface_moles, ...
@@ -248,6 +350,45 @@ verifyEqual(testCase, result.state.mineral_moles, ...
         batchResult = struct();
         batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
             dissolved ./ batchState.water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            dissolved ./ batchState.water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.calciteDissolvedMoles = dissolved;
+    end
+end
+
+function testExternalTstDriverPassesCalciteStoichiometryTolerance(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.benchmark.enabled = false;
+cfg.chemistry.mode = 'external_tst_phreeqc';
+cfg.chemistry.rate_constant_cm_s = 1e-4;
+cfg.chemistry.calciteStoichiometryAbsoluteTolerance_mol = 1e-8;
+cfg.chemistry.calciteStoichiometryRelativeTolerance = 1;
+cfg.chemistry.options = struct();
+cfg.chemistry.options.h_mol_cm3 = 1e-7;
+cfg.chemistry.options.h_activity_mol_cm3 = 2e-7;
+cfg.chemistry.options.runBatchFunction = @mockRunBatch;
+cfg.phreeqc.engine = 'mock';
+cfg.phreeqc.databasePolicy = 'not_used';
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 1;
+state = carbonateState(0, 0, 1e-8, 1e-8, 1e-3);
+geometry = singleInterfaceGeometry();
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+result = driver.runOneStep(1);
+
+verifyTrue(testCase, result.diagnostics.accepted);
+verifyGreaterThan(testCase, ...
+    result.reaction_result.aux.calcite_stoichiometry_max_residual_moles, 0);
+
+    function batchResult = mockRunBatch(batchState, ~)
+        dissolved = batchState.prescribed_calcite_dissolved_moles(:);
+        mismatch = 1e-10;
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            (dissolved + mismatch) ./ batchState.water_volume_cm3(:);
         batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
             dissolved ./ batchState.water_volume_cm3(:);
         batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
@@ -425,10 +566,11 @@ verifyEqual(testCase, result.diagnostics.error_message, ...
     function batchResult = mockRunBatch(batchState, ~)
         dissolved = batchState.prescribed_calcite_dissolved_moles(:);
         batchResult = struct();
-        batchResult.ca_total_mol_cm3 = -1e-8;
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            dissolved ./ batchState.water_volume_cm3(:);
         batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
             dissolved ./ batchState.water_volume_cm3(:);
-        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.na_total_mol_cm3 = -1e-8;
         batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
         batchResult.calciteDissolvedMoles = dissolved;
         batchResult.chargeBalance = 0;
@@ -437,7 +579,7 @@ end
 
 function testExternalTstPhreeqcDriverReusesPersistentSession(testCase)
 databasePath = createTempDatabase(testCase);
-mockEngine = MockIPhreeqcEngine(minimalSelectedOutput());
+mockEngine = MockIPhreeqcEngine(@persistentSessionSelectedOutput);
 
 cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
 cfg.benchmark.enabled = false;
@@ -492,6 +634,193 @@ verifyEqual(testCase, summary.time_s, 1.0, 'AbsTol', 1e-14);
 verifyEqual(testCase, summary.state.time_s, 1.0, 'AbsTol', 1e-14);
 accepted = arrayfun(@(result) result.diagnostics.accepted, summary.step_results);
 verifyEqual(testCase, accepted, [true true true]);
+end
+
+function testRunGeometryMacroStepMovesGeometryOnceAfterFixedRtSubcycles(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0.1;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 1e6;
+cfg.time.rt.initialDt_s = 0.5;
+cfg.time.rt.maxDt_s = 0.5;
+state = strictState(1, 10);
+geometry = singleInterfaceGeometry();
+geometry.solid_volume_cm3 = 20;
+geometry.cell_volume_cm3 = geometry.water_volume_cm3 + geometry.solid_volume_cm3;
+geometry.fluid_fraction = geometry.water_volume_cm3 ./ geometry.cell_volume_cm3;
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+summary = driver.runGeometryMacroStep(1.0);
+
+realizedByStep = arrayfun(@(result) ...
+    sum(result.reaction_result.realized_interface_moles(:), 'omitnan'), ...
+    summary.rt_summary.step_results);
+expectedRealized = sum(realizedByStep);
+verifyEqual(testCase, summary.rt_summary.accepted_steps, 2);
+verifyEqual(testCase, [summary.rt_summary.step_results.geometry], ...
+    repmat(geometry, 1, 2));
+verifyGreaterThan(testCase, expectedRealized, 0);
+verifyEqual(testCase, summary.accumulated_realized_mineral_moles, ...
+    expectedRealized, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.state.mineral_moles, ...
+    state.mineral_moles - expectedRealized, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.geometry.solid_volume_cm3, ...
+    geometry.solid_volume_cm3 - expectedRealized, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.geometry.water_volume_cm3, ...
+    geometry.water_volume_cm3 + expectedRealized, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.geometry_info.expected_solid_volume_change_cm3, ...
+    -expectedRealized, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+end
+
+function testFixedGeometryRtSubcyclesDoNotRejectOnGeometryDisplacementLimit(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0.1;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 0.01;
+cfg.time.rt.initialDt_s = 0.5;
+cfg.time.rt.maxDt_s = 0.5;
+cfg.failure.maxRetries = 0;
+state = strictState(1, 10);
+geometry = singleInterfaceGeometry();
+geometry.solid_volume_cm3 = 20;
+geometry.cell_volume_cm3 = geometry.water_volume_cm3 + geometry.solid_volume_cm3;
+geometry.fluid_fraction = geometry.water_volume_cm3 ./ geometry.cell_volume_cm3;
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+summary = driver.runFixedGeometryRtSubcycles(0.5, struct( ...
+    'freezeGeometry', true, ...
+    'freezeMineralInventory', false));
+
+verifyEqual(testCase, summary.accepted_steps, 1);
+verifyEqual(testCase, summary.rejected_steps, 0);
+verifyEqual(testCase, summary.geometry, geometry);
+verifyEqual(testCase, summary.state.mineral_moles, ...
+    state.mineral_moles - summary.step_results.reaction_result.realized_interface_moles, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.step_results.geometry_info.fixed_geometry, true);
+end
+
+function testRejectedGeometryMacroStepRollsBackFixedRtState(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0.1;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 0.01;
+cfg.time.rt.initialDt_s = 0.5;
+cfg.time.rt.maxDt_s = 0.5;
+cfg.failure.shrinkFactor = 0.25;
+cfg.failure.maxRetries = 4;
+state = strictState(1, 10);
+geometry = singleInterfaceGeometry();
+geometry.solid_volume_cm3 = 20;
+geometry.cell_volume_cm3 = geometry.water_volume_cm3 + geometry.solid_volume_cm3;
+geometry.fluid_fraction = geometry.water_volume_cm3 ./ geometry.cell_volume_cm3;
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+verifyError(testCase, @() driver.runGeometryMacroStep(0.5), ...
+    'RTSPHEM:Driver:GeometryMacroStepRejected');
+summaryAfterReject = driver.runFixedGeometryRtSubcycles(0, struct());
+
+verifyEqual(testCase, summaryAfterReject.state.component_moles, ...
+    state.component_moles, 'AbsTol', 1e-18);
+verifyEqual(testCase, summaryAfterReject.state.mineral_moles, ...
+    state.mineral_moles, 'AbsTol', 1e-18);
+verifyEqual(testCase, summaryAfterReject.geometry, geometry);
+verifyEqual(testCase, summaryAfterReject.solver_state.dt_s, 0.125, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, summaryAfterReject.solver_state.rejected_steps, 1);
+verifyEqual(testCase, summaryAfterReject.solver_state.rejection_log.reason, ...
+    "geometry displacement exceeds tolerance");
+end
+
+function testRunQuasiSteadyGeometryRetriesRejectedMacroStep(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0.1;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 200;
+cfg.time.rt.initialDt_s = 0.125;
+cfg.time.rt.maxDt_s = 0.125;
+cfg.time.geometry.maxDt_s = 0.5;
+cfg.failure.shrinkFactor = 0.25;
+cfg.failure.maxRetries = 4;
+state = strictState(1, 10);
+geometry = singleInterfaceGeometry();
+geometry.solid_volume_cm3 = 20;
+geometry.cell_volume_cm3 = geometry.water_volume_cm3 + geometry.solid_volume_cm3;
+geometry.fluid_fraction = geometry.water_volume_cm3 ./ geometry.cell_volume_cm3;
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+summary = rtm.driver.RunQuasiSteadyGeometry(driver, 0.25);
+
+verifyEqual(testCase, summary.rejected_macro_steps, 1);
+verifyEqual(testCase, summary.accepted_macro_steps, 2);
+verifyEqual(testCase, summary.time_s, 0.25, 'AbsTol', 1e-14);
+verifyEqual(testCase, summary.macro_step_sizes_s, [0.0625; 0.1875], ...
+    'AbsTol', 1e-18);
+verifyLessThan(testCase, summary.state.component_moles, state.component_moles);
+verifyLessThan(testCase, summary.geometry.solid_volume_cm3, ...
+    geometry.solid_volume_cm3);
+verifyEqual(testCase, summary.solver_state.rejected_steps, 1);
+verifyEqual(testCase, summary.solver_state.rejection_log.reason, ...
+    "geometry displacement exceeds tolerance");
+end
+
+function testDriverHelperFunctionsDelegateToMacroAndFixedGeometryMethods(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 0;
+cfg.time.rt.initialDt_s = 0.5;
+cfg.time.rt.maxDt_s = 0.5;
+state = strictState(1, 10);
+geometry = singleInterfaceGeometry();
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, struct());
+
+fixedSummary = rtm.driver.RunFixedGeometryRtSubcycles(driver, 0.5, struct( ...
+    'freezeGeometry', true, ...
+    'freezeMineralInventory', true));
+
+macroSummary = rtm.driver.RunGeometryMacroStep(driver, 0.5, struct( ...
+    'freezeMineralInventoryDuringRt', true));
+
+verifyEqual(testCase, fixedSummary.accepted_steps, 1);
+verifyEqual(testCase, fixedSummary.geometry, geometry);
+verifyEqual(testCase, macroSummary.geometry_macro_step_s, 0.5);
+verifyTrue(testCase, isfield(macroSummary, 'rt_summary'));
+end
+
+function testGeometryMacroStepMovesLevelSetWhenMeshIsAvailable(testCase)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.chemistry.rate_constant_cm_s = 1e-4;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = Inf;
+cfg.time.rt.initialDt_s = 1;
+cfg.time.rt.maxDt_s = 1;
+mesh = verticalCutMesh();
+levelSet = mesh.vertices_cm(:, 1) - 0.5;
+geometry = rtm.geometry.BuildCutCellMetrics(mesh, levelSet);
+geometry.cell_centroid_cm = triangleCentroids(mesh);
+state = strictState([1; 1], [1; 1]);
+state.temperature_C = [25; 25];
+state.pressure_atm = [1; 1];
+connectivity = struct('mesh', mesh, 'cell_neighbors', {{2; 1}});
+driver = rtm.driver.ReactiveTransportDriver(cfg, state, geometry, connectivity);
+
+summary = driver.runGeometryMacroStep(1.0);
+
+verifyTrue(testCase, summary.geometry_info.level_set_moved);
+verifyNotEqual(testCase, summary.geometry.level_set, geometry.level_set);
+verifyLessThan(testCase, sum(summary.geometry.solid_volume_cm3), ...
+    sum(geometry.solid_volume_cm3));
+verifyEqual(testCase, summary.geometry_info.actual_solid_volume_change_cm3, ...
+    sum(summary.geometry.solid_volume_cm3) - sum(geometry.solid_volume_cm3), ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyTrue(testCase, isfield(summary, 'remap_ledger'));
+verifyLessThanOrEqual(testCase, ...
+    summary.remap_ledger.max_abs_component_residual_moles, 1e-10);
+verifyEqual(testCase, sum(summary.state.component_moles, 1), ...
+    summary.remap_ledger.final_component_moles_total, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
 end
 
 function testRunRtSubcyclesRetriesRejectedStepWithSmallerDt(testCase)
@@ -589,6 +918,48 @@ state.pressure_atm = 1;
 state.time_s = 0;
 end
 
+function state = strictTwoCellState()
+state = struct();
+state.component_names = {'H_reactant'};
+state.component_moles = [1; 0];
+state.mineral_names = {'Calcite'};
+state.mineral_moles = [1; 1];
+state.temperature_C = [25; 25];
+state.pressure_atm = [1; 1];
+state.time_s = 0;
+end
+
+function geometry = twoCellTransportGeometry()
+geometry = struct();
+geometry.water_volume_cm3 = [1; 1];
+geometry.solid_volume_cm3 = [1; 1];
+geometry.cell_volume_cm3 = [2; 2];
+geometry.fluid_fraction = [0.5; 0.5];
+geometry.cell_centroid_cm = [0 0; 1 0];
+geometry.interface_centroid_cm = [0 0; 1 0];
+geometry.interface_area_cm2 = [0; 0];
+geometry.interface_h_cm = [1; 1];
+geometry.interface_normal = [1 0; 1 0];
+geometry.active_fluid_cell = true(2, 1);
+end
+
+function flow = twoCellFlow()
+flow = struct();
+flow.internal_face_cells = [1 2];
+flow.internal_face_area_cm2 = 1;
+flow.internal_face_distance_cm = 1;
+flow.internal_face_velocity_cm_s = 0.1;
+end
+
+function flow = imbalancedBoundaryFlow()
+flow = struct();
+flow.boundary_face_cells = [1; 2];
+flow.boundary_face_area_cm2 = [1; 1];
+flow.boundary_face_distance_cm = [1; 1];
+flow.boundary_face_velocity_cm_s = [0.1; 0.09];
+flow.boundary_type = ["dirichlet"; "outflow"];
+end
+
 function state = carbonateState(caMoles, cMoles, naMoles, clMoles, calciteMoles)
 state = struct();
 state.component_names = {'Ca', 'C', 'Na', 'Cl'};
@@ -626,6 +997,19 @@ geometry.interface_area_cm2 = [1; 0; 1];
 geometry.interface_h_cm = [1e-4; 1e-4; 1e-4];
 geometry.interface_normal = [1 0; NaN NaN; -1 0];
 geometry.active_fluid_cell = true(3, 1);
+end
+
+function mesh = verticalCutMesh()
+mesh.vertices_cm = [0 0; 1 0; 1 1; 0 1];
+mesh.triangles = [1 2 4; 2 3 4];
+end
+
+function centroids = triangleCentroids(mesh)
+numCells = size(mesh.triangles, 1);
+centroids = zeros(numCells, 2);
+for iCell = 1:numCells
+    centroids(iCell, :) = mean(mesh.vertices_cm(mesh.triangles(iCell, :), :), 1);
+end
 end
 
 function cleanupDiagnostics(outputDir)
@@ -684,5 +1068,15 @@ function rawOutput = minimalSelectedOutput()
 rawOutput = {
     'sim', 'state', 'soln', 'pH', 'charge(eq)', 'Ca(mol/kgw)', 'C(mol/kgw)', 'Na(mol/kgw)', 'Cl(mol/kgw)', 'm_H+(mol/kgw)', 'm_Ca+2(mol/kgw)', 'm_HCO3-(mol/kgw)', 'm_CO3-2(mol/kgw)', 'm_Cl-(mol/kgw)', 'm_Na+(mol/kgw)', 'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
     1, 'react', 1, 2.1, 0, 1e-4, 1e-4, 0.01, 0.11, 0.08, 1e-4, 8e-5, 1e-8, 0.11, 0.01, -3, 0, 0
+    };
+end
+
+function rawOutput = persistentSessionSelectedOutput(mockEngine)
+stepIndex = max(mockEngine.RunStringCount, 1);
+prescribedDissolvedMol = 1e-11;
+caCMolKgWater = stepIndex .* prescribedDissolvedMol .* 1000;
+rawOutput = {
+    'sim', 'state', 'soln', 'pH', 'charge(eq)', 'Ca(mol/kgw)', 'C(mol/kgw)', 'Na(mol/kgw)', 'Cl(mol/kgw)', 'm_H+(mol/kgw)', 'm_Ca+2(mol/kgw)', 'm_HCO3-(mol/kgw)', 'm_CO3-2(mol/kgw)', 'm_Cl-(mol/kgw)', 'm_Na+(mol/kgw)', 'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
+    1, 'react', 1, 6.8, 0, caCMolKgWater, caCMolKgWater, 1e-5, 1e-5, 1e-7, caCMolKgWater, 0, 0, 1e-5, 1e-5, -3, 0, 0
     };
 end

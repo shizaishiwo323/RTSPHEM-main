@@ -13,6 +13,7 @@ switch kind
         config.chemistry.mode = 'strict_molins';
         config.phreeqc.engine = 'none';
         config.phreeqc.databasePolicy = 'not_used';
+        config.time.mode = 'fixed_geometry_steady_rt';
     case {'partii_strict', 'part_ii_strict', 'part2_strict'}
         config.benchmark.name = 'molins_partII_strict';
         config.benchmark.part = 'II';
@@ -67,4 +68,5 @@ config.phreeqc = struct('engine', 'none', 'databasePolicy', 'not_used', ...
     'useRunString', true);
 config.benchmark = struct('enabled', true, 'name', '', 'part', '', ...
     'strictBenchmark', true, 'initializeFromPartI', false);
+config.units = rtm.units.NormalizeRtmUnits();
 end

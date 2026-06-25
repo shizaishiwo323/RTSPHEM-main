@@ -40,7 +40,14 @@ ledger.accepted = max(abs(conservedRelative)) <= 1e-10;
 end
 
 function value = aqueousMass(state, fieldName, spec)
-value = sum(state.components.(fieldName)(:)) * spec.cellVolume_cm3;
+if isfield(state, 'componentMoles') && ...
+        isfield(state.componentMoles, fieldName) && ...
+        ~isempty(state.componentMoles.(fieldName))
+    value = sum(state.componentMoles.(fieldName)(:));
+    return;
+end
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
+value = sum(state.componentMoles.(fieldName)(:));
 end
 
 function value = totalPrecipitateMoles(state)

@@ -74,6 +74,38 @@ verifyEqual(testCase, suite.runs(2).failure_message, "intentional failure");
     end
 end
 
+function testPreservesPhysicalRefinementDimensionsFromSummary(testCase)
+options = struct();
+options.refinementScales = [3, 2, 1];
+options.runNames = ["grid128_dt5p4", "grid128_dt0p54", "grid128_dt0p054"];
+options.refinementDimension = 'time';
+options.errorTolerance = Inf;
+options.minObservedOrder = 1.8;
+options.runFunction = @mockRun;
+options.observableFunction = @(summary) summary.value;
+
+suite = rtm.benchmark.RunConvergenceSuite(options);
+
+verifyTrue(testCase, suite.report.accepted);
+verifyEqual(testCase, suite.report.refinement_dimension, "time");
+verifyEqual(testCase, [suite.runs.time_step_s]', [5.4; 0.54; 0.054], ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, [suite.runs.grid_spacing_cm]', repmat(1/128, 3, 1), ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, suite.report.refinement_scales, [5.4; 0.54; 0.054], ...
+    'AbsTol', 1e-18);
+
+    function summary = mockRun(~, runInfo)
+        timeSteps = [5.4; 0.54; 0.054];
+        dt = timeSteps(runInfo.index);
+        summary = struct();
+        summary.time_step_s = dt;
+        summary.grid_spacing_cm = 1/128;
+        summary.value = 1 + dt^2;
+        summary.accepted = true;
+    end
+end
+
 function testPreservesSummaryWhenObservableIsInvalid(testCase)
 options = struct();
 options.refinementScales = [1, 0.5];
@@ -120,6 +152,8 @@ decoded = jsondecode(fileread(checkpointPath));
 verifyEqual(testCase, numel(decoded.runs), 2);
 verifyEqual(testCase, string(decoded.runs(1).name), "run1");
 verifyTrue(testCase, logical(decoded.runs(1).accepted));
+verifyEqual(testCase, decoded.runs(1).summary.reaction_realized_moles, 1, ...
+    'AbsTol', 0);
 verifyFalse(testCase, logical(decoded.runs(2).accepted));
 verifyEqual(testCase, string(decoded.runs(2).failure_message), ...
     "intentional failure");
@@ -129,7 +163,8 @@ verifyEqual(testCase, string(decoded.runs(2).failure_message), ...
             error('test_RunConvergenceSuite:IntentionalFailure', ...
                 'intentional failure');
         end
-        summary = struct('value', scale, 'accepted', true);
+        summary = struct('value', scale, 'accepted', true, ...
+            'reaction_realized_moles', scale);
     end
 end
 

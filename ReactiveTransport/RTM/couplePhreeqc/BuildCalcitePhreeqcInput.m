@@ -18,6 +18,9 @@ ca = preferredColumn(state, 'ca_total_mol_cm3', 'ca_mol_cm3', numCells, 0);
 c = preferredColumn(state, 'c_total_mol_cm3', 'c_mol_cm3', numCells, 0);
 na = preferredColumn(state, 'na_total_mol_cm3', 'na_mol_cm3', numCells, 0);
 cl = preferredColumn(state, 'cl_total_mol_cm3', 'cl_mol_cm3', numCells, 0);
+hasAlkalinity = isfield(state, 'alkalinity_mol_cm3') && ...
+    ~isempty(state.alkalinity_mol_cm3);
+alkalinity = optionalColumn(state, 'alkalinity_mol_cm3', numCells, 0);
 interfaceAreaCm2 = optionalColumn(state, 'interface_area_cm2', numCells, 1);
 waterVolumeCm3 = optionalColumn(state, 'water_volume_cm3', numCells, 1000);
 if isfield(state, 'reaction_water_volume_cm3') && ~isempty(state.reaction_water_volume_cm3)
@@ -25,7 +28,17 @@ if isfield(state, 'reaction_water_volume_cm3') && ~isempty(state.reaction_water_
 else
     reactionWaterVolumeCm3 = waterVolumeCm3;
 end
+hasCalciteInventory = isfield(state, 'calcite_moles') && ~isempty(state.calcite_moles);
 calciteMoles = optionalColumn(state, 'calcite_moles', numCells, 1);
+if isfield(state, 'initial_calcite_moles') && ~isempty(state.initial_calcite_moles)
+    initialCalciteMoles = optionalColumn(state, 'initial_calcite_moles', ...
+        numCells, 1);
+elseif isfield(state, 'calcite_initial_moles') && ~isempty(state.calcite_initial_moles)
+    initialCalciteMoles = optionalColumn(state, 'calcite_initial_moles', ...
+        numCells, 1);
+else
+    initialCalciteMoles = calciteMoles;
+end
 prescribedDissolvedMoles = optionalColumn(state, ...
     'prescribed_calcite_dissolved_moles', numCells, 0);
 
@@ -66,6 +79,7 @@ solutionWaterKg = max(solutionWaterKg, minSolutionWaterKg);
 specificSurfaceArea = max((interfaceAreaCm2 * 1e-4) ./ waterKg, minSpecificSurfaceArea);
 specificSurfaceArea = min(specificSurfaceArea, maxSpecificSurfaceArea);
 calciteMoles = max(calciteMoles(:), minCalciteMoles);
+initialCalciteMoles = max(initialCalciteMoles(:), minCalciteMoles);
 if usePrescribedCalciteReaction
     prescribedDissolvedMoles = max(prescribedDissolvedMoles(:), 0);
 else
@@ -73,8 +87,15 @@ else
 end
 prescribedReferenceMoles = prescribedDissolvedMoles .* solutionWaterKg ./ reactionWaterKg;
 activeKinetics = interfaceAreaCm2 > 0 & waterVolumeCm3 > 0 & calciteMoles > 0;
-kineticsMoles = repmat(max(kineticsReservoirMoles, minKineticsMoles), numCells, 1);
-kineticsM0 = repmat(max(kineticsReservoirMoles, minKineticsM0), numCells, 1);
+if hasCalciteInventory
+    kineticsMoles = max(calciteMoles(:), minKineticsMoles);
+    kineticsM0 = max(initialCalciteMoles(:), minKineticsM0);
+else
+    kineticsMoles = repmat(max(kineticsReservoirMoles, minKineticsMoles), ...
+        numCells, 1);
+    kineticsM0 = repmat(max(kineticsReservoirMoles, minKineticsM0), ...
+        numCells, 1);
+end
 kineticsSurfaceArea = specificSurfaceArea;
 kineticsMoles(~activeKinetics) = minKineticsMoles;
 kineticsM0(~activeKinetics) = minKineticsM0;
@@ -99,6 +120,9 @@ for iCell = 1:numCells
     lines(end + 1) = sprintf('C %.15g', max(c(iCell), 0) * 1000);
     lines(end + 1) = sprintf('Na %.15g', max(na(iCell), 0) * 1000);
     lines(end + 1) = sprintf('Cl %.15g', max(cl(iCell), 0) * 1000);
+    if hasAlkalinity
+        lines(end + 1) = sprintf('Alkalinity %.15g', max(alkalinity(iCell), 0) * 1000);
+    end
     if usePrescribedCalciteReaction
         lines(end + 1) = sprintf('REACTION %d', iCell);
         lines(end + 1) = sprintf('%s 1', mineralFormula);
@@ -122,6 +146,7 @@ lines(end + 1) = "-state true";
 lines(end + 1) = "-solution true";
 lines(end + 1) = "-pH true";
 lines(end + 1) = "-charge_balance true";
+lines(end + 1) = "-alkalinity true";
 lines(end + 1) = "-totals Ca C Na Cl";
 lines(end + 1) = "-molalities H+ Ca+2 HCO3- CO3-2 Cl- Na+";
 lines(end + 1) = "-saturation_indices Calcite";

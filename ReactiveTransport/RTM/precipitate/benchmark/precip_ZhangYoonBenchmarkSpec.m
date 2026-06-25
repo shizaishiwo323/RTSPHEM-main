@@ -19,6 +19,11 @@ spec = struct();
 spec.name = 'zhang_yoon_caco3_25mM_yoon_case1';
 spec.source = 'Zhang2010_Yoon2012';
 spec.modelFamily = 'yoon_seeded_microcontinuum';
+spec.precipitationMode = 'yoon_seeded_microcontinuum';
+spec.deferredPrecipitationModes = {'deng_homogeneous_nucleation', ...
+    'surface_growth'};
+spec.deferredPrecipitationModePolicy = ...
+    'fail_closed_until_yoon_quantitative_gate';
 spec.mineralPhase = 'Vaterite';
 spec.reactionRateLaw = 'yoon_chou_vaterite_explicit';
 spec.solidStateVariable = 'Vm';
@@ -45,15 +50,21 @@ spec.areaVmThreshold = 0.05;
 spec.maxVmChangePerStep = 0.02;
 spec.dissolutionFactor = 1;
 
-spec.vateriteKsp = 10^(-7.91);
-spec.vateriteMolarVolume_cm3_mol = 37.6;
+spec.vateriteKsp_mol2_m6 = 1.832e-2;
+spec.vateriteKsp_mol2_L2 = 1.832e-8;
+spec.vateriteKsp = spec.vateriteKsp_mol2_L2;
+spec.vateriteMolarVolume_cm3_mol = 37.47;
 spec.temperature_C = 25;
 spec.yoonRate = struct();
-spec.yoonRate.k1 = 0;
-spec.yoonRate.k2 = 0;
-spec.yoonRate.k3 = 1e-12;
+spec.yoonRate.k1 = 8.9e-5;
+spec.yoonRate.k2 = 5.01e-8;
+spec.yoonRate.k3 = 6.6e-11;
 spec.yoonRate.units = 'mol_cm-2_s-1';
-spec.yoonRate.source = 'smoke_default_pending_literature_lockdown';
+spec.yoonRate.source = 'Yoon2012_Chou_literature_locked';
+spec.yoonRate.sourceDoi = '10.1029/2011WR011192';
+spec.yoonRate.sourceEquation = 'Yoon2012 Eq.7; Chou1989';
+spec.yoonRate.mineralPhase = 'Vaterite';
+spec.yoonRate.sourceValuesVerified = true;
 
 spec.inletA = makeInlet('CaCl2', [0, spec.splitInletY_cm], 6.1, ...
     25e-6, 0, 0, 50e-6);

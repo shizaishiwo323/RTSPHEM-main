@@ -12,10 +12,18 @@ diagnostics.reasons = strings(0, 1);
 [componentAbsResidual, componentRelResidual] = componentResidual(stepInfo);
 diagnostics.component_absolute_residual_moles = componentAbsResidual;
 diagnostics.component_relative_residual = componentRelResidual;
+try
+    diagnostics.full_mass_ledger = ...
+        rtm.diagnostics.ComputeFullMassLedger(stepInfo);
+catch
+    diagnostics.full_mass_ledger = struct();
+end
 
 [solidAbsResidual, solidRelResidual] = solidVolumeResidual(stepInfo);
 diagnostics.solid_volume_absolute_residual_cm3 = solidAbsResidual;
 diagnostics.solid_volume_relative_residual = solidRelResidual;
+diagnostics.mineral_absolute_residual_moles = 0;
+diagnostics.mineral_relative_residual = 0;
 chargeAbsResidual = chargeResidual(stepInfo);
 diagnostics.charge_absolute_residual_eq = chargeAbsResidual;
 
@@ -25,6 +33,8 @@ solidAbsTol = getOption(options, 'solid_absolute_tolerance_cm3', 1e-14);
 solidRelTol = getOption(options, 'solid_relative_tolerance', 1e-8);
 chargeAbsTol = getOption(options, 'charge_absolute_tolerance_eq', Inf);
 maxDisplacement = getOption(options, 'max_displacement_over_h', 0.25);
+
+diagnostics = evaluateFullCoupledLedger(diagnostics, options);
 
 if componentAbsResidual > massAbsTol && componentRelResidual > massRelTol
     diagnostics = reject(diagnostics, "component mass residual exceeds tolerance");
@@ -61,6 +71,43 @@ if ~logical(geometryAccepted)
         reason = "geometry backend rejected step";
     end
     diagnostics = reject(diagnostics, reason);
+end
+
+diagnostics = evaluateFlowDiagnostics(diagnostics, stepInfo);
+end
+
+function diagnostics = evaluateFullCoupledLedger(diagnostics, options)
+if ~isfield(diagnostics, 'full_mass_ledger') || ...
+        ~isstruct(diagnostics.full_mass_ledger) || ...
+        isempty(fieldnames(diagnostics.full_mass_ledger))
+    return;
+end
+fullDiagnostics = rtm.diagnostics.ValidateFullCoupledStep( ...
+    diagnostics.full_mass_ledger, options);
+diagnostics.full_mass_diagnostics = fullDiagnostics;
+diagnostics.component_absolute_residual_moles = max( ...
+    diagnostics.component_absolute_residual_moles, ...
+    fullDiagnostics.component_absolute_residual_moles);
+diagnostics.component_relative_residual = max( ...
+    diagnostics.component_relative_residual, ...
+    fullDiagnostics.component_relative_residual);
+diagnostics.solid_volume_absolute_residual_cm3 = max( ...
+    diagnostics.solid_volume_absolute_residual_cm3, ...
+    fullDiagnostics.solid_volume_absolute_residual_cm3);
+diagnostics.solid_volume_relative_residual = max( ...
+    diagnostics.solid_volume_relative_residual, ...
+    fullDiagnostics.solid_volume_relative_residual);
+diagnostics.mineral_absolute_residual_moles = max( ...
+    diagnostics.mineral_absolute_residual_moles, ...
+    fullDiagnostics.mineral_absolute_residual_moles);
+diagnostics.mineral_relative_residual = max( ...
+    diagnostics.mineral_relative_residual, ...
+    fullDiagnostics.mineral_relative_residual);
+if fullDiagnostics.accepted
+    return;
+end
+for iReason = 1:numel(fullDiagnostics.reasons)
+    diagnostics = reject(diagnostics, fullDiagnostics.reasons(iReason));
 end
 end
 
@@ -119,6 +166,34 @@ chemistry = stepInfo.chemistry;
 converged = getFieldOrDefault(chemistry, 'converged', true);
 failedCells = getFieldOrDefault(chemistry, 'failed_cells', []);
 errorMessage = string(getFieldOrDefault(chemistry, 'error_message', ""));
+end
+
+function diagnostics = evaluateFlowDiagnostics(diagnostics, stepInfo)
+flow = getNestedField(stepInfo, {'flow'}, struct());
+if ~isstruct(flow) || isempty(fieldnames(flow))
+    diagnostics.flow_inlet_outlet_relative_residual = NaN;
+    diagnostics.flow_max_abs_cell_divergence_cm3_s = NaN;
+    diagnostics.flow_global_residual_cm3_s = NaN;
+    return;
+end
+
+diagnostics.flow_inlet_outlet_relative_residual = getFieldOrDefault( ...
+    flow, 'inlet_outlet_relative_residual', NaN);
+diagnostics.flow_max_abs_cell_divergence_cm3_s = getFieldOrDefault( ...
+    flow, 'max_abs_cell_divergence_cm3_s', NaN);
+diagnostics.flow_global_residual_cm3_s = getFieldOrDefault( ...
+    flow, 'global_residual_cm3_s', NaN);
+
+flowAccepted = logical(getFieldOrDefault(flow, 'accepted', true));
+flowReasons = string(getFieldOrDefault(flow, 'failure_reasons', strings(0, 1)));
+flowReasons = flowReasons(:);
+flowReasons = flowReasons(strlength(strtrim(flowReasons)) > 0);
+if ~flowAccepted
+    diagnostics = reject(diagnostics, "flow diagnostics failed");
+end
+for iReason = 1:numel(flowReasons)
+    diagnostics = reject(diagnostics, flowReasons(iReason));
+end
 end
 
 function diagnostics = reject(diagnostics, reason)

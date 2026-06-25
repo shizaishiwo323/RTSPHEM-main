@@ -63,6 +63,21 @@ if ~isempty(missingAssets)
     return;
 end
 
+validation = validateDigitizationTables(package.calibrationCsv, ...
+    package.rawExportCsv, package.uncertaintyCsv);
+package.calibrationTableVerified = validation.calibrationTableVerified;
+package.rawExportTableVerified = validation.rawExportTableVerified;
+package.uncertaintyTableVerified = validation.uncertaintyTableVerified;
+package.invalidAssets = cellstr(validation.invalidAssets);
+if ~validation.accepted
+    package.assetFilesVerified = false;
+    package.isQuantitativeBenchmark = false;
+    package.note = ['Digitization package has invalid calibration, raw ', ...
+        'export, or uncertainty tables; do not use for quantitative ', ...
+        'Zhang/Yoon claims.'];
+    return;
+end
+
 package.reference = precip_LoadReferenceCurves(package.convertedReferenceCsv);
 package.assetFilesVerified = true;
 package.numReferenceRows = package.reference.numRows;
@@ -93,4 +108,53 @@ end
 function tf = isAbsolutePath(path)
 tf = ~isempty(regexp(path, '^[A-Za-z]:[\\/]', 'once')) || ...
     startsWith(path, filesep);
+end
+
+function validation = validateDigitizationTables(calibrationCsv, rawExportCsv, ...
+    uncertaintyCsv)
+validation = struct();
+validation.calibrationTableVerified = hasNumericColumns(calibrationCsv, ...
+    {'pixel_x', 'pixel_y', 'data_x', 'data_y'}, 2);
+validation.rawExportTableVerified = hasNumericColumns(rawExportCsv, ...
+    {'x', 'y'}, 1);
+validation.uncertaintyTableVerified = hasNumericColumns(uncertaintyCsv, ...
+    {'uncertainty'}, 1);
+validation.invalidAssets = strings(0, 1);
+if ~validation.calibrationTableVerified
+    validation.invalidAssets(end + 1, 1) = string(calibrationCsv);
+end
+if ~validation.rawExportTableVerified
+    validation.invalidAssets(end + 1, 1) = string(rawExportCsv);
+end
+if ~validation.uncertaintyTableVerified
+    validation.invalidAssets(end + 1, 1) = string(uncertaintyCsv);
+end
+validation.accepted = isempty(validation.invalidAssets);
+end
+
+function tf = hasNumericColumns(csvPath, requiredColumns, minRows)
+tf = false;
+try
+    tbl = readtable(csvPath);
+catch
+    return;
+end
+if height(tbl) < minRows
+    return;
+end
+names = string(tbl.Properties.VariableNames);
+for iColumn = 1:numel(requiredColumns)
+    columnName = string(requiredColumns{iColumn});
+    if ~any(names == columnName)
+        return;
+    end
+    values = tbl.(char(columnName));
+    if ~isnumeric(values) || any(~isfinite(double(values(:))))
+        return;
+    end
+    if contains(lower(columnName), "uncertainty") && any(values(:) < 0)
+        return;
+    end
+end
+tf = true;
 end

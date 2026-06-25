@@ -37,6 +37,10 @@ switch solverName
         flow = precip_SolveYoonStokesBrinkman2D(state, spec);
         flow = normalizeFlowStruct(flow, state, false);
         return;
+    case {'hyphm_stokes', 'production_hyphm_stokes'}
+        flow = precip_SolveYoonHyPHMStokes(state, spec);
+        flow = normalizeFlowStruct(flow, state, false);
+        return;
     otherwise
         error('RTSPHEM:Precipitate:InvalidYoonFlowSolver', ...
             'Unsupported Yoon flow solver: %s.', solverName);

@@ -154,11 +154,46 @@ verifyEqual(testCase, cfg.transport.options.boundary_concentration_mol_cm3, ...
     'AbsTol', 0);
 end
 
+function testAcceptanceGridAddsRightOutflowBoundaryFaces(testCase)
+matrix = struct();
+matrix.time_steps_s = 0.054;
+matrix.grid_resolutions = "128x64";
+
+options = rtm.benchmark.CreateMolinsDriverCaseOptions('partI_strict', ...
+    struct('acceptanceMatrix', matrix, 'useAcceptanceGrid', true));
+
+cfg = options.caseOptions.configFactory(0.054, ...
+    struct('name', "grid_128x64_dt_0p054", 'index', 1));
+transport = cfg.transport.options;
+mesh = cfg.benchmark.mesh;
+
+verifyTrue(testCase, isfield(transport, 'boundary_type'));
+verifyTrue(testCase, any(string(transport.boundary_type) == "dirichlet"));
+verifyTrue(testCase, any(string(transport.boundary_type) == "outflow"));
+outflowCells = transport.boundary_face_cells(string(transport.boundary_type) == "outflow");
+verifyTrue(testCase, all(mod(outflowCells - 1, mesh.nx) + 1 == mesh.nx));
+end
+
 function testLightweightStepHistoryOptionPropagatesToCaseOptions(testCase)
 options = rtm.benchmark.CreateMolinsDriverCaseOptions('partII_strict', ...
     struct('lightweightStepHistory', true));
 
 verifyTrue(testCase, options.caseOptions.lightweightStepHistory);
+end
+
+function testMolinsDriverCasesDefaultToGeometryMacroLoop(testCase)
+options = rtm.benchmark.CreateMolinsDriverCaseOptions('partII_strict', ...
+    struct());
+
+verifyTrue(testCase, options.caseOptions.useGeometryMacroLoop);
+verifyTrue(testCase, isfield(options.caseOptions, 'geometryMacroOptions'));
+end
+
+function testGeometryMacroLoopOptionCanBeDisabledForLegacyComparison(testCase)
+options = rtm.benchmark.CreateMolinsDriverCaseOptions('partII_strict', ...
+    struct('useGeometryMacroLoop', false));
+
+verifyFalse(testCase, options.caseOptions.useGeometryMacroLoop);
 end
 
 function testAcceptanceMatrixBuildsMolinsGridFactories(testCase)
@@ -193,6 +228,15 @@ verifyTrue(testCase, all(geometry.water_volume_cm3 >= 0));
 verifyTrue(testCase, all(geometry.solid_volume_cm3 >= 0));
 verifyEqual(testCase, geometry.mesh_resolution, [128 64]);
 verifyEqual(testCase, string(geometry.mesh_resolution_label), "128x64");
+verifyTrue(testCase, isfield(geometry, 'interface_length_scale_cm'));
+expectedInterfaceScale = zeros(size(geometry.interface_area_cm2));
+activeInterface = geometry.interface_area_cm2 > 0;
+expectedInterfaceScale(activeInterface) = min( ...
+    sqrt(geometry.water_volume_cm3(activeInterface) ./ ...
+    max(geometry.interface_area_cm2(activeInterface), eps)), ...
+    sqrt(geometry.cell_volume_cm3(activeInterface)));
+verifyEqual(testCase, geometry.interface_length_scale_cm, expectedInterfaceScale, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
 verifyEqual(testCase, sum(state.mineral_moles), ...
     sum(geometry.solid_volume_cm3) ./ cfg.geometry.molarVolume_cm3_mol, ...
     'RelTol', 1e-12, 'AbsTol', 1e-18);

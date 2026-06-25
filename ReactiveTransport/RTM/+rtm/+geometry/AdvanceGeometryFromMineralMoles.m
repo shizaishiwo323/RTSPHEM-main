@@ -10,8 +10,9 @@ end
 realizedMoles = realizedMoles(:);
 interfaceArea = requireVectorField(geometry, 'interface_area_cm2', numel(realizedMoles));
 solidVolume = requireVectorField(geometry, 'solid_volume_cm3', numel(realizedMoles));
-interfaceH = getVectorFieldOrDefault(geometry, 'interface_h_cm', ...
-    ones(numel(realizedMoles), 1), numel(realizedMoles));
+interfaceH = getVectorFieldOrDefault(geometry, 'interface_length_scale_cm', ...
+    getVectorFieldOrDefault(geometry, 'interface_h_cm', ...
+    ones(numel(realizedMoles), 1), numel(realizedMoles)), numel(realizedMoles));
 
 molarVolume = getFieldOrDefault(options, 'molarVolume_cm3_mol', 1);
 maxDisplacementOverH = getFieldOrDefault(options, 'maxDisplacementOverH', 0.25);

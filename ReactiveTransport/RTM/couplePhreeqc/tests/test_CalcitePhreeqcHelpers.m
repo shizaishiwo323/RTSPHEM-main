@@ -47,8 +47,8 @@ verifyTextContains(testCase, text, 'Cl 0.11');
 verifyTextContains(testCase, text, 'KINETICS 1');
 verifyTextContains(testCase, text, 'Calcite');
 verifyTextContains(testCase, text, '-formula  CaCO3  1');
-verifyTextContains(testCase, text, '-m        1');
-verifyTextContains(testCase, text, '-m0       1');
+verifyTextContains(testCase, text, '-m        3e-06');
+verifyTextContains(testCase, text, '-m0       3e-06');
 verifyTextContains(testCase, text, '-parms    0.02  1');
 verifyTextContains(testCase, text, '-bad_step_max 5000');
 verifyTextContains(testCase, text, 'RUN_CELLS');
@@ -56,6 +56,43 @@ verifyTextContains(testCase, text, '-cells 1-2');
 verifyTextContains(testCase, text, '-time_step 0.25');
 verifyTextContains(testCase, text, '-molalities H+ Ca+2 HCO3- CO3-2 Cl- Na+');
 verifyTextContains(testCase, text, 'KIN_DELTA("Calcite")/KIN_TIME');
+end
+
+function testBuildKineticsInputFallsBackToReservoirWhenInventoryMissing(testCase)
+state = struct();
+state.h_mol_cm3 = 1e-7;
+state.ca_mol_cm3 = 0;
+state.c_mol_cm3 = 0;
+state.na_mol_cm3 = 0;
+state.cl_mol_cm3 = 1e-7;
+state.interface_area_cm2 = 2e-4;
+state.water_volume_cm3 = 1e-3;
+
+options = struct();
+options.kineticsReservoirMoles = 2.5;
+
+text = BuildCalcitePhreeqcInput(state, options);
+
+verifyTextContains(testCase, text, '-m        2.5');
+verifyTextContains(testCase, text, '-m0       2.5');
+end
+
+function testBuildKineticsInputUsesInitialCalciteMolesForM0(testCase)
+state = struct();
+state.h_mol_cm3 = 1e-7;
+state.ca_mol_cm3 = 0;
+state.c_mol_cm3 = 0;
+state.na_mol_cm3 = 0;
+state.cl_mol_cm3 = 1e-7;
+state.interface_area_cm2 = 2e-4;
+state.water_volume_cm3 = 1e-3;
+state.calcite_moles = 3e-6;
+state.initial_calcite_moles = 8e-6;
+
+text = BuildCalcitePhreeqcInput(state, struct());
+
+verifyTextContains(testCase, text, '-m        3e-06');
+verifyTextContains(testCase, text, '-m0       8e-06');
 end
 
 function testBuildInputUsesPrescribedCalciteReactionForTstMatch(testCase)
@@ -137,6 +174,24 @@ verifyTextContains(testCase, text, 'Ca 8e-05');
 verifyTextContains(testCase, text, 'C 9e-05');
 verifyTextContains(testCase, text, 'Na 0.00011');
 verifyTextContains(testCase, text, 'Cl 0.00012');
+end
+
+function testBuildInputWritesAlkalinityWhenProvided(testCase)
+state = struct();
+state.h_mol_cm3 = 1e-7;
+state.ca_total_mol_cm3 = 8e-8;
+state.c_total_mol_cm3 = 9e-8;
+state.na_total_mol_cm3 = 1.1e-7;
+state.cl_total_mol_cm3 = 1.2e-7;
+state.alkalinity_mol_cm3 = 2.5e-8;
+state.interface_area_cm2 = 1;
+state.water_volume_cm3 = 1000;
+state.calcite_moles = 1;
+
+text = string(BuildCalcitePhreeqcInput(state, struct('rateLaw', 'tst_match')));
+
+verifyTextContains(testCase, text, 'Alkalinity 2.5e-05');
+verifyTextContains(testCase, text, '-alkalinity true');
 end
 
 function testTstMatchBatchReturnsPrescribedDissolution(testCase)
@@ -599,11 +654,11 @@ end
 
 function testParseSelectedOutputKeepsLastRowsAndNamedSpecies(testCase)
 raw = {
-    'sim', 'state', 'soln', 'pH', 'charge(eq)', 'Ca(mol/kgw)', 'C(mol/kgw)', 'Na(mol/kgw)', 'Cl(mol/kgw)', 'm_H+(mol/kgw)', 'm_Ca+2(mol/kgw)', 'm_HCO3-(mol/kgw)', 'm_CO3-2(mol/kgw)', 'm_Cl-(mol/kgw)', 'm_Na+(mol/kgw)', 'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
-    1, 'initial', 1, 2.0, 0.01, 0, 0, 0.01, 0.11, 0.1, 0, 0, 0, 0.11, 0.01, -5, 0, 1e-5;
-    1, 'initial', 2, 3.0, 0.02, 0, 0, 0.01, 0.06, 0.001, 0, 0, 0, 0.06, 0.01, -4, 0, 2e-5;
-    1, 'react', 1, 2.1, 0.03, 1e-4, 1e-4, 0.01, 0.11, 0.08, 1e-4, 8e-5, 1e-8, 0.11, 0.01, -3, -3e-6, 3e-5;
-    1, 'react', 2, 3.1, 0.04, 2e-4, 2e-4, 0.01, 0.06, 8e-4, 2e-4, 1.8e-4, 2e-8, 0.06, 0.01, -2, -4e-6, 4e-5
+    'sim', 'state', 'soln', 'pH', 'charge(eq)', 'Ca(mol/kgw)', 'C(mol/kgw)', 'Na(mol/kgw)', 'Cl(mol/kgw)', 'Alkalinity(mol/kgw)', 'm_H+(mol/kgw)', 'm_Ca+2(mol/kgw)', 'm_HCO3-(mol/kgw)', 'm_CO3-2(mol/kgw)', 'm_Cl-(mol/kgw)', 'm_Na+(mol/kgw)', 'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
+    1, 'initial', 1, 2.0, 0.01, 0, 0, 0.01, 0.11, 0, 0.1, 0, 0, 0, 0.11, 0.01, -5, 0, 1e-5;
+    1, 'initial', 2, 3.0, 0.02, 0, 0, 0.01, 0.06, 0, 0.001, 0, 0, 0, 0.06, 0.01, -4, 0, 2e-5;
+    1, 'react', 1, 2.1, 0.03, 1e-4, 1e-4, 0.01, 0.11, 3e-4, 0.08, 1e-4, 8e-5, 1e-8, 0.11, 0.01, -3, -3e-6, 3e-5;
+    1, 'react', 2, 3.1, 0.04, 2e-4, 2e-4, 0.01, 0.06, 4e-4, 8e-4, 2e-4, 1.8e-4, 2e-8, 0.06, 0.01, -2, -4e-6, 4e-5
 };
 
 result = ParsePhreeqcSelectedOutput(raw, 2);
@@ -614,6 +669,8 @@ verifyEqual(testCase, result.ca_mol_cm3, [1e-4; 2e-4] / 1000, 'AbsTol', 1e-15);
 verifyEqual(testCase, result.hco3_mol_cm3, [8e-5; 1.8e-4] / 1000, 'AbsTol', 1e-15);
 verifyEqual(testCase, result.co3_mol_cm3, [1e-8; 2e-8] / 1000, 'AbsTol', 1e-15);
 verifyEqual(testCase, result.cl_mol_cm3, [0.11; 0.06] / 1000, 'AbsTol', 1e-15);
+verifyEqual(testCase, result.alkalinity_mol_cm3, [3e-4; 4e-4] / 1000, ...
+    'AbsTol', 1e-15);
 verifyEqual(testCase, result.calcite_cell_rate_mol_s, [3e-5; 4e-5], 'AbsTol', 1e-15);
 verifyFalse(testCase, isfield(result, 'calciteRate_mol_dm2_s'));
 verifyEqual(testCase, result.calciteDeltaMoles, [-3e-6; -4e-6], 'AbsTol', 1e-15);

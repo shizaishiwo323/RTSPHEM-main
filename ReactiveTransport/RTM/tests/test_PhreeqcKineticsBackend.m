@@ -16,6 +16,7 @@ end
 function testKineticsUsesPhreeqcActualCalciteDelta(testCase)
 captured = struct();
 state = carbonateState();
+state.chemistry_aux.initial_mineral_moles = [2e-6; 1e-9];
 geometry = twoCellGeometry();
 options = struct();
 options.h_mol_cm3 = [1e-7; 5e-8];
@@ -27,6 +28,10 @@ expectedDissolved = [2e-8; 1e-6];
 expectedDissolved(2) = state.mineral_moles(2);
 verifyFalse(testCase, isfield(captured.batchState, ...
     'prescribed_calcite_dissolved_moles'));
+verifyEqual(testCase, captured.batchState.calcite_moles, ...
+    state.mineral_moles, 'AbsTol', 0);
+verifyEqual(testCase, captured.batchState.initial_calcite_moles, ...
+    state.chemistry_aux.initial_mineral_moles, 'AbsTol', 0);
 verifyEqual(testCase, captured.batchOptions.rateLaw, 'database_calcite');
 verifyEqual(testCase, result.realized_interface_moles, expectedDissolved, ...
     'RelTol', 1e-12, 'AbsTol', 1e-18);
@@ -67,6 +72,65 @@ verifyError(testCase, ...
     'RTSPHEM:Chemistry:MissingPhreeqcHydrogenInput');
 end
 
+function testKineticsCarriesAlkalinityComponentDelta(testCase)
+state = carbonateState();
+state.component_names{end + 1} = 'Alkalinity';
+state.component_moles(:, end + 1) = [6e-9; 8e-9];
+geometry = twoCellGeometry();
+options = struct();
+options.h_mol_cm3 = [1e-7; 5e-8];
+options.runBatchFunction = @mockRunBatch;
+
+result = rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 1, options);
+
+verifyEqual(testCase, result.component_delta_moles(:, 5), [3e-9; 4e-9], ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+
+    function batchResult = mockRunBatch(batchState, ~)
+        rawDissolved = [2e-8; 1e-10];
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.alkalinity_mol_cm3 = batchState.alkalinity_mol_cm3(:) + ...
+            [3e-9; 4e-9] ./ batchState.water_volume_cm3(:);
+        batchResult.calciteDissolvedMoles = rawDissolved(:);
+    end
+end
+
+function testKineticsMarksInventoryExceededAsNotConverged(testCase)
+state = carbonateState();
+state.mineral_moles = [1e-6; 5e-10];
+geometry = twoCellGeometry();
+options = struct();
+options.h_mol_cm3 = [1e-7; 5e-8];
+options.runBatchFunction = @mockRunBatch;
+
+result = rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 1, options);
+
+verifyEqual(testCase, result.realized_interface_moles, state.mineral_moles, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyTrue(testCase, any(result.inventory_limited));
+verifyFalse(testCase, result.converged);
+verifyTrue(testCase, contains(result.error_message, ...
+    "PHREEQC kinetics exceeded mineral inventory"));
+
+    function batchResult = mockRunBatch(batchState, ~)
+        rawDissolved = [2e-6; 1e-6];
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.calciteDissolvedMoles = rawDissolved(:);
+    end
+end
+
 function testKineticsPropagatesFailedCellsFromBatchResult(testCase)
 state = carbonateState();
 geometry = twoCellGeometry();
@@ -78,6 +142,7 @@ result = rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 1, options);
 
 verifyEqual(testCase, result.failed_cells, [1; 4]);
 verifyEqual(testCase, result.error_message, "mock kinetics failure");
+verifyFalse(testCase, result.converged);
 
     function batchResult = mockRunBatch(batchState, ~)
         rawDissolved = [2e-8; 1e-10];
@@ -91,6 +156,59 @@ verifyEqual(testCase, result.error_message, "mock kinetics failure");
         batchResult.calciteDissolvedMoles = rawDissolved(:);
         batchResult.failedCells = [1; 4];
         batchResult.errorMessage = "mock kinetics failure";
+    end
+end
+
+function testKineticsMarksErrorMessageAsNotConverged(testCase)
+state = carbonateState();
+geometry = twoCellGeometry();
+options = struct();
+options.h_mol_cm3 = [1e-7; 5e-8];
+options.runBatchFunction = @mockRunBatch;
+
+result = rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 1, options);
+
+verifyEqual(testCase, result.failed_cells, zeros(0, 1));
+verifyEqual(testCase, result.error_message, "mock kinetics warning");
+verifyFalse(testCase, result.converged);
+
+    function batchResult = mockRunBatch(batchState, ~)
+        rawDissolved = [2e-8; 1e-10];
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.calciteDissolvedMoles = rawDissolved(:);
+        batchResult.errorMessage = "mock kinetics warning";
+    end
+end
+
+function testKineticsRecordsNonzeroPhreeqcRunStatus(testCase)
+state = carbonateState();
+geometry = twoCellGeometry();
+options = struct();
+options.h_mol_cm3 = [1e-7; 5e-8];
+options.runBatchFunction = @mockRunBatch;
+
+result = rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 1, options);
+
+verifyFalse(testCase, result.converged);
+verifyEqual(testCase, result.aux.phreeqc_run_status, 9);
+
+    function batchResult = mockRunBatch(batchState, ~)
+        rawDissolved = [2e-8; 1e-10];
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.calciteDissolvedMoles = rawDissolved(:);
+        batchResult.runStatus = 9;
     end
 end
 
@@ -153,7 +271,7 @@ verifyEqual(testCase, result.aux.reaction_cluster_max_membership, 1);
 verifyEqual(testCase, result.aux.reaction_cluster_overlapping_cell_count, 0);
 
     function batchResult = mockRunBatch(batchState, ~)
-        rawDissolved = [2e-8; 1e-10; 5e-10];
+        rawDissolved = repmat(5e-10, numel(batchState.h_mol_cm3), 1);
         batchResult = struct();
         batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
             rawDissolved(:) ./ batchState.water_volume_cm3(:);
@@ -162,6 +280,65 @@ verifyEqual(testCase, result.aux.reaction_cluster_overlapping_cell_count, 0);
         batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
         batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
         batchResult.calciteDissolvedMoles = rawDissolved(:);
+    end
+end
+
+function testKineticsSolvesPhreeqcOnReactionClusters(testCase)
+captured = struct();
+state = carbonateState();
+state.component_moles = [state.component_moles; 3e-9, 4e-9, 1e-8, 1e-8];
+state.mineral_moles = [state.mineral_moles; 2e-6];
+state.temperature_C = [state.temperature_C; 25];
+state.pressure_atm = [state.pressure_atm; 1];
+geometry = twoCellGeometry();
+geometry.water_volume_cm3 = [geometry.water_volume_cm3; 3];
+geometry.interface_area_cm2 = [geometry.interface_area_cm2; 4];
+geometry.solid_volume_cm3 = [geometry.solid_volume_cm3; 1];
+geometry.interface_h_cm = [geometry.interface_h_cm; 1];
+options = struct();
+options.h_mol_cm3 = [1e-7; 5e-8; 2e-8];
+options.reactionClusters = struct('source_cells', [1; 3], ...
+    'member_cells', [1; 2; 3]);
+options.runBatchFunction = @mockRunBatch;
+
+result = rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 2, options);
+
+expectedDissolved = 6e-10;
+expectedComponentDelta = expectedDissolved .* geometry.water_volume_cm3(:) ./ ...
+    sum(geometry.water_volume_cm3(:));
+expectedMineralDelta = expectedDissolved .* [state.mineral_moles(1); 0; ...
+    state.mineral_moles(3)] ./ (state.mineral_moles(1) + state.mineral_moles(3));
+verifyEqual(testCase, numel(captured.batchState.h_mol_cm3), 1);
+verifyEqual(testCase, captured.batchState.water_volume_cm3, 6, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, captured.batchState.interface_area_cm2, 6, ...
+    'AbsTol', 1e-18);
+verifyEqual(testCase, captured.batchState.calcite_moles, ...
+    state.mineral_moles(1) + state.mineral_moles(3), ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.component_delta_moles(:, 1), ...
+    expectedComponentDelta, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.component_delta_moles(:, 2), ...
+    expectedComponentDelta, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.realized_interface_moles, ...
+    expectedMineralDelta, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.pH, repmat(6.6, 3, 1));
+verifyTrue(testCase, result.aux.phreeqc_clustered_reaction);
+
+    function batchResult = mockRunBatch(batchState, ~)
+        captured.batchState = batchState;
+        rawDissolved = 6e-10;
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            rawDissolved ./ batchState.reaction_water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            rawDissolved ./ batchState.reaction_water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.calciteDissolvedMoles = rawDissolved;
+        batchResult.pH = 6.6;
+        batchResult.calciteSI = -0.4;
+        batchResult.chargeBalance = 3e-12;
     end
 end
 
@@ -221,6 +398,31 @@ verifyError(testCase, ...
         batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
         batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
         batchResult.calciteDissolvedMoles = [1e-10; 1e-10];
+    end
+end
+
+function testKineticsRejectsCalciteStoichiometryMismatch(testCase)
+state = carbonateState();
+geometry = twoCellGeometry();
+options = struct();
+options.h_mol_cm3 = [1e-7; 5e-8];
+options.runBatchFunction = @mockRunBatch;
+options.calciteStoichiometryAbsoluteTolerance_mol = 1e-18;
+
+verifyError(testCase, ...
+    @() rtm.chemistry.PhreeqcKineticsBackend(state, geometry, 1, options), ...
+    'RTSPHEM:Chemistry:CalciteStoichiometryMismatch');
+
+    function batchResult = mockRunBatch(batchState, ~)
+        rawDissolved = [2e-8; 1e-10];
+        batchResult = struct();
+        batchResult.ca_total_mol_cm3 = batchState.ca_total_mol_cm3(:) + ...
+            rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.c_total_mol_cm3 = batchState.c_total_mol_cm3(:) + ...
+            0.5 .* rawDissolved(:) ./ batchState.water_volume_cm3(:);
+        batchResult.na_total_mol_cm3 = batchState.na_total_mol_cm3(:);
+        batchResult.cl_total_mol_cm3 = batchState.cl_total_mol_cm3(:);
+        batchResult.calciteDissolvedMoles = rawDissolved(:);
     end
 end
 

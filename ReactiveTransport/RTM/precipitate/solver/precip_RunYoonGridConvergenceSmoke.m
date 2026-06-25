@@ -96,6 +96,8 @@ manifest.summaryCsv = summaryCsv;
 manifest.numGridCases = numCases;
 manifest.caseLabels = cellstr(labels');
 manifest.caseManifestPaths = cellstr(caseManifestPath');
+manifest.caseManifestFilesVerified = ...
+    isfile(summaryCsv) && all(isfile(caseManifestPath));
 manifest.requestedTargetGridSpacing_um = targetGridSpacingUm(:)';
 manifest.actualDx_um = dxUm(:)';
 manifest.actualDy_um = dyUm(:)';

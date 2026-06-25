@@ -19,34 +19,37 @@ if dt < 0
 end
 
 updated = state;
-componentVolumeCm3 = spec.cellVolume_cm3 .* ones(size(state.Vm));
+state = precip_RefreshYoonComponentMolesFromAqueous(state, spec);
 deltaMoles = rate .* areaCm2 .* dt;
-deltaMoles = limitDeltaMoles(deltaMoles, state, componentVolumeCm3, spec);
+deltaMoles = limitDeltaMoles(deltaMoles, state, spec);
 deltaVm = spec.vateriteMolarVolume_cm3_mol .* deltaMoles ./ spec.cellVolume_cm3;
 
 updated.Vm = min(max(state.Vm + deltaVm, 0), 1);
 acceptedDeltaMoles = (updated.Vm - state.Vm) .* spec.cellVolume_cm3 ./ ...
     spec.vateriteMolarVolume_cm3_mol;
-deltaConcentration = acceptedDeltaMoles ./ componentVolumeCm3;
 
-updated.components.Ca_total = state.components.Ca_total - deltaConcentration;
-updated.components.C_total = state.components.C_total - deltaConcentration;
-updated.components.Alkalinity = state.components.Alkalinity - 2 .* deltaConcentration;
 updated.fluidVolumeFraction = double(~state.substrateMask) .* (1 - updated.Vm);
 updated.precipitateMoles = updated.Vm .* spec.cellVolume_cm3 ./ ...
     spec.vateriteMolarVolume_cm3_mol;
+updated.componentMoles = state.componentMoles;
+updated.componentMoles.Ca_total = state.componentMoles.Ca_total - ...
+    acceptedDeltaMoles;
+updated.componentMoles.C_total = state.componentMoles.C_total - ...
+    acceptedDeltaMoles;
+updated.componentMoles.Alkalinity = state.componentMoles.Alkalinity - ...
+    2 .* acceptedDeltaMoles;
+updated = precip_RefreshYoonAqueousFromComponentMoles(updated, spec);
 end
 
-function limitedDeltaMoles = limitDeltaMoles(deltaMoles, state, componentVolumeCm3, spec)
+function limitedDeltaMoles = limitDeltaMoles(deltaMoles, state, spec)
 limitedDeltaMoles = deltaMoles;
 precipitationMask = deltaMoles > 0;
 dissolutionMask = deltaMoles < 0;
 
 if any(precipitationMask(:))
-    caAvailable = max(state.components.Ca_total, 0) .* componentVolumeCm3;
-    cAvailable = max(state.components.C_total, 0) .* componentVolumeCm3;
-    alkAvailable = max(state.components.Alkalinity, 0) .* componentVolumeCm3 ./ 2;
-    maxByAqueous = min(cat(3, caAvailable, cAvailable, alkAvailable), [], 3);
+    caAvailable = max(state.componentMoles.Ca_total, 0);
+    cAvailable = max(state.componentMoles.C_total, 0);
+    maxByAqueous = min(cat(3, caAvailable, cAvailable), [], 3);
     maxByVm = maxVmStepMoles(spec, state.Vm);
     maxPrecipitation = min(maxByAqueous, maxByVm);
     limitedDeltaMoles(precipitationMask) = min(deltaMoles(precipitationMask), ...

@@ -20,6 +20,7 @@ verifyEqual(testCase, cfg.benchmark.part, 'I');
 verifyEqual(testCase, cfg.chemistry.mode, 'strict_molins');
 verifyEqual(testCase, cfg.phreeqc.engine, 'none');
 verifyEqual(testCase, cfg.transport.backend, 'cut_cell_fv');
+verifyEqual(testCase, cfg.time.mode, 'fixed_geometry_steady_rt');
 verifyTrue(testCase, cfg.strictMassConservation);
 verifyEqual(testCase, cfg.geometry.solidRelativeTolerance, 1e-6);
 rtm.config.ValidateReactiveTransportConfig(cfg);

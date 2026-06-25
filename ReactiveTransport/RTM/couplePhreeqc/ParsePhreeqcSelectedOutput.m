@@ -24,6 +24,8 @@ result.ca_total_mol_cm3 = numericColumn(data, headings, "Ca", 0) / 1000;
 result.c_total_mol_cm3 = numericColumn(data, headings, "C", 0) / 1000;
 result.na_total_mol_cm3 = numericColumn(data, headings, "Na", 0) / 1000;
 result.cl_total_mol_cm3 = numericColumn(data, headings, "Cl", 0) / 1000;
+result.alkalinity_mol_cm3 = numericColumn(data, headings, ...
+    ["Alkalinity", "alk"], 0) / 1000;
 result.h_mol_cm3 = numericColumn(data, headings, ["m_H+", "H+"], 0) / 1000;
 result.ca_mol_cm3 = numericColumn(data, headings, ["m_Ca+2", "Ca+2"], 0) / 1000;
 result.hco3_mol_cm3 = numericColumn(data, headings, ["m_HCO3-", "HCO3-"], 0) / 1000;

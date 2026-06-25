@@ -34,6 +34,10 @@ caseOptions = struct();
 caseOptions.totalTime_s = getScalarOption(options, 'totalTime_s', 1);
 caseOptions.lightweightStepHistory = logical(getOption(options, ...
     'lightweightStepHistory', false));
+caseOptions.useGeometryMacroLoop = logical(getOption(options, ...
+    'useGeometryMacroLoop', ~caseOptions.lightweightStepHistory));
+caseOptions.geometryMacroOptions = getOption(options, ...
+    'geometryMacroOptions', struct());
 if isfield(options, 'acceptanceMatrix') && ~isempty(options.acceptanceMatrix)
     caseOptions.acceptanceMatrix = options.acceptanceMatrix;
     observationTimes = partIIObservationTimes(configKind, options.acceptanceMatrix);
@@ -73,9 +77,14 @@ suiteOptions.referenceTargetRunNamePattern = getOption(options, ...
     'referenceTargetRunNamePattern', "");
 suiteOptions.observableMaximumTolerance = getOption(options, ...
     'observableMaximumTolerance', Inf);
+suiteOptions.refinementDimension = getOption(options, ...
+    'refinementDimension', 'time');
 suiteOptions.writePartialCheckpoint = logical(getOption(options, ...
     'writePartialCheckpoint', false));
 suiteOptions.caseOptions = caseOptions;
+if ~isempty(acceptanceCases)
+    suiteOptions.acceptanceCases = acceptanceCases;
+end
 suiteOptions.runFunction = @(scale, runInfo) rtm.benchmark.RunDriverBenchmarkCase( ...
     scale, runInfo, caseOptions);
 suiteOptions.observableFunction = observableFunctionFromName(suiteOptions.observableName);
@@ -417,6 +426,8 @@ geometry.interface_centroid_cm = interfaceCentroid;
 geometry.interface_normal = normal;
 geometry.interface_area_cm2 = interfaceArea;
 geometry.interface_h_cm = repmat(min(dx, dy), nx .* ny, 1);
+geometry.interface_length_scale_cm = localInterfaceLengthScale( ...
+    waterVolume, cellVolume, interfaceArea);
 geometry.active_fluid_cell = waterVolume > 0;
 geometry.cut_cell = cutCells;
 geometry.mesh_resolution = [nx ny];
@@ -425,6 +436,14 @@ geometry.initial_surface_area_cm2 = sum(interfaceArea);
 geometry.initial_solid_volume_cm3 = sum(solidVolume);
 geometry.domain_length_cm = mesh.domain_length_cm;
 geometry.domain_height_cm = mesh.domain_height_cm;
+end
+
+function lengthScale = localInterfaceLengthScale(waterVolume, cellVolume, interfaceArea)
+lengthScale = zeros(size(interfaceArea));
+activeInterface = interfaceArea > 0;
+lengthScale(activeInterface) = min( ...
+    sqrt(waterVolume(activeInterface) ./ max(interfaceArea(activeInterface), eps)), ...
+    sqrt(cellVolume(activeInterface)));
 end
 
 function [solidVolume, waterVolume] = circleRectangleVolumes( ...
@@ -600,6 +619,8 @@ end
 
 leftBoundaryCells = zeros(0, 1);
 leftBoundaryArea = zeros(0, 1);
+rightBoundaryCells = zeros(0, 1);
+rightBoundaryArea = zeros(0, 1);
 for iy = 1:ny
     cellId = gridCellId(1, iy, nx);
     if active(cellId)
@@ -609,7 +630,21 @@ for iy = 1:ny
         leftBoundaryArea(end + 1, 1) = ...
             circleVerticalOpenLength(0, yLower, yUpper, mesh); %#ok<AGROW>
     end
+
+    rightCellId = gridCellId(nx, iy, nx);
+    if active(rightCellId)
+        rightBoundaryCells(end + 1, 1) = rightCellId; %#ok<AGROW>
+        yLower = (iy - 1) .* dy;
+        yUpper = iy .* dy;
+        rightBoundaryArea(end + 1, 1) = ...
+            circleVerticalOpenLength(mesh.domain_length_cm, yLower, yUpper, mesh); %#ok<AGROW>
+    end
 end
+
+boundaryCells = [leftBoundaryCells; rightBoundaryCells];
+boundaryArea = [leftBoundaryArea; rightBoundaryArea];
+boundaryType = [repmat("dirichlet", numel(leftBoundaryCells), 1); ...
+    repmat("outflow", numel(rightBoundaryCells), 1)];
 
 transportOptions = struct();
 transportOptions.time_integration = char(getOption(options, ...
@@ -618,14 +653,15 @@ transportOptions.internal_face_cells = faceCells;
 transportOptions.internal_face_area_cm2 = faceArea;
 transportOptions.internal_face_distance_cm = faceDistance;
 transportOptions.internal_face_velocity_cm_s = faceVelocity;
-transportOptions.boundary_face_cells = leftBoundaryCells;
-transportOptions.boundary_face_area_cm2 = leftBoundaryArea;
-transportOptions.boundary_face_distance_cm = repmat(dx ./ 2, numel(leftBoundaryCells), 1);
+transportOptions.boundary_face_cells = boundaryCells;
+transportOptions.boundary_face_area_cm2 = boundaryArea;
+transportOptions.boundary_face_distance_cm = repmat(dx ./ 2, numel(boundaryCells), 1);
 transportOptions.boundary_face_velocity_cm_s = repmat(inletVelocity, ...
-    numel(leftBoundaryCells), 1);
+    numel(boundaryCells), 1);
+transportOptions.boundary_type = boundaryType;
 transportOptions.boundary_concentration_mol_cm3 = repmat( ...
     getScalarOption(options, 'inlet_h_concentration_mol_cm3', 1.255e-6), ...
-    numel(leftBoundaryCells), 1);
+    numel(boundaryCells), 1);
 transportOptions.diffusion_coefficient_cm2_s = getScalarOption(options, ...
     'diffusion_coefficient_cm2_s', 1e-5);
 end
@@ -830,6 +866,8 @@ for iGrid = 1:numel(gridLabels)
         iCase = iCase + 1;
         cases(iCase).time_step_s = timeSteps(iTime);
         cases(iCase).grid_resolution = gridLabels(iGrid);
+        cases(iCase).grid_spacing_cm = gridSpacingFromLabel(gridLabels(iGrid), ...
+            options);
         cases(iCase).mesh = mesh;
         cases(iCase).name = "grid_" + gridLabels(iGrid) + "_dt_" + ...
             sanitizeRunToken(timeSteps(iTime));
@@ -841,8 +879,14 @@ function value = emptyAcceptanceCase()
 value = struct();
 value.time_step_s = NaN;
 value.grid_resolution = "";
+value.grid_spacing_cm = NaN;
 value.mesh = struct();
 value.name = "";
+end
+
+function value = gridSpacingFromLabel(label, options)
+mesh = meshFromGridLabel(label, options);
+value = min(mesh.domain_length_cm ./ mesh.nx, mesh.domain_height_cm ./ mesh.ny);
 end
 
 function caseSpec = acceptanceCaseForRun(refinementScale, runInfo, options)

@@ -50,28 +50,31 @@ classdef ReactiveTransportDriver < handle
             transportLedger = emptyTransportLedger(preStepState, dtSeconds);
             reactionResult = emptyReactionResult(preStepState);
             chemistryLedger = emptyChemistryLedger(preStepState);
+            remapLedger = emptyRemapLedger(preStepState);
             geometryInfo = emptyGeometryInfo(obj.Geometry);
+            flowDiagnostics = emptyFlowDiagnostics(size(preStepState.component_moles, 1));
 
             try
-                [transportedState, transportLedger] = obj.transport(dtSeconds);
+                [transportedState, transportLedger, flowDiagnostics] = obj.transport(dtSeconds);
                 obj.State = transportedState;
                 reactionInput = obj.buildReactionInput();
                 reactionResult = obj.react(reactionInput, dtSeconds);
                 [candidateState, chemistryLedger] = rtm.chemistry.ApplyReactionResult( ...
                     obj.State, reactionResult);
-                geometryInfo = rtm.geometry.AdvanceGeometryFromMineralMoles( ...
+                [geometryInfo, candidateGeometry] = obj.advanceGeometryFromMoles( ...
                     obj.Geometry, reactionResult.realized_interface_moles, ...
-                    obj.geometryOptions());
-                geometryInfo = obj.annotateActualGeometryChange(geometryInfo);
-                stepInfo = obj.buildStepInfo(preStepState, candidateState, ...
-                    transportLedger, chemistryLedger, reactionResult, geometryInfo);
+                    dtSeconds);
+                [remappedState, remapLedger] = obj.remapStateAfterGeometryMove( ...
+                    candidateState, obj.Geometry, candidateGeometry);
+                stepInfo = obj.buildStepInfo(preStepState, remappedState, ...
+                    transportLedger, chemistryLedger, remapLedger, ...
+                    reactionResult, geometryInfo, flowDiagnostics);
                 diagnostics = rtm.diagnostics.ValidateAcceptedStep( ...
                     stepInfo, obj.diagnosticOptions());
 
                 if diagnostics.accepted
-                    obj.State = candidateState;
-                    obj.Geometry = rtm.geometry.ApplyMineralVolumeChange( ...
-                        obj.Geometry, geometryInfo);
+                    obj.State = remappedState;
+                    obj.Geometry = candidateGeometry;
                     obj.SolverState.dt_s = dtSeconds;
                     [stateOut, geometryOut, solverStateOut] = tx.commit( ...
                         obj.State, obj.Geometry, obj.SolverState);
@@ -100,7 +103,9 @@ classdef ReactiveTransportDriver < handle
             result.reaction_result = reactionResult;
             result.transport_ledger = transportLedger;
             result.chemistry_ledger = chemistryLedger;
+            result.remap_ledger = remapLedger;
             result.geometry_info = geometryInfo;
+            result.flow_diagnostics = flowDiagnostics;
             result.diagnostics = diagnostics;
             result.transaction_status = tx.status();
         end
@@ -152,6 +157,192 @@ classdef ReactiveTransportDriver < handle
             summary.solver_state = obj.SolverState;
             summary.diagnostic_paths = obj.writeDiagnostics(stepResults);
         end
+
+        function summary = runFixedGeometryRtSubcycles(obj, totalTimeSeconds, options)
+            if nargin < 3 || isempty(options)
+                options = struct();
+            end
+            if ~(isscalar(totalTimeSeconds) && isfinite(totalTimeSeconds) && totalTimeSeconds >= 0)
+                error('RTSPHEM:Driver:InvalidTimeStep', ...
+                    'totalTimeSeconds must be a nonnegative finite scalar.');
+            end
+            freezeGeometry = logical(getFieldOrDefault(options, ...
+                'freezeGeometry', true));
+            freezeMineralInventory = logical(getFieldOrDefault(options, ...
+                'freezeMineralInventory', true));
+
+            fixedGeometry = obj.Geometry;
+            fixedMineralMoles = obj.State.mineral_moles;
+            elapsedSeconds = 0;
+            acceptedSteps = 0;
+            rejectedSteps = 0;
+            stepResults = struct([]);
+            dtSeconds = min(obj.initialRtDt(), max(totalTimeSeconds, eps));
+            maxIterations = getNestedField(obj.Config, {'time', 'rt', 'maxSubcycles'}, 100000);
+
+            while elapsedSeconds < totalTimeSeconds - eps
+                if numel(stepResults) >= maxIterations
+                    error('RTSPHEM:Driver:MaxSubcyclesExceeded', ...
+                        'RT subcycle loop exceeded maxSubcycles.');
+                end
+                remainingSeconds = totalTimeSeconds - elapsedSeconds;
+                dtTry = min(dtSeconds, remainingSeconds);
+                result = obj.runOneStepForFixedGeometry(dtTry, freezeGeometry);
+
+                if result.diagnostics.accepted
+                    result = obj.applyFixedGeometryContract(result, ...
+                        fixedGeometry, fixedMineralMoles, freezeGeometry, ...
+                        freezeMineralInventory);
+                    acceptedSteps = acceptedSteps + 1;
+                    elapsedSeconds = elapsedSeconds + dtTry;
+                    dtSeconds = min(obj.maxRtDt(), max(dtTry, eps));
+                else
+                    rejectedSteps = rejectedSteps + 1;
+                    if isfield(result.solver_state, 'abort') && result.solver_state.abort
+                        obj.writeDiagnostics(stepResults);
+                        error('RTSPHEM:Driver:SubcycleRetryAborted', ...
+                            'RT subcycle retry aborted: %s.', string(result.solver_state.abort_reason));
+                    end
+                    dtSeconds = result.solver_state.dt_s;
+                end
+                stepResults = appendStepResult(stepResults, result);
+            end
+
+            summary = struct();
+            summary.time_s = elapsedSeconds;
+            summary.accepted_steps = acceptedSteps;
+            summary.rejected_steps = rejectedSteps;
+            summary.step_results = stepResults;
+            summary.state = obj.State;
+            summary.geometry = obj.Geometry;
+            summary.solver_state = obj.SolverState;
+            summary.fixed_geometry = freezeGeometry;
+            summary.fixed_mineral_inventory = freezeMineralInventory;
+            summary.diagnostic_paths = obj.writeDiagnostics(stepResults);
+        end
+
+        function summary = runGeometryMacroStep(obj, dtGeometrySeconds, options)
+            if nargin < 3 || isempty(options)
+                options = struct();
+            end
+            if ~(isscalar(dtGeometrySeconds) && isfinite(dtGeometrySeconds) && ...
+                    dtGeometrySeconds >= 0)
+                error('RTSPHEM:Driver:InvalidTimeStep', ...
+                    'dtGeometrySeconds must be a nonnegative finite scalar.');
+            end
+
+            geometryBefore = obj.Geometry;
+            tx = rtm.driver.StepTransaction(obj.State, obj.Geometry, ...
+                obj.SolverState);
+            try
+                rtOptions = options;
+                rtOptions.freezeGeometry = true;
+                rtOptions.freezeMineralInventory = logical(getFieldOrDefault( ...
+                    options, 'freezeMineralInventoryDuringRt', false));
+                rtSummary = obj.runFixedGeometryRtSubcycles(dtGeometrySeconds, rtOptions);
+                accumulatedMoles = accumulatedRealizedMoles(rtSummary, ...
+                    numel(getVectorFieldOrDefault(geometryBefore, ...
+                    'solid_volume_cm3', 0)));
+                [geometryInfo, candidateGeometry] = obj.advanceGeometryFromMoles( ...
+                    geometryBefore, accumulatedMoles, dtGeometrySeconds);
+                if ~geometryInfo.accepted
+                    [stateOut, geometryOut, solverStateOut] = tx.rollback();
+                    solverStateOut.dt_s = dtGeometrySeconds;
+                    solverStateOut = rtm.driver.RejectAndShrinkTimeStep( ...
+                        solverStateOut, geometryInfo.reject_reason, obj.retryOptions());
+                    obj.State = stateOut;
+                    obj.Geometry = geometryOut;
+                    obj.SolverState = solverStateOut;
+                    error('RTSPHEM:Driver:GeometryMacroStepRejected', ...
+                        'Geometry macro step rejected: %s.', string(geometryInfo.reject_reason));
+                end
+                [remappedState, remapLedger] = obj.remapStateAfterGeometryMove( ...
+                    obj.State, geometryBefore, candidateGeometry);
+                obj.State = remappedState;
+                obj.Geometry = candidateGeometry;
+                obj.SolverState.dt_s = dtGeometrySeconds;
+                [~, ~, ~] = tx.commit(obj.State, obj.Geometry, obj.SolverState);
+            catch ME
+                if ~strcmp(tx.status(), 'rolled_back') && ~strcmp(tx.status(), 'committed')
+                    [stateOut, geometryOut, solverStateOut] = tx.rollback();
+                    obj.State = stateOut;
+                    obj.Geometry = geometryOut;
+                    obj.SolverState = solverStateOut;
+                end
+                rethrow(ME);
+            end
+
+            summary = rtSummary;
+            summary.rt_summary = rtSummary;
+            summary.geometry_before = geometryBefore;
+            summary.geometry = obj.Geometry;
+            summary.state = obj.State;
+            summary.remap_ledger = remapLedger;
+            summary.geometry_info = geometryInfo;
+            summary.accumulated_realized_mineral_moles = accumulatedMoles;
+            summary.geometry_macro_step_s = dtGeometrySeconds;
+        end
+
+        function summary = runQuasiSteadyGeometry(obj, totalTimeSeconds, options)
+            if nargin < 3 || isempty(options)
+                options = struct();
+            end
+            if ~(isscalar(totalTimeSeconds) && isfinite(totalTimeSeconds) && ...
+                    totalTimeSeconds >= 0)
+                error('RTSPHEM:Driver:InvalidTimeStep', ...
+                    'totalTimeSeconds must be a nonnegative finite scalar.');
+            end
+
+            elapsedSeconds = 0;
+            acceptedMacroSteps = 0;
+            rejectedMacroSteps = 0;
+            macroStepResults = struct([]);
+            macroStepSizes = zeros(0, 1);
+            maxIterations = getNestedField(obj.Config, ...
+                {'time', 'geometry', 'maxMacroSteps'}, 100000);
+            dtSeconds = min(obj.maxGeometryDt(), max(totalTimeSeconds, eps));
+
+            while elapsedSeconds < totalTimeSeconds - eps
+                if acceptedMacroSteps + rejectedMacroSteps >= maxIterations
+                    error('RTSPHEM:Driver:MaxGeometryMacroStepsExceeded', ...
+                        'Geometry macro loop exceeded maxMacroSteps.');
+                end
+                remainingSeconds = totalTimeSeconds - elapsedSeconds;
+                dtTry = min(dtSeconds, remainingSeconds);
+                try
+                    stepSummary = obj.runGeometryMacroStep(dtTry, options);
+                    macroStepResults = appendStepResult(macroStepResults, ...
+                        stepSummary);
+                    macroStepSizes(end + 1, 1) = dtTry; %#ok<AGROW>
+                    acceptedMacroSteps = acceptedMacroSteps + 1;
+                    elapsedSeconds = elapsedSeconds + dtTry;
+                    dtSeconds = min(obj.maxGeometryDt(), ...
+                        max(totalTimeSeconds - elapsedSeconds, eps));
+                catch ME
+                    if ~strcmp(ME.identifier, ...
+                            'RTSPHEM:Driver:GeometryMacroStepRejected')
+                        rethrow(ME);
+                    end
+                    rejectedMacroSteps = rejectedMacroSteps + 1;
+                    if isfield(obj.SolverState, 'abort') && obj.SolverState.abort
+                        error('RTSPHEM:Driver:GeometryMacroRetryAborted', ...
+                            'Geometry macro retry aborted: %s.', ...
+                            string(obj.SolverState.abort_reason));
+                    end
+                    dtSeconds = obj.currentRetryDt();
+                end
+            end
+
+            summary = struct();
+            summary.time_s = elapsedSeconds;
+            summary.accepted_macro_steps = acceptedMacroSteps;
+            summary.rejected_macro_steps = rejectedMacroSteps;
+            summary.macro_step_results = macroStepResults;
+            summary.macro_step_sizes_s = macroStepSizes;
+            summary.state = obj.State;
+            summary.geometry = obj.Geometry;
+            summary.solver_state = obj.SolverState;
+        end
     end
 
     methods (Access = private)
@@ -197,6 +388,16 @@ classdef ReactiveTransportDriver < handle
                             {'time', 'geometry', 'maxMineralFraction'}, ...
                             getFieldOrDefault(reactionInput, 'maxMineralFraction', Inf));
                     end
+                    reactionInput.calciteStoichiometryAbsoluteTolerance_mol = ...
+                        getNestedField(obj.Config, ...
+                        {'chemistry', 'calciteStoichiometryAbsoluteTolerance_mol'}, ...
+                        getFieldOrDefault(reactionInput, ...
+                        'calciteStoichiometryAbsoluteTolerance_mol', 1e-14));
+                    reactionInput.calciteStoichiometryRelativeTolerance = ...
+                        getNestedField(obj.Config, ...
+                        {'chemistry', 'calciteStoichiometryRelativeTolerance'}, ...
+                        getFieldOrDefault(reactionInput, ...
+                        'calciteStoichiometryRelativeTolerance', 1e-8));
                     if ~isempty(obj.PhreeqcSession)
                         reactionInput.phreeqcSession = obj.PhreeqcSession;
                         reactionInput.databasePath = getNestedField(obj.Config, ...
@@ -210,8 +411,12 @@ classdef ReactiveTransportDriver < handle
             end
         end
 
-        function [transportedState, transportLedger] = transport(obj, dtSeconds)
+        function [transportedState, transportLedger, flowDiagnostics] = transport(obj, dtSeconds)
             options = getNestedField(obj.Config, {'transport', 'options'}, struct());
+            flow = obj.resolveFlowFaceFluxes();
+            flowDiagnostics = obj.flowDiagnostics(flow);
+            options = rtm.flow.ApplyFaceFluxesToTransportOptions( ...
+                options, flow);
             switch obj.Config.transport.backend
                 case 'cut_cell_fv'
                     options = normalizeTransportOptions(options, obj.State);
@@ -221,6 +426,30 @@ classdef ReactiveTransportDriver < handle
                     error('RTSPHEM:Driver:UnsupportedTransportBackend', ...
                         'ReactiveTransportDriver currently supports cut_cell_fv only.');
             end
+        end
+
+        function flow = resolveFlowFaceFluxes(obj)
+            flow = getNestedField(obj.Config, {'flow', 'face_fluxes'}, []);
+            hyphmOptions = getNestedField(obj.Config, {'flow', 'hyphmStokes'}, []);
+            if isstruct(hyphmOptions) && ~isempty(hyphmOptions)
+                flow = rtm.flow.SolveHyphmStokesLevel(obj.Geometry, hyphmOptions);
+            end
+        end
+
+        function diagnostics = flowDiagnostics(obj, flow)
+            numCells = size(obj.State.component_moles, 1);
+            if ~isstruct(flow) || isempty(fieldnames(flow))
+                diagnostics = emptyFlowDiagnostics(numCells);
+                return;
+            end
+            options = struct();
+            options.active_fluid_cell = getVectorFieldOrDefault( ...
+                obj.Geometry, 'active_fluid_cell', true(numCells, 1));
+            options.absoluteTolerance_cm3_s = getNestedField(obj.Config, ...
+                {'flow', 'absoluteTolerance_cm3_s'}, 1e-12);
+            options.relativeTolerance = getNestedField(obj.Config, ...
+                {'flow', 'relativeTolerance'}, Inf);
+            diagnostics = rtm.flow.ValidateFaceFluxDivergence(flow, numCells, options);
         end
 
         function reactionResult = react(obj, reactionInput, dtSeconds)
@@ -242,7 +471,8 @@ classdef ReactiveTransportDriver < handle
         end
 
         function stepInfo = buildStepInfo(obj, preStepState, candidateState, ...
-                transportLedger, chemistryLedger, reactionResult, geometryInfo)
+                transportLedger, chemistryLedger, remapLedger, reactionResult, ...
+                geometryInfo, flowDiagnostics)
             oldComponentTotals = sum(preStepState.component_moles, 1);
             newComponentTotals = sum(candidateState.component_moles, 1);
             stepInfo = struct();
@@ -256,6 +486,12 @@ classdef ReactiveTransportDriver < handle
                 getFieldOrDefault(transportLedger, ...
                     'boundary_delta_moles_total', zeros(size(oldComponentTotals))) - ...
                 chemistryLedger.component_delta_moles_total;
+            stepInfo.transport = transportLedger;
+            stepInfo.flow = flowDiagnostics;
+            stepInfo.reaction = chemistryLedger;
+            stepInfo.remap = struct('component_delta_moles_total', ...
+                getFieldOrDefault(remapLedger, 'component_residual_moles', ...
+                zeros(size(oldComponentTotals))));
 
             stepInfo.geometry = geometryInfo;
             stepInfo.chemistry = struct();
@@ -321,6 +557,62 @@ classdef ReactiveTransportDriver < handle
             geometryInfo.actual_solid_volume_after_cm3 = sum(newSolidVolume);
         end
 
+        function [geometryInfo, candidateGeometry] = advanceGeometryFromMoles( ...
+                obj, geometryBefore, realizedMoles, dtSeconds)
+            mesh = obj.geometryMesh();
+            if ~isempty(mesh) && isfield(geometryBefore, 'level_set') && ...
+                    ~isempty(geometryBefore.level_set)
+                [~, geometryInfo] = rtm.geometry.AdvanceLevelSetFromMineralMoles( ...
+                    mesh, geometryBefore.level_set, geometryBefore, ...
+                    realizedMoles, max(dtSeconds, eps), obj.geometryOptions());
+                if geometryInfo.accepted
+                    candidateGeometry = geometryInfo.new_geometry;
+                else
+                    candidateGeometry = geometryBefore;
+                    geometryInfo = annotateRejectedActualChange(geometryInfo, ...
+                        geometryBefore);
+                end
+                return;
+            end
+
+            geometryInfo = rtm.geometry.AdvanceGeometryFromMineralMoles( ...
+                geometryBefore, realizedMoles, obj.geometryOptions());
+            if geometryInfo.accepted
+                geometryInfo = annotateActualGeometryChangeForGeometry( ...
+                    geometryBefore, geometryInfo);
+                candidateGeometry = rtm.geometry.ApplyMineralVolumeChange( ...
+                    geometryBefore, geometryInfo);
+            else
+                geometryInfo = annotateRejectedActualChange(geometryInfo, ...
+                    geometryBefore);
+                candidateGeometry = geometryBefore;
+            end
+        end
+
+        function [remappedState, remapLedger] = remapStateAfterGeometryMove( ...
+                obj, stateBeforeRemap, oldGeometry, newGeometry)
+            remapOptions = struct();
+            remapOptions.new_mineral_moles = stateBeforeRemap.mineral_moles;
+            configuredOptions = getNestedField(obj.Config, ...
+                {'geometry', 'remapOptions'}, struct());
+            if isstruct(configuredOptions) && isfield(configuredOptions, ...
+                    'overlap_volume_cm3')
+                remapOptions.overlap_volume_cm3 = configuredOptions.overlap_volume_cm3;
+            end
+            [remappedState, remapLedger] = rtm.geometry.ConservativeRemap( ...
+                stateBeforeRemap, oldGeometry, newGeometry, remapOptions);
+        end
+
+        function mesh = geometryMesh(obj)
+            mesh = [];
+            if isstruct(obj.Connectivity) && isfield(obj.Connectivity, 'mesh') && ...
+                    ~isempty(obj.Connectivity.mesh)
+                mesh = obj.Connectivity.mesh;
+                return;
+            end
+            mesh = getNestedField(obj.Config, {'geometry', 'mesh'}, []);
+        end
+
         function value = initialRtDt(obj)
             value = getNestedField(obj.Config, {'time', 'rt', 'initialDt_s'}, 1);
             value = min(value, obj.maxRtDt());
@@ -330,6 +622,18 @@ classdef ReactiveTransportDriver < handle
         function value = maxRtDt(obj)
             value = getNestedField(obj.Config, {'time', 'rt', 'maxDt_s'}, Inf);
             value = max(value, eps);
+        end
+
+        function value = maxGeometryDt(obj)
+            value = getNestedField(obj.Config, {'time', 'geometry', 'maxDt_s'}, Inf);
+            value = max(value, eps);
+        end
+
+        function value = currentRetryDt(obj)
+            value = getFieldOrDefault(obj.SolverState, 'dt_s', obj.maxGeometryDt());
+            if ~(isscalar(value) && isfinite(value) && value > 0)
+                value = obj.maxGeometryDt();
+            end
         end
 
         function value = diagnosticsOutputDir(obj)
@@ -386,7 +690,96 @@ classdef ReactiveTransportDriver < handle
             end
             session = rtm.phreeqc.PhreeqcSession(runtimeConfig);
         end
+
+        function result = applyFixedGeometryContract(obj, result, fixedGeometry, ...
+                fixedMineralMoles, freezeGeometry, freezeMineralInventory)
+            if freezeMineralInventory
+                obj.State.mineral_moles = fixedMineralMoles;
+                result.state.mineral_moles = fixedMineralMoles;
+                if isfield(result, 'chemistry_ledger')
+                    result.chemistry_ledger.final_mineral_moles_total = ...
+                        sum(fixedMineralMoles, 1);
+                    result.chemistry_ledger.mineral_delta_moles_total = ...
+                        zeros(size(result.chemistry_ledger.mineral_delta_moles_total));
+                end
+            end
+            if freezeGeometry
+                obj.Geometry = fixedGeometry;
+                result.geometry = fixedGeometry;
+                result.geometry_info = freezeGeometryInfo(result.geometry_info, ...
+                    fixedGeometry);
+            end
+        end
+
+        function result = runOneStepForFixedGeometry(obj, dtSeconds, freezeGeometry)
+            if ~freezeGeometry
+                result = obj.runOneStep(dtSeconds);
+                return;
+            end
+            originalConfig = obj.Config;
+            restoreConfig = onCleanup(@() obj.restoreConfig(originalConfig));
+            if ~isfield(obj.Config, 'geometry') || ~isstruct(obj.Config.geometry)
+                obj.Config.geometry = struct();
+            end
+            obj.Config.geometry.maxDisplacementOverH = Inf;
+            result = obj.runOneStep(dtSeconds);
+            clear restoreConfig;
+            obj.restoreConfig(originalConfig);
+        end
+
+        function restoreConfig(obj, config)
+            obj.Config = config;
+        end
     end
+end
+
+function geometryInfo = freezeGeometryInfo(geometryInfo, fixedGeometry)
+solidVolume = getVectorFieldOrDefault(fixedGeometry, 'solid_volume_cm3', 0);
+geometryInfo.cell_actual_solid_volume_change_cm3 = zeros(size(solidVolume));
+geometryInfo.actual_solid_volume_change_cm3 = 0;
+geometryInfo.actual_solid_volume_after_cm3 = sum(solidVolume, 'omitnan');
+geometryInfo.solid_volume_after_cm3 = sum(solidVolume, 'omitnan');
+geometryInfo.fixed_geometry = true;
+end
+
+function moles = accumulatedRealizedMoles(summary, numCells)
+moles = zeros(numCells, 1);
+if ~isfield(summary, 'step_results')
+    return;
+end
+for iStep = 1:numel(summary.step_results)
+    result = summary.step_results(iStep);
+    if ~(isfield(result, 'diagnostics') && result.diagnostics.accepted)
+        continue;
+    end
+    if ~isfield(result, 'reaction_result') || ...
+            ~isfield(result.reaction_result, 'realized_interface_moles')
+        continue;
+    end
+    stepMoles = result.reaction_result.realized_interface_moles(:);
+    if numel(stepMoles) ~= numCells
+        error('RTSPHEM:Driver:GeometryMacroStepSizeMismatch', ...
+            'realized_interface_moles must match the geometry cell count.');
+    end
+    moles = moles + stepMoles;
+end
+end
+
+function geometryInfo = annotateActualGeometryChangeForGeometry(geometry, geometryInfo)
+candidateGeometry = rtm.geometry.ApplyMineralVolumeChange(geometry, geometryInfo);
+oldSolidVolume = geometry.solid_volume_cm3(:);
+newSolidVolume = candidateGeometry.solid_volume_cm3(:);
+cellActualChange = newSolidVolume - oldSolidVolume;
+geometryInfo.cell_actual_solid_volume_change_cm3 = cellActualChange;
+geometryInfo.actual_solid_volume_change_cm3 = sum(cellActualChange);
+geometryInfo.actual_solid_volume_after_cm3 = sum(newSolidVolume);
+end
+
+function geometryInfo = annotateRejectedActualChange(geometryInfo, geometry)
+solidVolume = getVectorFieldOrDefault(geometry, 'solid_volume_cm3', 0);
+geometryInfo.cell_actual_solid_volume_change_cm3 = zeros(size(solidVolume));
+geometryInfo.actual_solid_volume_change_cm3 = 0;
+geometryInfo.actual_solid_volume_after_cm3 = sum(solidVolume, 'omitnan');
 end
 
 function stepResults = appendStepResult(stepResults, result)
@@ -442,6 +835,21 @@ ledger.failed_cells = [];
 ledger.error_message = "";
 end
 
+function ledger = emptyRemapLedger(state)
+numComponents = numel(state.component_names);
+ledger = struct();
+ledger.initial_component_moles_total = sum(state.component_moles, 1);
+ledger.final_component_moles_total = sum(state.component_moles, 1);
+ledger.assigned_component_moles = sum(state.component_moles, 1);
+ledger.unassigned_component_moles = zeros(1, numComponents);
+ledger.component_residual_moles = zeros(1, numComponents);
+ledger.max_abs_component_residual_moles = 0;
+ledger.new_water_without_overlap_cells = [];
+ledger.old_water_unmapped_cells = [];
+ledger.overlap_volume_cm3 = sparse(size(state.component_moles, 1), ...
+    size(state.component_moles, 1));
+end
+
 function result = emptyReactionResult(state)
 result = struct();
 result.component_delta_moles = zeros(size(state.component_moles));
@@ -469,6 +877,21 @@ geometryInfo.cell_actual_solid_volume_change_cm3 = zeros(numCells, 1);
 geometryInfo.max_displacement_over_h = 0;
 geometryInfo.accepted = true;
 geometryInfo.reject_reason = "";
+end
+
+function diagnostics = emptyFlowDiagnostics(numCells)
+diagnostics = struct();
+diagnostics.accepted = true;
+diagnostics.cell_divergence_cm3_s = zeros(numCells, 1);
+diagnostics.max_abs_cell_divergence_cm3_s = 0;
+diagnostics.global_residual_cm3_s = 0;
+diagnostics.inlet_flow_cm3_s = 0;
+diagnostics.outlet_flow_cm3_s = 0;
+diagnostics.inlet_outlet_relative_residual = 0;
+diagnostics.absolute_tolerance_cm3_s = Inf;
+diagnostics.relative_tolerance = Inf;
+diagnostics.active_fluid_cell = true(numCells, 1);
+diagnostics.failure_reasons = strings(0, 1);
 end
 
 function diagnostics = failedStepDiagnostics(ME)

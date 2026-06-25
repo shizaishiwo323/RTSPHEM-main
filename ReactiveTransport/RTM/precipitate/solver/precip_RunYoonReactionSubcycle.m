@@ -16,7 +16,7 @@ limiter = "none";
 while remainingDt > max(10 * eps(totalDtS), 1e-15)
     samples = stateComponentsToSamples(state, spec);
     [chem, chemistryMetadata] = precip_SpeciateYoonComponents(samples, spec);
-    rate = reshape(precip_YoonVateriteRate(chem, spec), size(state.Vm));
+    rate = reshape(precip_YoonVateriteRate(chem, spec, state), size(state.Vm));
     area = precip_ComputeYoonReactiveArea(state, spec);
     [stableDt, stableDiagnostics] = precip_ComputeYoonReactionStableDt( ...
         state, rate, area, spec);

@@ -60,6 +60,7 @@ verifyEqual(testCase, summary.runtime_manifest.units.component_state, "mol");
         verifyEqual(testCase, refinementScale, 0.5);
         verifyEqual(testCase, runInfo.name, "dt0p5");
         cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+        cfg.time.mode = 'transient_snia';
         cfg.chemistry.rate_constant_cm_s = 0.1;
         cfg.geometry.molarVolume_cm3_mol = 1;
         cfg.geometry.maxDisplacementOverH = 1;
@@ -104,6 +105,34 @@ verifyGreaterThan(testCase, summary.accepted_steps, 0);
 verifyLessThanOrEqual(testCase, summary.max_displacement_over_h, 0.2);
 verifyFalse(testCase, isfield(summary.solver_state, 'abort') && ...
     logical(summary.solver_state.abort));
+end
+
+function testCanRunDriverCaseThroughGeometryMacroLoop(testCase)
+caseOptions = struct();
+caseOptions.totalTime_s = 0.25;
+caseOptions.useGeometryMacroLoop = true;
+caseOptions.geometryMacroOptions = struct('steadyOptions', struct( ...
+    'window_s', 0.125, 'maxWindows', 1, ...
+    'componentRelativeTolerance', 0, ...
+    'rateRelativeTolerance', 0, ...
+    'requiredConsecutivePasses', 1));
+caseOptions.configFactory = @macroLoopConfigFactory;
+caseOptions.stateFactory = @largeReactantStateFactory;
+caseOptions.geometryFactory = @largeSolidGeometryFactory;
+caseOptions.connectivityFactory = @(~, ~) struct();
+
+summary = rtm.benchmark.RunDriverBenchmarkCase(0.125, ...
+    struct('name', "macro_loop"), caseOptions);
+
+verifyTrue(testCase, summary.accepted, summary.failure_message);
+verifyTrue(testCase, isfield(summary, 'accepted_macro_steps'));
+verifyGreaterThanOrEqual(testCase, summary.accepted_macro_steps, 1);
+verifyEqual(testCase, summary.time_s, 0.25, 'AbsTol', 1e-14);
+verifyLessThan(testCase, summary.final_solid_volume_cm3, ...
+    summary.initial_solid_volume_cm3);
+verifyTrue(testCase, isfield(summary, 'macro_step_results'));
+verifyEqual(testCase, summary.runtime_manifest.operator_order, ...
+    "quasi_steady_geometry");
 end
 
 function testRequiresFactoryFunctions(testCase)
@@ -182,6 +211,35 @@ verifyEqual(testCase, summary.max_component_mass_residual_moles, 0, ...
     'AbsTol', 1e-18);
 end
 
+function testFixedGeometrySteadyRtModeFreezesGeometryAndMineralInventory(testCase)
+caseOptions = struct();
+caseOptions.totalTime_s = 1.0;
+caseOptions.configFactory = @fixedGeometrySteadyConfigFactory;
+caseOptions.stateFactory = @stateFactory;
+caseOptions.geometryFactory = @geometryFactory;
+caseOptions.connectivityFactory = @(~, ~) struct();
+
+summary = rtm.benchmark.RunDriverBenchmarkCase(0.5, ...
+    struct('name', "fixed_geometry_steady_rt"), caseOptions);
+
+verifyTrue(testCase, summary.accepted, summary.failure_message);
+verifyTrue(testCase, summary.fixed_geometry);
+verifyTrue(testCase, summary.fixed_mineral_inventory);
+verifyEqual(testCase, summary.time_s, 1.0, 'AbsTol', 1e-14);
+verifyEqual(testCase, summary.final_mineral_moles, ...
+    summary.initial_mineral_moles, 'AbsTol', 0);
+verifyEqual(testCase, summary.mineral_dissolved_moles, 0, 'AbsTol', 0);
+verifyEqual(testCase, summary.solid_volume_change_cm3, 0, 'AbsTol', 0);
+verifyEqual(testCase, summary.geometry.solid_volume_cm3, ...
+    summary.initial_solid_volume_cm3, 'AbsTol', 0);
+verifyLessThan(testCase, summary.state.component_moles, ...
+    summary.initial_component_moles_total);
+verifyGreaterThan(testCase, summary.reaction_realized_moles, 0);
+verifyGreaterThan(testCase, summary.mean_effective_rate_mol_cm2_s, 0);
+verifyEqual(testCase, summary.runtime_manifest.operator_order, ...
+    "fixed_geometry_steady_rt");
+end
+
 function testPartIIInitializerUsesPartISteadyStateWithoutMovingGeometry(testCase)
 caseOptions = struct();
 caseOptions.totalTime_s = 0;
@@ -198,6 +256,10 @@ summary = rtm.benchmark.RunDriverBenchmarkCase(1.0, ...
 
 verifyTrue(testCase, isfield(summary, 'steady_initializer'));
 verifyEqual(testCase, summary.steady_initializer.windows, 1);
+verifyEqual(testCase, summary.steady_initializer.geometry.solid_volume_cm3, 100, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.steady_initializer.state.mineral_moles_total, 100, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
 verifyLessThan(testCase, summary.state.component_moles, 10);
 verifyEqual(testCase, summary.state.mineral_moles, 100, ...
     'RelTol', 1e-12, 'AbsTol', 1e-18);
@@ -253,6 +315,10 @@ verifyEqual(testCase, summary.benchmark_mesh.nx, 128);
 verifyEqual(testCase, summary.benchmark_mesh.ny, 64);
 verifyEqual(testCase, summary.benchmark_mesh.resolution_label, "128x64");
 verifyEqual(testCase, summary.benchmark_mesh.cell_count, 128 * 64);
+verifyEqual(testCase, summary.time_step_s, 54, 'AbsTol', 1e-18);
+verifyEqual(testCase, summary.grid_spacing_cm, ...
+    summary.benchmark_mesh.domain_length_cm ./ summary.benchmark_mesh.nx, ...
+    'AbsTol', 1e-18);
 verifyEqual(testCase, summary.initial_surface_area_cm2, ...
     2 * pi * 0.01, 'RelTol', 1e-12);
 verifyGreaterThan(testCase, summary.initial_solid_volume_cm3, 0);
@@ -288,6 +354,7 @@ end
 
 function cfg = rejectingConfigFactory(~, ~)
 cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.time.mode = 'transient_snia';
 cfg.chemistry.rate_constant_cm_s = 10;
 cfg.geometry.molarVolume_cm3_mol = 1;
 cfg.geometry.maxDisplacementOverH = 0.01;
@@ -298,6 +365,7 @@ end
 
 function cfg = adaptiveRetryConfigFactory(~, ~)
 cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.time.mode = 'transient_snia';
 cfg.chemistry.rate_constant_cm_s = 0.5;
 cfg.geometry.molarVolume_cm3_mol = 1;
 cfg.geometry.maxDisplacementOverH = 0.2;
@@ -306,6 +374,28 @@ cfg.time.rt.initialDt_s = 1.0;
 cfg.time.rt.maxDt_s = 1.0;
 cfg.time.rt.maxReactantFraction = Inf;
 cfg.time.geometry.maxMineralFraction = Inf;
+end
+
+function cfg = macroLoopConfigFactory(refinementScale, ~)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partII_strict');
+cfg.chemistry.rate_constant_cm_s = 0.1;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = Inf;
+cfg.time.mode = 'quasi_steady_geometry';
+cfg.time.rt.initialDt_s = refinementScale;
+cfg.time.rt.maxDt_s = refinementScale;
+cfg.time.geometry.maxDt_s = refinementScale;
+cfg.time.geometry.maxMineralFraction = Inf;
+end
+
+function cfg = fixedGeometrySteadyConfigFactory(refinementScale, ~)
+cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
+cfg.time.mode = 'fixed_geometry_steady_rt';
+cfg.chemistry.rate_constant_cm_s = 0.1;
+cfg.geometry.molarVolume_cm3_mol = 1;
+cfg.geometry.maxDisplacementOverH = 1;
+cfg.time.rt.initialDt_s = refinementScale;
+cfg.time.rt.maxDt_s = refinementScale;
 end
 
 function state = stateFactory(~, ~)

@@ -1,4 +1,4 @@
-function rate = precip_YoonVateriteRate(chem, spec)
+function rate = precip_YoonVateriteRate(chem, spec, state)
 % precip_YoonVateriteRate - Evaluate the signed Yoon/Chou Vaterite rate.
 %
 % Inputs:
@@ -10,6 +10,9 @@ function rate = precip_YoonVateriteRate(chem, spec)
 
 if nargin < 2 || isempty(spec)
     spec = precip_ZhangYoonBenchmarkSpec();
+end
+if nargin < 3
+    state = struct();
 end
 requiredFields = {'aH', 'aH2CO3', 'omegaVaterite'};
 for iField = 1:numel(requiredFields)
@@ -23,8 +26,17 @@ rateConstants = spec.yoonRate;
 prefactor = rateConstants.k1 .* chem.aH + ...
     rateConstants.k2 .* chem.aH2CO3 + rateConstants.k3;
 rate = -prefactor .* (1 - chem.omegaVaterite);
-if isfield(spec, 'dissolutionFactor') && isfinite(spec.dissolutionFactor)
+if isfield(spec, 'dissolutionFactor') && isfinite(spec.dissolutionFactor) && ...
+        getFieldOrDefault(state, 'case5BoostActive', false)
     dissolutionMask = rate < 0;
     rate(dissolutionMask) = spec.dissolutionFactor .* rate(dissolutionMask);
+end
+end
+
+function value = getFieldOrDefault(s, fieldName, defaultValue)
+if isstruct(s) && isfield(s, fieldName) && ~isempty(s.(fieldName))
+    value = s.(fieldName);
+else
+    value = defaultValue;
 end
 end

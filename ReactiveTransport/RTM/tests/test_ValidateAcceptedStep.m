@@ -33,6 +33,49 @@ verifyTrue(testCase, any(diagnostics.reasons == "component mass residual exceeds
 verifyGreaterThan(testCase, diagnostics.component_relative_residual, 1e-8);
 end
 
+function testRejectsFullLedgerResidualEvenWhenLegacyMassResidualIsClean(testCase)
+info = baseStepInfo();
+info.mass.initial_component_moles_total = [1, 2];
+info.mass.final_component_moles_total = [1.1, 2];
+info.mass.component_residual_moles = [0, 0];
+info.transport = struct();
+info.reaction = struct();
+info.remap = struct();
+
+diagnostics = rtm.diagnostics.ValidateAcceptedStep(info, toleranceOptions());
+
+verifyFalse(testCase, diagnostics.accepted);
+verifyTrue(testCase, any(diagnostics.reasons == ...
+    "component mass residual exceeds tolerance"));
+verifyTrue(testCase, isfield(diagnostics, 'full_mass_ledger'));
+verifyEqual(testCase, ...
+    diagnostics.full_mass_ledger.component_residual_moles, [0.1, 0], ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+end
+
+function testExposesFullLedgerMineralResidualOnAcceptedStepDiagnostics(testCase)
+info = baseStepInfo();
+info.mass.initial_component_moles_total = [1, 2];
+info.mass.final_component_moles_total = [1, 2];
+info.mass.component_residual_moles = [0, 0];
+info.transport = struct();
+info.reaction = struct( ...
+    'initial_mineral_moles_total', 1, ...
+    'mineral_delta_moles_total', -0.25, ...
+    'final_mineral_moles_total', 0.80);
+info.remap = struct();
+
+diagnostics = rtm.diagnostics.ValidateAcceptedStep(info, toleranceOptions());
+
+verifyFalse(testCase, diagnostics.accepted);
+verifyTrue(testCase, any(diagnostics.reasons == ...
+    "mineral inventory residual exceeds tolerance"));
+verifyEqual(testCase, diagnostics.mineral_absolute_residual_moles, 0.05, ...
+    'AbsTol', 1e-15);
+verifyEqual(testCase, diagnostics.mineral_relative_residual, 0.05, ...
+    'AbsTol', 1e-15);
+end
+
 function testRejectsSolidVolumeMineralMismatch(testCase)
 info = baseStepInfo();
 info.geometry.actual_solid_volume_change_cm3 = -2e-6;
@@ -104,6 +147,28 @@ diagnostics = rtm.diagnostics.ValidateAcceptedStep(info, toleranceOptions());
 verifyFalse(testCase, diagnostics.accepted);
 verifyTrue(testCase, any(diagnostics.reasons == ...
     "solid volume would become negative"));
+end
+
+function testRejectsFlowDiagnosticsFailure(testCase)
+info = baseStepInfo();
+info.flow = struct();
+info.flow.accepted = false;
+info.flow.failure_reasons = "inlet/outlet flow imbalance exceeds tolerance";
+info.flow.inlet_outlet_relative_residual = 1e-3;
+info.flow.max_abs_cell_divergence_cm3_s = 2e-9;
+info.flow.global_residual_cm3_s = 0;
+
+diagnostics = rtm.diagnostics.ValidateAcceptedStep(info, toleranceOptions());
+
+verifyFalse(testCase, diagnostics.accepted);
+verifyTrue(testCase, any(diagnostics.reasons == ...
+    "flow diagnostics failed"));
+verifyTrue(testCase, any(diagnostics.reasons == ...
+    "inlet/outlet flow imbalance exceeds tolerance"));
+verifyEqual(testCase, diagnostics.flow_inlet_outlet_relative_residual, ...
+    1e-3, 'AbsTol', 1e-18);
+verifyEqual(testCase, diagnostics.flow_max_abs_cell_divergence_cm3_s, ...
+    2e-9, 'AbsTol', 1e-18);
 end
 
 function info = baseStepInfo()

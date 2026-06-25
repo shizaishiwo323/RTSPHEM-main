@@ -40,10 +40,15 @@ result = table(caseNames, diffusionExponent, totalPrecipitatedArea_cm2, ...
 
 manifestPath = getFieldOrDefault(options, 'outputManifestPath', '');
 if ~isempty(manifestPath)
+    [manifestDir, manifestBase] = fileparts(manifestPath);
+    summaryCsv = fullfile(manifestDir, [manifestBase, '_summary.csv']);
+    writetable(result, summaryCsv);
     areaTrendNonincreasing = isNonincreasing(totalPrecipitatedArea_cm2);
     massTrendDecreasing = isStrictlyDecreasing(totalPrecipitateMoles);
     manifest = struct();
     manifest.runner = 'precip_RunYoonDiffusionFeedbackSensitivity';
+    manifest.summaryCsv = summaryCsv;
+    manifest.summaryCsvVerified = isfile(summaryCsv);
     manifest.caseNames = cellstr(caseNames);
     manifest.diffusionExponent = diffusionExponent(:)';
     manifest.totalPrecipitatedArea_cm2 = totalPrecipitatedArea_cm2(:)';
@@ -53,10 +58,33 @@ if ~isempty(manifestPath)
     manifest.feedbackCoupled = feedbackCoupled(:)';
     manifest.areaTrendNonincreasing = areaTrendNonincreasing;
     manifest.massTrendDecreasing = massTrendDecreasing;
+    manifest = appendStructFields(manifest, ...
+        precip_BuildOutputEvidenceProvenance(summaryCsv, options));
     manifest.diffusionFeedbackAccepted = areaTrendNonincreasing && ...
-        massTrendDecreasing && all(feedbackCoupled);
+        massTrendDecreasing && all(feedbackCoupled) && ...
+        manifest.summaryCsvVerified && hasCompleteOutputProvenance(manifest);
     writeJsonManifest(manifestPath, manifest);
 end
+end
+
+function manifest = appendStructFields(manifest, fields)
+fieldNames = fieldnames(fields);
+for iField = 1:numel(fieldNames)
+    manifest.(fieldNames{iField}) = fields.(fieldNames{iField});
+end
+end
+
+function tf = hasCompleteOutputProvenance(manifest)
+tf = isfield(manifest, 'sourceCommitSha') && ...
+    ~isempty(regexp(string(manifest.sourceCommitSha), ...
+    "^[0-9a-fA-F]{40}$", 'once')) && ...
+    isfield(manifest, 'outputHashAlgorithm') && ...
+    strcmp(string(manifest.outputHashAlgorithm), "SHA-256") && ...
+    isfield(manifest, 'outputEvidenceHashSha256') && ...
+    ~isempty(regexp(string(manifest.outputEvidenceHashSha256), ...
+    "^[0-9a-fA-F]{64}$", 'once')) && ...
+    isfield(manifest, 'outputHashInputFilesVerified') && ...
+    logical(manifest.outputHashInputFilesVerified);
 end
 
 function value = getFieldOrDefault(s, fieldName, defaultValue)

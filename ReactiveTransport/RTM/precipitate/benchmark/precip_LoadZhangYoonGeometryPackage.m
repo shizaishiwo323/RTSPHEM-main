@@ -65,6 +65,20 @@ if ~isempty(missingAssets)
     return;
 end
 
+validation = validateGeometryTables(package.calibrationCsv, ...
+    package.uncertaintyCsv);
+package.calibrationTableVerified = validation.calibrationTableVerified;
+package.uncertaintyTableVerified = validation.uncertaintyTableVerified;
+package.invalidAssets = cellstr(validation.invalidAssets);
+if ~validation.accepted
+    package.assetFilesVerified = false;
+    package.isQuantitativeGeometry = false;
+    package.note = ['Geometry package has invalid calibration or ', ...
+        'uncertainty tables; do not use for quantitative Zhang/Yoon ', ...
+        'geometry claims.'];
+    return;
+end
+
 package.geometry = precip_LoadZhangYoonGeometry(package.substrateMaskFile, spec);
 package.regionMasks = precip_LoadYoonRegionMasks(package.regionMaskFile, spec);
 package.assetFilesVerified = true;
@@ -97,4 +111,47 @@ end
 function tf = isAbsolutePath(path)
 tf = ~isempty(regexp(path, '^[A-Za-z]:[\\/]', 'once')) || ...
     startsWith(path, filesep);
+end
+
+function validation = validateGeometryTables(calibrationCsv, uncertaintyCsv)
+validation = struct();
+validation.calibrationTableVerified = hasNumericColumns(calibrationCsv, ...
+    {'image_x_px', 'image_y_px', 'x_cm', 'y_cm'}, 2);
+validation.uncertaintyTableVerified = hasNumericColumns(uncertaintyCsv, ...
+    {'uncertainty_cm'}, 1);
+validation.invalidAssets = strings(0, 1);
+if ~validation.calibrationTableVerified
+    validation.invalidAssets(end + 1, 1) = string(calibrationCsv);
+end
+if ~validation.uncertaintyTableVerified
+    validation.invalidAssets(end + 1, 1) = string(uncertaintyCsv);
+end
+validation.accepted = isempty(validation.invalidAssets);
+end
+
+function tf = hasNumericColumns(csvPath, requiredColumns, minRows)
+tf = false;
+try
+    tbl = readtable(csvPath);
+catch
+    return;
+end
+if height(tbl) < minRows
+    return;
+end
+names = string(tbl.Properties.VariableNames);
+for iColumn = 1:numel(requiredColumns)
+    columnName = string(requiredColumns{iColumn});
+    if ~any(names == columnName)
+        return;
+    end
+    values = tbl.(char(columnName));
+    if ~isnumeric(values) || any(~isfinite(double(values(:))))
+        return;
+    end
+    if contains(lower(columnName), "uncertainty") && any(values(:) < 0)
+        return;
+    end
+end
+tf = true;
 end

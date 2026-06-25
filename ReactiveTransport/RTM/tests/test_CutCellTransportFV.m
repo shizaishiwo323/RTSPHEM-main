@@ -146,6 +146,32 @@ verifyEqual(testCase, ledger.boundary_diffusive_delta_moles_total, ...
 verifyEqual(testCase, ledger.component_residual_moles, [0 0], 'AbsTol', 1e-18);
 end
 
+function testOutflowBoundaryRemovesAdvectiveFluxFromCellConcentration(testCase)
+state = validState();
+geometry = validGeometry();
+options.boundary_face_cells = 2;
+options.boundary_face_area_cm2 = 3;
+options.boundary_face_velocity_cm_s = 0.1;
+options.boundary_type = "outflow";
+
+[updated, ledger] = rtm.transport.CutCellTransportFV(state, geometry, 2, options);
+
+cellConcentration = state.component_moles(2, :) ./ geometry.water_volume_cm3(2);
+expectedAdvectiveDelta = -options.boundary_face_velocity_cm_s .* ...
+    options.boundary_face_area_cm2 .* cellConcentration .* 2;
+
+verifyEqual(testCase, updated.component_moles(2, :), ...
+    state.component_moles(2, :) + expectedAdvectiveDelta, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, ledger.boundary_delta_moles_total, ...
+    expectedAdvectiveDelta, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, ledger.boundary_advective_delta_moles_total, ...
+    expectedAdvectiveDelta, 'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, ledger.boundary_diffusive_delta_moles_total, ...
+    [0 0], 'AbsTol', 1e-18);
+verifyEqual(testCase, ledger.component_residual_moles, [0 0], 'AbsTol', 1e-18);
+end
+
 function testNegativeTransportStateIsRejected(testCase)
 state = validState();
 geometry = validGeometry();
