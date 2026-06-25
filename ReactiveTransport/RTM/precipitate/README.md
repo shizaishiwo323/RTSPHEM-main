@@ -373,7 +373,10 @@ Run helper and integration tests:
 - `diagnostics/precip_RunYoonBenchmarkReadinessAudit.m`: reads benchmark
   manifest/reference evidence, runs the readiness gate, and writes
   `yoon_benchmark_readiness_requirements.csv` plus
-  `yoon_benchmark_readiness_manifest.json`.
+  `yoon_benchmark_ladder.csv` and
+  `yoon_benchmark_readiness_manifest.json`. The ladder report maps the
+  readiness evidence onto B0-B8 and marks later stages as not entered after
+  the first failed stage.
 
 ## Output Files
 
@@ -468,10 +471,12 @@ Important files include:
   residuals, inlet/outlet boundary-closure error, permeability bounds, and
   `productionFlowValidationAccepted`. Readiness audits require this manifest
   for the `production_stokes` gate.
-- `yoon_benchmark_readiness_requirements.csv` and
+- `yoon_benchmark_readiness_requirements.csv`,
+  `yoon_benchmark_ladder.csv`, and
   `yoon_benchmark_readiness_manifest.json`: optional readiness audit outputs
   from `precip_RunYoonBenchmarkReadinessAudit`, listing each quantitative
-  benchmark gate and failed requirement IDs.
+  benchmark gate, the ordered B0-B8 stage status, and failed requirement or
+  stage IDs.
 
 ## Signed Calcite Interpretation
 
