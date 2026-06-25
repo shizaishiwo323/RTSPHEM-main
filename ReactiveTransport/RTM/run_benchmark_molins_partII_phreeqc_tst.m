@@ -3,7 +3,7 @@ function summary = run_benchmark_molins_partII_phreeqc_tst(mode)
 %
 % Runs the 0.1 cm x 0.05 cm centered-calcite-disk case with two chemistry
 % paths:
-%   1) PHREEQC TST-match with unified H+ transport/chemistry state.
+%   1) external TST rate + PHREEQC equilibrium closure.
 %   2) legacy RTSPHEM TST.
 
 if nargin < 1 || isempty(mode)
@@ -23,7 +23,7 @@ addpath(fullfile(rtmDir, 'couplePhreeqc'));
 
 stamp = datestr(now, 'yyyymmdd_HHMMSS');
 packageDir = fullfile(projectRoot, 'outputs', ...
-    'benchmark_molins_circle_phreeqc_tst', char(mode), stamp);
+    'benchmark_molins_circle_external_tst_phreeqc', char(mode), stamp);
 runsDir = fullfile(packageDir, 'runs');
 comparisonDir = fullfile(packageDir, 'comparison');
 ensureDir(runsDir);
@@ -32,10 +32,10 @@ ensureDir(comparisonDir);
 fprintf('Molins Part II benchmark package: %s\n', packageDir);
 baseCfg = buildPartIIConfig(projectRoot, rtmDir, mode);
 
-phreeqcCfg = ConfigurePhreeqcRunGroup(baseCfg, 'phreeqc_tst_match');
-phreeqcCfg.runName = 'benchmark_molins_partII_phreeqc_tstmatch';
+phreeqcCfg = ConfigurePhreeqcRunGroup(baseCfg, 'external_tst_phreeqc');
+phreeqcCfg.runName = 'benchmark_molins_partII_external_tst_phreeqc';
 phreeqcCfg.resultsDir = fullfile(runsDir, 'phreeqc');
-fprintf('\n=== Running PHREEQC TST-match Part II benchmark ===\n');
+fprintf('\n=== Running external TST + PHREEQC closure Part II benchmark ===\n');
 phreeqcResult = PNM_beauty3(phreeqcCfg);
 
 tstCfg = baseCfg;
@@ -55,7 +55,7 @@ end
 
 function cfg = buildPartIIConfig(projectRoot, rtmDir, mode)
 cfg = struct();
-cfg.outputRoot = fullfile(projectRoot, 'outputs', 'benchmark_molins_circle_phreeqc_tst');
+cfg.outputRoot = fullfile(projectRoot, 'outputs', 'benchmark_molins_circle_external_tst_phreeqc');
 cfg.layoutType = 'single_circle';
 cfg.useExternalGeometry = false;
 cfg.useExternalDxfGeometry = false;
@@ -85,7 +85,8 @@ cfg.inletCarbonConcentration = 0;
 cfg.inletSodiumConcentration = 0;
 cfg.inletChlorideConcentration = cfg.initialHydrogenConcentration;
 
-cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat', ...
+    struct('databasePolicy', 'exact_local'));
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = Inf;
@@ -106,7 +107,7 @@ cfg.phreeqcReactNeutralInterfaceCells = false;
 cfg.phreeqcSolutionWaterKg = 1;
 cfg.phreeqcWriteSolutionWaterLine = false;
 cfg.phreeqcKineticsReservoirMoles = 1;
-cfg.phreeqcRunGroup = 'phreeqc_tst_match';
+cfg.phreeqcRunGroup = 'external_tst_phreeqc';
 cfg.phreeqcRateLaw = 'tst_match';
 cfg.phreeqcTstRateCoefficient = cfg.rateCoefficientTST;
 cfg.phreeqcExportEvery = 1;
@@ -146,7 +147,7 @@ cfg.enablePNGSimulation = false;
 cfg.nmr_method = 'none';
 
 if mode == "smoke"
-    % Guarded PHREEQC-TST smoke: keep dt below the advective residence time
+    % Guarded external TST + PHREEQC smoke: keep dt below the advective residence time
     % (L/u ~= 0.83 s) so operator splitting can resolve a downstream H tail.
     cfg.endTime = 2.7;
     cfg.processSliceCount = 5;
@@ -159,7 +160,7 @@ if mode == "smoke"
     cfg.saveFinalPlot = false;
 elseif mode == "diagnostic"
     % Short diagnostic Part II run. It keeps the same physical parameters
-    % and PHREEQC-TST coupling, but uses a reduced grid so the per-cell
+    % and external TST + PHREEQC coupling, but uses a reduced grid so the per-cell
     % PHREEQC batch can be checked before committing to expensive runs.
     cfg.endTime = 5.4;
     cfg.processSliceCount = 10;
@@ -321,22 +322,22 @@ tiledlayout(2, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
 nexttile;
 plot(t, aligned.tst_porosity, 'k-', 'LineWidth', 1.5); hold on;
 plot(t, aligned.phreeqc_porosity, 'r--', 'LineWidth', 1.5);
-xlabel('Time (s)'); ylabel('Porosity'); title('Porosity'); legend('TST', 'PHREEQC-TST', 'Location', 'best'); grid on;
+xlabel('Time (s)'); ylabel('Porosity'); title('Porosity'); legend('TST', 'External TST + PHREEQC', 'Location', 'best'); grid on;
 
 nexttile;
 plot(t, aligned.tst_grain_volume_cm3, 'k-', 'LineWidth', 1.5); hold on;
 plot(t, aligned.phreeqc_grain_volume_cm3, 'r--', 'LineWidth', 1.5);
-xlabel('Time (s)'); ylabel('Grain volume (cm^3)'); title('Grain Volume'); legend('TST', 'PHREEQC-TST', 'Location', 'best'); grid on;
+xlabel('Time (s)'); ylabel('Grain volume (cm^3)'); title('Grain Volume'); legend('TST', 'External TST + PHREEQC', 'Location', 'best'); grid on;
 
 nexttile;
 plot(t, aligned.tst_surface_area_cm2, 'k-', 'LineWidth', 1.5); hold on;
 plot(t, aligned.phreeqc_surface_area_cm2, 'r--', 'LineWidth', 1.5);
-xlabel('Time (s)'); ylabel('Surface area (cm^2)'); title('Surface Area'); legend('TST', 'PHREEQC-TST', 'Location', 'best'); grid on;
+xlabel('Time (s)'); ylabel('Surface area (cm^2)'); title('Surface Area'); legend('TST', 'External TST + PHREEQC', 'Location', 'best'); grid on;
 
 nexttile;
 semilogy(t, abs(aligned.tst_rate), 'k-', 'LineWidth', 1.5); hold on;
 semilogy(t, abs(aligned.phreeqc_rate), 'r--', 'LineWidth', 1.5);
-xlabel('Time (s)'); ylabel('|rate| (mol cm^{-2} s^{-1})'); title('Average Dissolution Rate'); legend('TST', 'PHREEQC-TST', 'Location', 'best'); grid on;
+xlabel('Time (s)'); ylabel('|rate| (mol cm^{-2} s^{-1})'); title('Average Dissolution Rate'); legend('TST', 'External TST + PHREEQC', 'Location', 'best'); grid on;
 
 exportgraphics(fig, outputPath, 'Resolution', 200);
 close(fig);
@@ -344,13 +345,15 @@ end
 
 function writeManifest(packageDir, comparisonDir, mode, baseCfg, tstResult, phreeqcResult)
 manifest = struct();
-manifest.schema_version = "benchmark_molins_circle_phreeqc_tst_unified_h_v1";
+manifest.schema_version = "benchmark_molins_circle_external_tst_phreeqc_unified_h_v1";
 manifest.created_at = string(datestr(now, 'yyyy-mm-dd HH:MM:SS'));
 manifest.mode = string(mode);
 manifest.benchmark = "Molins Parts I/II circular calcite grain moving-boundary benchmark";
 manifest.runner = string(mfilename('fullpath'));
 manifest.runner_config = baseCfg;
 manifest.runs = struct('tst', string(tstResult.resultsDir), 'phreeqc', string(phreeqcResult.resultsDir));
+manifest.phreeqc_chemistry_mode = "external_tst_phreeqc";
+manifest.phreeqc_chemistry_semantics = "explicit external TST rate + PHREEQC equilibrium closure";
 manifest.comparison_dir = string(comparisonDir);
 manifest.outputs = struct( ...
     'summary_csv', string(fullfile(comparisonDir, 'comparison_summary.csv')), ...
@@ -360,10 +363,10 @@ manifest.outputs = struct( ...
     'global_comparison_png', string(fullfile(comparisonDir, 'global_comparison.png')));
 manifest.mode_description = describeBenchmarkMode(mode, baseCfg);
 manifest.notes = [
-    "PHREEQC-TST uses the unified H+ field: the same H+ transport state drives reaction sink, moving boundary, PHREEQC chemistry, and exports."
+    "External TST + PHREEQC closure uses the unified H+ field: the same H+ transport state drives reaction sink, moving boundary, PHREEQC chemistry, and exports."
     "H/Ca/C/Na/Cl are transported without reaction first; the transported H+ field defines the first-order TST CaCO3 amount prescribed to PHREEQC."
     "PHREEQC speciation uses a cut-cell mixing-volume floor for interface sliver cells, so the first-order rate is not artificially capped while extreme mol/kgw inputs are avoided."
-    "The moving boundary uses the same PHREEQC-TST prescribed reaction-rate field; the existing PNM loop applies that field to the next level-set evolution step."
+    "The moving boundary uses the same external TST + PHREEQC prescribed reaction-rate field; the existing PNM loop applies that field to the next level-set evolution step."
     "Legacy TST is run with the same grid, geometry, flow, diffusion, and time settings for visual comparison."
     "The legacy stability_diagnostics_log mass_res field is a single-H-component diagnostic and is not a strict PHREEQC multi-component conservation metric."
     "Rate comparison should use matched definitions: interface_tst_rate_mol_cm2_s is the interface-area TST/CaCO3 rate, while flux_apparent_rate_mol_cm2_s is the outlet H+ flux-deficit apparent acid-consumption rate."

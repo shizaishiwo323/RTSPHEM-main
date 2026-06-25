@@ -416,7 +416,7 @@ if usePhreeqc && strcmpi(phreeqcRateLaw, 'tst_match') && ...
     phreeqcMaxSpecificSurfaceArea = Inf;
 end
 phreeqcBadStepMax = cfgget(config, 'phreeqcBadStepMax', 5000);
-phreeqcMinHForPHMolL = cfgget(config, 'phreeqcMinHForPHMolL', 1e-7);
+phreeqcMinHForPHMolL = cfgget(config, 'phreeqcMinHForPHMolL', 1e-12);
 phreeqcMinActiveWaterVolumeFraction = cfgget(config, 'phreeqcMinActiveWaterVolumeFraction', 0);
 phreeqcMinActiveWaterVolumeCm3 = cfgget(config, 'phreeqcMinActiveWaterVolumeCm3', 0);
 phreeqcReactionWaterVolumeFloorFraction = cfgget(config, 'phreeqcReactionWaterVolumeFloorFraction', 0);
@@ -1384,8 +1384,7 @@ disp('Initializing hydrogen transport...');
 
 hydrogenConcentration = Variable(gridHyPHM, transportStepper, ...
     'H^+_pH', 'P0');
-% hydrogenConcentration.setdata(0, @(t, x) initialHydrogenConcentration);
-hydrogenConcentration.setdata(0, @(t, x) 0);
+hydrogenConcentration.setdata(0, @(t, x) initialHydrogenConcentration);
 hydrogenTransport = TransportLEVEL(gridHyPHM, transportStepper, 'H^+ Transport');
 hydrogenTransport.id2N = {1, 2, 3};
 hydrogenTransport.id2F = {4};

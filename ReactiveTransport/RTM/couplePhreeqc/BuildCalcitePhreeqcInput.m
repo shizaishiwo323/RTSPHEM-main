@@ -45,6 +45,7 @@ maxSpecificSurfaceArea = getOption(options, 'maxSpecificSurfaceArea', ...
     getOption(options, 'phreeqcMaxSpecificSurfaceArea', 10));
 minSolutionWaterKg = getOption(options, 'minSolutionWaterKg', minWaterKg);
 minHForPH = getOption(options, 'minHForPHMolL', 1e-7);
+balancePhCharge = logical(getOption(options, 'balancePhCharge', true));
 kineticsCorrectionFactor = getOption(options, 'kineticsCorrectionFactor', ...
     getOption(options, 'phreeqcKineticsCorrectionFactor', 1));
 kineticsTolerance = getOption(options, 'kineticsTolerance', 1e-8);
@@ -85,7 +86,11 @@ for iCell = 1:numCells
     hMolL = max(h(iCell) * 1000, minHForPH);
     lines(end + 1) = sprintf('SOLUTION %d', iCell);
     lines(end + 1) = sprintf('temp %.15g', temperatureC);
-    lines(end + 1) = sprintf('pH %.15g', -log10(hMolL));
+    if balancePhCharge
+        lines(end + 1) = sprintf('pH %.15g charge', -log10(hMolL));
+    else
+        lines(end + 1) = sprintf('pH %.15g', -log10(hMolL));
+    end
     lines(end + 1) = ['units ', solutionUnits];
     if writeSolutionWaterLine || abs(solutionWaterKg - 1) > eps
         lines(end + 1) = sprintf('water %.15g', solutionWaterKg);
@@ -181,7 +186,8 @@ switch normalizedRateLaw
         mineralName = char(getOption(options, 'mineralName', 'Calcite'));
         kineticsParm2 = kineticsCorrectionFactor;
         usePrescribedCalciteReaction = false;
-    case {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match'}
+    case {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match', ...
+            'external_tst_phreeqc', 'legacy_phreeqc_tst_match'}
         mineralName = char(getOption(options, 'mineralName', 'Calcite'));
         kineticsParm2 = rateCoefficientTST;
         usePrescribedCalciteReaction = true;

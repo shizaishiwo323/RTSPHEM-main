@@ -1,4 +1,4 @@
-# Local PHREEQC Runtime Files
+# Bundled PHREEQC Databases for RTM Coupling
 
 This directory keeps the PHREEQC database files used by the RTM PHREEQC
 coupling scripts so benchmark runs do not depend on files under a user
@@ -9,5 +9,6 @@ Downloads directory.
 - `database/phreeqc.dat`: fallback database copied from the same reference
   source.
 
-The MATLAB implementation still calls `IPhreeqcCOM.Object`, so the USGS
-IPhreeqcCOM component must remain installed and registered on Windows.
+Only the database files are bundled here. The MATLAB implementation still
+calls `IPhreeqcCOM.Object`, so the USGS IPhreeqcCOM engine must remain
+installed and registered on Windows.

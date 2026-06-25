@@ -34,7 +34,7 @@ result.calciteSI = numericColumn(data, headings, ["si_Calcite", "si_calcite", "C
 result.calciteDeltaMoles = numericColumn(data, headings, ["KIN_DELTA_Calcite", "kin_delta_Calcite"], 0);
 result.calciteDissolvedMoles = max(-result.calciteDeltaMoles, 0);
 result.calciteRate_mol_s = numericColumn(data, headings, ["RATE_Calcite", "rate_Calcite"], 0);
-result.calciteRate_mol_dm2_s = result.calciteRate_mol_s;
+result.calcite_cell_rate_mol_s = result.calciteRate_mol_s;
 end
 
 function values = numericColumn(data, headings, candidates, defaultValue)

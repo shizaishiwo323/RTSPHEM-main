@@ -129,6 +129,18 @@ verifyTrue(testCase, contains(callMatch, 'diagnosticInletConcentrationScale'));
 verifyFalse(testCase, contains(callMatch, 'initialHydrogenConcentration'));
 end
 
+function testPrecipPnmInitialHydrogenUsesConfiguredInitialState(testCase)
+solverPath = fullfile(testCase.TestData.moduleDir, 'precip_PNM_beauty3.m');
+solverText = string(fileread(solverPath));
+
+verifyNotEmpty(testCase, regexp(solverText, ...
+    'hydrogenConcentration\.setdata\(0,\s*@\(t,\s*x\)\s*initialHydrogenConcentration\)', ...
+    'once'));
+verifyEmpty(testCase, regexp(solverText, ...
+    'hydrogenConcentration\.setdata\(0,\s*@\(t,\s*x\)\s*0\)', ...
+    'once'));
+end
+
 function testResolveAdaptiveTimeGridExtensionHonorsExplicitOverride(testCase)
 cfg = struct('allowAdaptiveTimeGridExtension', true);
 
@@ -194,6 +206,17 @@ verifyTrue(testCase, contains(inputText, 'KINETICS 1'));
 verifyTrue(testCase, contains(inputText, 'USER_PUNCH'));
 verifyTrue(testCase, contains(inputText, 'KIN_DELTA("Calcite")'));
 verifyTrue(testCase, contains(inputText, '-time_step 2'));
+end
+
+function testPrecipBuildCalcitePhreeqcInputSignedPreservesStrongBasePH(testCase)
+state = makeMinimalPhreeqcBuilderState();
+state.h_mol_cm3 = 10^(-10.9) * 1e-3;
+
+inputText = char(precip_BuildCalcitePhreeqcInputSigned(state, struct()));
+tokens = regexp(inputText, 'pH\s+([0-9.eE+-]+)', 'tokens', 'once');
+
+verifyNotEmpty(testCase, tokens);
+verifyEqual(testCase, str2double(tokens{1}), 10.9, 'AbsTol', 1e-12);
 end
 
 function testPrecipBuildCalcitePhreeqcInputSignedUsesPrecipitateErrorIds(testCase)

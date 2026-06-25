@@ -49,7 +49,8 @@ minKineticsSurfaceArea = getOption(options, 'minKineticsSurfaceArea', 0);
 maxSpecificSurfaceArea = getOption(options, 'maxSpecificSurfaceArea', ...
     getOption(options, 'phreeqcMaxSpecificSurfaceArea', 10));
 minSolutionWaterKg = getOption(options, 'minSolutionWaterKg', minWaterKg);
-minHForPH = getOption(options, 'minHForPHMolL', 1e-7);
+minHForPH = getOption(options, 'minHForPHMolL', 1e-12);
+nonpositiveHDefaultPH = getOption(options, 'nonpositiveHDefaultPH', 7);
 kineticsCorrectionFactor = getOption(options, 'kineticsCorrectionFactor', ...
     getOption(options, 'phreeqcKineticsCorrectionFactor', 1));
 kineticsTolerance = getOption(options, 'kineticsTolerance', 1e-8);
@@ -87,10 +88,11 @@ lines = strings(0, 1);
 lines(end + 1) = "TITLE RTSPHEM single-calcite PHREEQC coupling";
 
 for iCell = 1:numCells
-    hMolL = max(h(iCell) * 1000, minHForPH);
+    pH = hydrogenConcentrationToPH(h(iCell), minHForPH, ...
+        nonpositiveHDefaultPH);
     lines(end + 1) = sprintf('SOLUTION %d', iCell);
     lines(end + 1) = sprintf('temp %.15g', temperatureC);
-    lines(end + 1) = sprintf('pH %.15g', -log10(hMolL));
+    lines(end + 1) = sprintf('pH %.15g', pH);
     lines(end + 1) = ['units ', solutionUnits];
     if writeSolutionWaterLine || abs(solutionWaterKg - 1) > eps
         lines(end + 1) = sprintf('water %.15g', solutionWaterKg);
@@ -176,6 +178,16 @@ if isfield(options, fieldName) && ~isempty(options.(fieldName))
     value = options.(fieldName);
 else
     value = defaultValue;
+end
+end
+
+function pH = hydrogenConcentrationToPH(hMolCm3, minHForPHMolL, ...
+    nonpositiveHDefaultPH)
+hMolL = hMolCm3 * 1000;
+if hMolL > 0
+    pH = -log10(max(hMolL, minHForPHMolL));
+else
+    pH = nonpositiveHDefaultPH;
 end
 end
 

@@ -2,6 +2,11 @@ function tests = test_StepperAppendTimeStepSize
 tests = functiontests(localfunctions);
 end
 
+function setupOnce(~)
+rtmDir = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(fileparts(rtmDir), 'HyPHM', 'classes'));
+end
+
 function testAppendTimeStepSizeExtendsStepper(testCase)
 stepper = Stepper([0, 0.1, 0.3]);
 

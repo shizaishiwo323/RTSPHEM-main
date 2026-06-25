@@ -1,7 +1,7 @@
 function ratePerArea = ComputePhreeqcInterfaceRatePerArea(result, interfaceAreaCm2, timeStepSize, options, legacyHMolCm3)
 % ComputePhreeqcInterfaceRatePerArea - Rate used to move calcite interface.
 %
-% For phreeqc_tst_match, the transported H+ field defines the first-order
+% For external_tst_phreeqc, the transported H+ field defines the first-order
 % interface law r_area = c_H * 1000 * kTST. The caller prescribes the
 % corresponding CaCO3 amount to PHREEQC and reuses this rate field for the
 % moving boundary.
@@ -14,7 +14,8 @@ rateLaw = lower(strrep(strtrim(char(getOption(options, 'rateLaw', ...
     getOption(options, 'phreeqcRateLaw', 'database_calcite')))), '-', '_'));
 
 switch rateLaw
-    case {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match'}
+    case {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match', ...
+            'external_tst_phreeqc', 'legacy_phreeqc_tst_match'}
         rateCoefficientTST = getOption(options, 'rateCoefficientTST', ...
             getOption(options, 'phreeqcTstRateCoefficient', 1e-4));
         if isempty(legacyHMolCm3)

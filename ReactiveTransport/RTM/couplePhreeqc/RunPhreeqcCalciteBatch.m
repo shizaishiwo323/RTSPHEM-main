@@ -18,45 +18,83 @@ end
 stepIndex = getOption(options, 'timeStepIndex', 0);
 inputPath = fullfile(workDir, sprintf('phreeqc_calcite_step_%04d.phr', stepIndex));
 result.inputPath = string(inputPath);
-result.databasePath = string(char(getOption(options, 'databasePath', 'phreeqc.dat')));
+databasePath = char(getOption(options, 'databasePath', 'phreeqc.dat'));
+result.databasePath = string(databasePath);
+hasSession = isfield(options, 'phreeqcSession') && ~isempty(options.phreeqcSession);
+writeInputFiles = logical(getOption(options, 'writeInputFiles', ~hasSession));
+result.inputWritten = false;
+result.phreeqcSessionReused = false;
+result.phreeqcRunMethod = "RunFile";
 
 if ~any(activeCells)
+    result = addReactionMassLedger(result, state);
     return;
 end
 
 activeState = subsetState(state, activeCells);
 inputText = BuildCalcitePhreeqcInput(activeState, options);
-fid = fopen(inputPath, 'w');
-if fid == -1
-    error('RTSPHEM:Phreeqc:InputOpenFailed', 'Cannot write PHREEQC input: %s', inputPath);
+if writeInputFiles
+    fid = fopen(inputPath, 'w');
+    if fid == -1
+        error('RTSPHEM:Phreeqc:InputOpenFailed', 'Cannot write PHREEQC input: %s', inputPath);
+    end
+    cleaner = onCleanup(@() fclose(fid));
+    fprintf(fid, '%s', inputText);
+    clear cleaner;
+    result.inputWritten = true;
 end
-cleaner = onCleanup(@() fclose(fid));
-fprintf(fid, '%s', inputText);
-clear cleaner;
 
-databasePath = char(getOption(options, 'databasePath', 'phreeqc.dat'));
-iphreeqc = actxserver('IPhreeqcCOM.Object');
-cleanupPhreeqc = onCleanup(@() releaseComObject(iphreeqc));
-iphreeqc.LoadDatabase(databasePath);
-iphreeqc.RunFile(inputPath);
-rawOutput = iphreeqc.GetSelectedOutputArray;
+if hasSession
+    session = options.phreeqcSession;
+    session.loadDatabaseExact(databasePath);
+    rawOutput = session.runString(inputText);
+    manifest = session.getDatabaseManifest();
+    result.databaseSha256 = manifest.databaseSha256;
+    result.phreeqcSessionReused = true;
+    result.phreeqcRunMethod = "RunString";
+else
+    if ~writeInputFiles
+        error('RTSPHEM:Phreeqc:InputFileRequired', ...
+            'RunFile PHREEQC mode requires writeInputFiles=true.');
+    end
+    [iphreeqc, ownsEngine] = createIPhreeqcEngine(options);
+    if ownsEngine
+        cleanupPhreeqc = onCleanup(@() releaseComObject(iphreeqc));
+    else
+        cleanupPhreeqc = onCleanup(@() []);
+    end
+    loadStatus = invokePhreeqcCommand(iphreeqc, 'LoadDatabase', ...
+        {databasePath}, 'RTSPHEM:Phreeqc:LoadDatabaseFailed');
+    assertPhreeqcStatus(loadStatus, iphreeqc, ...
+        'RTSPHEM:Phreeqc:LoadDatabaseFailed', ...
+        sprintf('PHREEQC LoadDatabase failed for %s', databasePath));
+    runStatus = invokePhreeqcCommand(iphreeqc, 'RunFile', {inputPath}, ...
+        'RTSPHEM:Phreeqc:RunFileFailed');
+    assertPhreeqcStatus(runStatus, iphreeqc, ...
+        'RTSPHEM:Phreeqc:RunFileFailed', ...
+        sprintf('PHREEQC RunFile failed for %s', inputPath));
+    rawOutput = iphreeqc.GetSelectedOutputArray;
+    clear cleanupPhreeqc;
+end
 
 activeResult = ParsePhreeqcSelectedOutput(rawOutput, nnz(activeCells));
 activeResult = applyHydrogenActivityForTstMatch(activeResult, options);
 activeResult = scaleKineticDissolutionToCellInventory(activeResult, activeState, options);
-activeResult = InferCalciteDissolutionFromTotals(activeResult, activeState, getOption(options, 'timeStepSize', 1));
+activeResult = DiagnosticInferCalciteDissolutionFromTotals( ...
+    activeResult, activeState, getOption(options, 'timeStepSize', 1));
 activeResult = applyPrescribedCalciteDissolution(activeResult, activeState, options);
 result = mergeActiveResult(result, activeResult, activeCells);
 result.inputPath = string(inputPath);
 result.databasePath = string(databasePath);
-clear cleanupPhreeqc;
+result = addReactionMassLedger(result, state);
 end
 
 function result = applyHydrogenActivityForTstMatch(result, options)
 defaultRateLaw = getOption(options, 'phreeqcRateLaw', 'database_calcite');
 rateLaw = getOption(options, 'rateLaw', defaultRateLaw);
 rateLaw = lower(strrep(strtrim(char(rateLaw)), '-', '_'));
-if ~ismember(rateLaw, {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match'})
+if ~ismember(rateLaw, {'tst_match', 'calcite_tst_match', 'phreeqc_tst_match', ...
+        'external_tst_phreeqc', 'legacy_phreeqc_tst_match'})
     return;
 end
 if isfield(result, 'pH') && ~isempty(result.pH)
@@ -86,7 +124,7 @@ dissolvedMoles(~isfinite(dissolvedMoles)) = 0;
 result.calciteDissolvedMoles = dissolvedMoles;
 result.calciteDeltaMoles = -dissolvedMoles;
 result.calciteRate_mol_s = dissolvedMoles ./ max(timeStepSize, eps);
-result.calciteRate_mol_dm2_s = result.calciteRate_mol_s;
+result.calcite_cell_rate_mol_s = result.calciteRate_mol_s;
 end
 
 function result = applyPrescribedCalciteDissolution(result, state, options)
@@ -104,7 +142,7 @@ dissolvedMoles(~isfinite(dissolvedMoles)) = 0;
 result.calciteDissolvedMoles = dissolvedMoles;
 result.calciteDeltaMoles = -dissolvedMoles;
 result.calciteRate_mol_s = dissolvedMoles ./ max(timeStepSize, eps);
-result.calciteRate_mol_dm2_s = result.calciteRate_mol_s;
+result.calcite_cell_rate_mol_s = result.calciteRate_mol_s;
 end
 
 function activeCells = selectActivePhreeqcCells(state, options)
@@ -130,8 +168,25 @@ hasWater = waterVolume(:) > minActiveWaterVolume;
 hasInterface = interfaceArea(:) > 0 & calciteMoles(:) > 0;
 hasChemistry = any([h(:), ca(:), c(:), na(:), cl(:)] > concentrationTol, 2);
 hasPrescribedReaction = prescribed(:) > 0;
-activeCells = hasWater & (hasChemistry | hasPrescribedReaction ...
-    | (reactNeutralInterfaceCells & hasInterface));
+isExternalTstClosure = usesExternalTstClosure(options);
+includeExternalTstBackgroundCells = logical(getOption( ...
+    options, 'activeExternalTstChemistryOnlyCells', false));
+if isExternalTstClosure && ~includeExternalTstBackgroundCells
+    activeCells = hasWater & (hasPrescribedReaction ...
+        | (reactNeutralInterfaceCells & hasInterface));
+else
+    activeCells = hasWater & (hasChemistry | hasPrescribedReaction ...
+        | (reactNeutralInterfaceCells & hasInterface));
+end
+end
+
+function tf = usesExternalTstClosure(options)
+defaultRateLaw = getOption(options, 'phreeqcRateLaw', 'database_calcite');
+rateLaw = getOption(options, 'rateLaw', defaultRateLaw);
+rateLaw = lower(strrep(strtrim(char(rateLaw)), '-', '_'));
+tf = ismember(rateLaw, {'tst_match', 'calcite_tst_match', ...
+    'phreeqc_tst_match', 'external_tst_phreeqc', ...
+    'legacy_phreeqc_tst_match'});
 end
 
 function activeState = subsetState(state, activeCells)
@@ -174,7 +229,7 @@ result.calciteSI = NaN(numCells, 1);
 result.calciteDeltaMoles = zeros(numCells, 1);
 result.calciteDissolvedMoles = zeros(numCells, 1);
 result.calciteRate_mol_s = zeros(numCells, 1);
-result.calciteRate_mol_dm2_s = zeros(numCells, 1);
+result.calcite_cell_rate_mol_s = zeros(numCells, 1);
 result.solutionNumber = (1:numCells)';
 end
 
@@ -198,6 +253,68 @@ for iField = 1:numel(fields)
     end
 end
 result.solutionNumber = (1:numCells)';
+end
+
+function result = addReactionMassLedger(result, state)
+numCells = numel(result.h_mol_cm3);
+waterVolume = optionalColumn(state, 'water_volume_cm3', numCells, 0);
+componentSpecs = {
+    'h', 'h_mol_cm3', 'h_mol_cm3'
+    'ca', 'ca_total_mol_cm3', 'ca_mol_cm3'
+    'c', 'c_total_mol_cm3', 'c_mol_cm3'
+    'na', 'na_total_mol_cm3', 'na_mol_cm3'
+    'cl', 'cl_total_mol_cm3', 'cl_mol_cm3'
+    };
+
+for iSpec = 1:size(componentSpecs, 1)
+    name = componentSpecs{iSpec, 1};
+    resultField = componentSpecs{iSpec, 2};
+    stateFallbackField = componentSpecs{iSpec, 3};
+    delta = computeComponentDeltaMoles( ...
+        result, state, waterVolume, resultField, stateFallbackField);
+    result.(sprintf('water_phase_%s_delta_moles', name)) = delta;
+    result.(sprintf('water_phase_%s_delta_moles_total', name)) = ...
+        sum(delta, 'omitnan');
+end
+
+dissolved = optionalColumn(result, 'calciteDissolvedMoles', numCells, 0);
+caDelta = result.water_phase_ca_delta_moles(:);
+cDelta = result.water_phase_c_delta_moles(:);
+result.calcite_ca_stoich_residual_moles = caDelta - dissolved(:);
+result.calcite_c_stoich_residual_moles = cDelta - dissolved(:);
+result.calcite_ca_stoich_residual_moles_total = ...
+    sum(result.calcite_ca_stoich_residual_moles, 'omitnan');
+result.calcite_c_stoich_residual_moles_total = ...
+    sum(result.calcite_c_stoich_residual_moles, 'omitnan');
+result.calcite_stoich_max_abs_residual_moles = max(abs([ ...
+    result.calcite_ca_stoich_residual_moles(:); ...
+    result.calcite_c_stoich_residual_moles(:)]), [], 'omitnan');
+if isempty(result.calcite_stoich_max_abs_residual_moles)
+    result.calcite_stoich_max_abs_residual_moles = 0;
+end
+end
+
+function delta = computeComponentDeltaMoles( ...
+    result, state, waterVolume, resultField, stateFallbackField)
+numCells = numel(waterVolume);
+if isfield(result, resultField) && ~isempty(result.(resultField))
+    after = result.(resultField)(:);
+else
+    after = zeros(numCells, 1);
+end
+if isfield(state, resultField) && ~isempty(state.(resultField))
+    before = state.(resultField)(:);
+elseif isfield(state, stateFallbackField) && ~isempty(state.(stateFallbackField))
+    before = state.(stateFallbackField)(:);
+else
+    before = zeros(numCells, 1);
+end
+if numel(after) ~= numCells || numel(before) ~= numCells
+    delta = NaN(numCells, 1);
+    return;
+end
+delta = (after - before) .* waterVolume(:);
+delta(~isfinite(delta)) = NaN;
 end
 
 function values = optionalColumn(state, fieldName, numCells, defaultValue)
@@ -224,5 +341,43 @@ function releaseComObject(obj)
 try
     delete(obj);
 catch
+end
+end
+
+function [engine, ownsEngine] = createIPhreeqcEngine(options)
+factory = getOption(options, 'engineFactory', []);
+if ~isempty(factory)
+    engine = factory();
+    ownsEngine = false;
+else
+    engine = actxserver('IPhreeqcCOM.Object');
+    ownsEngine = true;
+end
+end
+
+function status = invokePhreeqcCommand(engine, methodName, args, errorId)
+try
+    status = engine.(methodName)(args{:});
+catch ME
+    error(errorId, '%s threw an error: %s', methodName, ME.message);
+end
+if isempty(status)
+    status = 0;
+end
+end
+
+function assertPhreeqcStatus(status, engine, errorId, message)
+if double(status) == 0
+    return;
+end
+errorString = "";
+try
+    errorString = string(engine.GetErrorString());
+catch
+end
+if strlength(errorString) > 0
+    error(errorId, '%s: %s', message, char(errorString));
+else
+    error(errorId, '%s with status %g.', message, double(status));
 end
 end

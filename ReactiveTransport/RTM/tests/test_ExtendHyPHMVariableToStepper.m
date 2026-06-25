@@ -2,6 +2,12 @@ function tests = test_ExtendHyPHMVariableToStepper
 tests = functiontests(localfunctions);
 end
 
+function setupOnce(~)
+rtmDir = fileparts(fileparts(mfilename('fullpath')));
+addpath(rtmDir);
+addpath(fullfile(fileparts(rtmDir), 'HyPHM', 'classes'));
+end
+
 function testCopyPreviousExtendsContentAndGrids(testCase)
 stepper = Stepper([0, 1]);
 fakeVariable = struct();

@@ -356,6 +356,8 @@ inletChlorideConcentration = cfgget(config, 'inletChlorideConcentration', initia
 phreeqcTemperatureC = cfgget(config, 'phreeqcTemperatureC', 25);
 phreeqcDatabasePath = cfgget(config, 'phreeqcDatabasePath', defaultPhreeqcDatabasePath());
 phreeqcExportEvery = cfgget(config, 'phreeqcExportEvery', exportEvery);
+phreeqcPersistSession = logical(cfgget(config, 'phreeqcPersistSession', true));
+phreeqcUseRunString = phreeqcPersistSession && logical(cfgget(config, 'phreeqcUseRunString', true));
 phreeqcRunGroup = char(cfgget(config, 'phreeqcRunGroup', 'phreeqc_database_calcite'));
 if usePhreeqc
     phreeqcRateLaw = normalizePhreeqcRateLaw( ...
@@ -1444,9 +1446,20 @@ if usePhreeqc
     if ~exist(phreeqcWorkDir, 'dir'); mkdir(phreeqcWorkDir); end
     phreeqcSummaryCsvFile = fullfile(phreeqcOutputDir, 'phreeqc_summary_log.csv');
     initializePhreeqcSummaryLog(phreeqcSummaryCsvFile);
+    phreeqcSession = [];
+    phreeqcSessionCleanup = [];
+    if usePhreeqc && phreeqcPersistSession
+        phreeqcSession = rtm.phreeqc.PhreeqcSession(struct( ...
+            'engineType', 'iphreeqc_com', ...
+            'comProgId', 'IPhreeqcCOM.Object'));
+        phreeqcSession.loadDatabaseExact(char(phreeqcDatabasePath));
+        phreeqcSessionCleanup = onCleanup(@() phreeqcSession.close());
+    end
     phreeqcOptions = struct( ...
         'databasePath', char(phreeqcDatabasePath), ...
         'workDir', phreeqcWorkDir, ...
+        'phreeqcSession', phreeqcSession, ...
+        'writeInputFiles', ~phreeqcUseRunString, ...
         'temperatureC', phreeqcTemperatureC, ...
         'mineralName', 'Calcite', ...
         'mineralFormula', 'CaCO3', ...
@@ -2135,6 +2148,11 @@ while transportStepper.next
         phreeqcSpeciesData.calciteRatePerArea_mol_cm2_s = phreeqcCalciteRateData;
         if strcmpi(phreeqcRateLaw, 'tst_match')
             phreeqcSpeciesData.interfacePrescribedCalciteMoles = prescribedInterfaceMoles;
+            phreeqcSpeciesData.interfaceCandidateCalciteMoles = phreeqcLevelSetStep.candidateMoles;
+            phreeqcSpeciesData.interfaceRealizedCalciteMoles = phreeqcLevelSetStep.realizedMoles;
+            phreeqcSpeciesData.interfaceInventoryLimited = phreeqcLevelSetStep.inventoryLimited;
+            phreeqcSpeciesData.interfaceCandidateRatePerArea_mol_cm2_s = ...
+                phreeqcLevelSetStep.candidateRatePerArea_mol_cm2_s;
             phreeqcSpeciesData.projectedPrescribedCalciteMoles = projectedMoles;
             phreeqcSpeciesData.agglomerateMaxRowOverlap = computeAgglomerateMaxRowOverlap(agglomerateWeightMatrix);
             phreeqcSpeciesData.agglomerateMeanRowOverlap = computeAgglomerateMeanRowOverlap(agglomerateWeightMatrix);
@@ -4104,27 +4122,10 @@ transportProblem.C.setdata(timeStep, flowData);
 end
 
 function geom = computePhreeqcGeometryState(grid, levels, molarVolume, thickness)
-numTriangles = grid.numT;
-interfaceArea = zeros(numTriangles, 1);
-waterVolume = zeros(numTriangles, 1);
-solidVolume = zeros(numTriangles, 1);
-
-for kT = 1:numTriangles
-    vertexIds = grid.V0T(kT, :);
-    points = grid.coordV(vertexIds, :);
-    values = levels(vertexIds);
-    totalArea = grid.areaT(kT);
-    waterArea = triangleAreaBelowLevelZero(points, values);
-    solidArea = max(totalArea - waterArea, 0);
-    interfaceLength = triangleInterfaceLength(points, values);
-    waterVolume(kT) = max(waterArea * thickness, 0);
-    solidVolume(kT) = max(solidArea * thickness, 0);
-    interfaceArea(kT) = max(interfaceLength * thickness, 0);
-end
-
-geom.interface_area_cm2 = interfaceArea;
-geom.water_volume_cm3 = waterVolume;
-geom.calcite_moles = solidVolume ./ max(molarVolume, eps);
+cutCellGeometry = rtm.geometry.BuildCutCellMetrics(grid, levels, ...
+    struct('thickness_cm', thickness));
+geom = cutCellGeometry;
+geom.calcite_moles = cutCellGeometry.solid_volume_cm3 ./ max(molarVolume, eps);
 end
 
 function area = triangleAreaBelowLevelZero(points, values)
@@ -4343,30 +4344,49 @@ end
 
 function data = addPhreeqcWaterPhaseMassDiagnostics(data, baseState, waterVolumeCm3)
 waterVolumeCm3 = max(waterVolumeCm3(:), 0);
-data.water_phase_h_delta_moles_total = computeWaterPhaseDelta( ...
+data.water_phase_h_delta_moles = computeWaterPhaseDeltaVector( ...
     data, baseState, waterVolumeCm3, 'h_mol_cm3');
-data.water_phase_ca_delta_moles_total = computeWaterPhaseDelta( ...
+data.water_phase_ca_delta_moles = computeWaterPhaseDeltaVector( ...
     data, baseState, waterVolumeCm3, 'ca_total_mol_cm3');
-data.water_phase_c_delta_moles_total = computeWaterPhaseDelta( ...
+data.water_phase_c_delta_moles = computeWaterPhaseDeltaVector( ...
     data, baseState, waterVolumeCm3, 'c_total_mol_cm3');
-data.water_phase_na_delta_moles_total = computeWaterPhaseDelta( ...
+data.water_phase_na_delta_moles = computeWaterPhaseDeltaVector( ...
     data, baseState, waterVolumeCm3, 'na_total_mol_cm3');
-data.water_phase_cl_delta_moles_total = computeWaterPhaseDelta( ...
+data.water_phase_cl_delta_moles = computeWaterPhaseDeltaVector( ...
     data, baseState, waterVolumeCm3, 'cl_total_mol_cm3');
+data.water_phase_h_delta_moles_total = sum(data.water_phase_h_delta_moles, 'omitnan');
+data.water_phase_ca_delta_moles_total = sum(data.water_phase_ca_delta_moles, 'omitnan');
+data.water_phase_c_delta_moles_total = sum(data.water_phase_c_delta_moles, 'omitnan');
+data.water_phase_na_delta_moles_total = sum(data.water_phase_na_delta_moles, 'omitnan');
+data.water_phase_cl_delta_moles_total = sum(data.water_phase_cl_delta_moles, 'omitnan');
+if isfield(data, 'calciteDissolvedMoles') && ~isempty(data.calciteDissolvedMoles)
+    dissolvedMoles = data.calciteDissolvedMoles(:);
+    data.calcite_ca_stoich_residual_moles = ...
+        data.water_phase_ca_delta_moles(:) - dissolvedMoles;
+    data.calcite_c_stoich_residual_moles = ...
+        data.water_phase_c_delta_moles(:) - dissolvedMoles;
+    data.calcite_ca_stoich_residual_moles_total = ...
+        sum(data.calcite_ca_stoich_residual_moles, 'omitnan');
+    data.calcite_c_stoich_residual_moles_total = ...
+        sum(data.calcite_c_stoich_residual_moles, 'omitnan');
+    data.calcite_stoich_max_abs_residual_moles = max(abs([ ...
+        data.calcite_ca_stoich_residual_moles(:); ...
+        data.calcite_c_stoich_residual_moles(:)]), [], 'omitnan');
+end
 end
 
-function deltaMoles = computeWaterPhaseDelta(data, baseState, waterVolumeCm3, fieldName)
+function deltaMoles = computeWaterPhaseDeltaVector(data, baseState, waterVolumeCm3, fieldName)
 if ~isfield(data, fieldName) || ~isfield(baseState, fieldName)
-    deltaMoles = NaN;
+    deltaMoles = NaN(size(waterVolumeCm3(:)));
     return;
 end
 newValues = data.(fieldName)(:);
 oldValues = baseState.(fieldName)(:);
 if numel(newValues) ~= numel(waterVolumeCm3) || numel(oldValues) ~= numel(waterVolumeCm3)
-    deltaMoles = NaN;
+    deltaMoles = NaN(size(waterVolumeCm3(:)));
     return;
 end
-deltaMoles = sum((newValues - oldValues) .* waterVolumeCm3, 'omitnan');
+deltaMoles = (newValues - oldValues) .* waterVolumeCm3;
 end
 
 function value = computeAgglomerateMaxRowOverlap(agglomerateWeightMatrix)
@@ -4788,7 +4808,8 @@ normalized = lower(strrep(strtrim(char(runGroup)), '-', '_'));
 switch normalized
     case {'phreeqc_database_calcite', 'database_calcite', 'database', 'calcite'}
         rateLaw = 'database_calcite';
-    case {'phreeqc_tst_match', 'tst_match', 'calcite_tst_match'}
+    case {'phreeqc_tst_match', 'tst_match', 'calcite_tst_match', ...
+            'external_tst_phreeqc', 'legacy_phreeqc_tst_match'}
         rateLaw = 'tst_match';
     otherwise
         error('RTSPHEM:Phreeqc:UnknownRunGroup', ...
@@ -4801,7 +4822,8 @@ normalized = lower(strrep(strtrim(char(rateLaw)), '-', '_'));
 switch normalized
     case {'phreeqc_database_calcite', 'database_calcite', 'database', 'calcite'}
         rateLaw = 'database_calcite';
-    case {'phreeqc_tst_match', 'tst_match', 'calcite_tst_match'}
+    case {'phreeqc_tst_match', 'tst_match', 'calcite_tst_match', ...
+            'external_tst_phreeqc', 'legacy_phreeqc_tst_match'}
         rateLaw = 'tst_match';
     otherwise
         error('RTSPHEM:Phreeqc:UnknownRateLaw', ...

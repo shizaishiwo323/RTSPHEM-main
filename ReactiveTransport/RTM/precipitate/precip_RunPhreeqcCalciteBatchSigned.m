@@ -95,10 +95,12 @@ ca = optionalColumn(state, 'ca_mol_cm3', numCells, 0);
 c = optionalColumn(state, 'c_mol_cm3', numCells, 0);
 na = optionalColumn(state, 'na_mol_cm3', numCells, 0);
 cl = optionalColumn(state, 'cl_mol_cm3', numCells, 0);
-minHForPH = getOption(options, 'minHForPHMolL', 1e-7);
+minHForPH = getOption(options, 'minHForPHMolL', 1e-12);
+nonpositiveHDefaultPH = getOption(options, 'nonpositiveHDefaultPH', 7);
 
 result = struct();
-result.pH = -log10(max(h(:) * 1000, minHForPH));
+result.pH = arrayfun(@(value) hydrogenConcentrationToPH(value, ...
+    minHForPH, nonpositiveHDefaultPH), h(:));
 result.chargeBalance = zeros(numCells, 1);
 result.ca_total_mol_cm3 = max(ca(:), 0);
 result.c_total_mol_cm3 = max(c(:), 0);
@@ -159,6 +161,16 @@ if isfield(options, fieldName) && ~isempty(options.(fieldName))
     value = options.(fieldName);
 else
     value = defaultValue;
+end
+end
+
+function pH = hydrogenConcentrationToPH(hMolCm3, minHForPHMolL, ...
+    nonpositiveHDefaultPH)
+hMolL = hMolCm3 * 1000;
+if hMolL > 0
+    pH = -log10(max(hMolL, minHForPHMolL));
+else
+    pH = nonpositiveHDefaultPH;
 end
 end
 
