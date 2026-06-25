@@ -4011,12 +4011,19 @@ report = precip_RunYoonBenchmarkReadinessAudit(struct( ...
 
 verifyFalse(testCase, report.audit.allReady);
 verifyTrue(testCase, isfile(report.requirementsCsv));
+verifyTrue(testCase, isfile(report.ladderCsv));
 verifyTrue(testCase, isfile(report.manifestPath));
 reportTable = readtable(report.requirementsCsv, 'TextType', 'string');
 verifyTrue(testCase, any(reportTable.requirementId == "geometry_package"));
 verifyTrue(testCase, any(~reportTable.ready));
+ladderTable = readtable(report.ladderCsv, 'TextType', 'string');
+verifyEqual(testCase, ladderTable.stageId, ...
+    ["B0"; "B1"; "B2"; "B3"; "B4"; "B5"; "B6"; "B7"; "B8"]);
+verifyTrue(testCase, any(~ladderTable.ready));
 manifest = jsondecode(fileread(report.manifestPath));
 verifyFalse(testCase, manifest.allReady);
+verifyTrue(testCase, isfield(manifest, 'ladderCsv'));
+verifyTrue(testCase, isfield(manifest, 'firstFailedStageId'));
 verifyTrue(testCase, any(string(manifest.failedRequirementIds) == ...
     "geometry_package"));
 end
