@@ -79,10 +79,13 @@ else
 end
 
 audit = precip_AuditYoonBenchmarkReadiness(evidence);
+ladder = precip_AuditYoonBenchmarkLadder(evidence);
 
 requirementsCsv = fullfile(outputRoot, ...
     'yoon_benchmark_readiness_requirements.csv');
 writetable(audit.requirements, requirementsCsv);
+ladderCsv = fullfile(outputRoot, 'yoon_benchmark_ladder.csv');
+writetable(formatLadderStagesForCsv(ladder.stages), ladderCsv);
 
 manifest = struct();
 manifest.runner = 'precip_RunYoonBenchmarkReadinessAudit';
@@ -101,9 +104,14 @@ manifest.flowValidationManifestPath = char(string( ...
     flowValidationManifestPath));
 manifest.referenceCsv = char(string(referenceCsv));
 manifest.requirementsCsv = requirementsCsv;
+manifest.ladderCsv = ladderCsv;
 manifest.allReady = audit.allReady;
 manifest.isQuantitativeBenchmarkAllowed = ...
     audit.isQuantitativeBenchmarkAllowed;
+manifest.allStagesReady = ladder.allStagesReady;
+manifest.firstFailedStageId = char(ladder.firstFailedStageId);
+manifest.failedStageIds = cellstr(ladder.stages.stageId( ...
+    ladder.stages.entered & ~ladder.stages.ready));
 manifest.failedRequirementIds = cellstr( ...
     audit.requirements.requirementId(~audit.requirements.ready));
 manifest.note = audit.note;
@@ -114,9 +122,23 @@ writeJsonManifest(manifestPath, manifest);
 
 report = struct();
 report.audit = audit;
+report.ladder = ladder;
 report.requirementsCsv = requirementsCsv;
+report.ladderCsv = ladderCsv;
 report.manifest = manifest;
 report.manifestPath = manifestPath;
+end
+
+function csvTable = formatLadderStagesForCsv(stages)
+csvTable = stages;
+csvTable.requirementIds = cellfun(@joinTextList, ...
+    csvTable.requirementIds, 'UniformOutput', false);
+csvTable.blockingRequirementIds = cellfun(@joinTextList, ...
+    csvTable.blockingRequirementIds, 'UniformOutput', false);
+end
+
+function value = joinTextList(values)
+value = char(strjoin(string(values(:)'), ';'));
 end
 
 function data = loadJsonStruct(path)
