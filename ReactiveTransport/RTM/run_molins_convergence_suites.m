@@ -2,13 +2,12 @@ function run = run_molins_convergence_suites(mode, options)
 %RUN_MOLINS_CONVERGENCE_SUITES User-facing Molins convergence runner.
 %
 % Modes:
-%   diagnostic  - quick strict Part I/II smoke without PHREEQC COM.
-%   strict      - strict Part I/II convergence suite.
+%   diagnostic  - quick PHREEQC integration smoke.
 %   integration - external TST + PHREEQC integration suite.
-%   full        - strict Part I/II plus PHREEQC integration suite.
-%   full_acceptance - plan acceptance matrix: strict Part I/II plus PHREEQC
-%                     integration with 54, 5.4, 0.54, 0.054 s steps and
-%                     Molins grid labels recorded in the result index.
+%   full        - PHREEQC integration suite.
+%   full_acceptance - plan acceptance matrix for PHREEQC integration with
+%                     54, 5.4, 0.54, 0.054 s steps and Molins grid labels
+%                     recorded in the result index.
 
 if nargin < 1 || isempty(mode)
     mode = 'diagnostic';
@@ -47,15 +46,10 @@ defaults.minObservedOrder = -Inf;
 switch modeName
     case {'diagnostic', 'smoke'}
         modeName = 'diagnostic';
-        defaults.kinds = ["partI_strict"; "partII_strict"];
+        defaults.kinds = "integration_phreeqc";
         defaults.refinementScales = [0.5; 0.25];
         defaults.totalTime_s = 0.5;
         defaults.maxDisplacementOverH = 1;
-    case {'strict', 'strict_molins'}
-        modeName = 'strict';
-        defaults.kinds = ["partI_strict"; "partII_strict"];
-        defaults.refinementScales = [5.4; 0.54; 0.054];
-        defaults.totalTime_s = 5.4;
     case {'integration', 'phreeqc', 'integration_phreeqc'}
         modeName = 'integration';
         defaults.kinds = "integration_phreeqc";
@@ -63,12 +57,12 @@ switch modeName
         defaults.totalTime_s = 5.4;
     case {'full', 'all'}
         modeName = 'full';
-        defaults.kinds = ["partI_strict"; "partII_strict"; "integration_phreeqc"];
+        defaults.kinds = "integration_phreeqc";
         defaults.refinementScales = [5.4; 0.54; 0.054];
         defaults.totalTime_s = 5.4;
     case {'full_acceptance', 'acceptance', 'plan_acceptance'}
         modeName = 'full_acceptance';
-        defaults.kinds = ["partI_strict"; "partII_strict"; "integration_phreeqc"];
+        defaults.kinds = "integration_phreeqc";
         defaults.refinementScales = [54; 5.4; 0.54; 0.054];
         defaults.totalTime_s = 54;
         defaults.acceptanceMatrix = molinsAcceptanceMatrix();

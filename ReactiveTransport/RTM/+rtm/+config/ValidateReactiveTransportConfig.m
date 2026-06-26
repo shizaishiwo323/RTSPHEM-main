@@ -12,7 +12,7 @@ config.strictMassConservation = logical(getFieldOrDefault(config, ...
 
 config.chemistry = ensureStructField(config, 'chemistry');
 config.chemistry.mode = canonicalChoice(getFieldOrDefault(config.chemistry, ...
-    'mode', 'strict_molins'));
+    'mode', 'external_tst_phreeqc'));
 config.chemistry.chargeAbsoluteTolerance_eq = nonnegativeScalarField( ...
     config.chemistry, 'chargeAbsoluteTolerance_eq', 1e-8, ...
     'RTSPHEM:Config:InvalidChemistryTolerance');
@@ -132,7 +132,7 @@ function validateChoices(config)
 mustBeOneOf(config.solverArchitecture, {'legacy', 'conservative_v2'}, ...
     'RTSPHEM:Config:UnknownSolverArchitecture');
 mustBeOneOf(config.chemistry.mode, ...
-    {'strict_molins', 'external_tst_phreeqc', 'phreeqc_kinetics'}, ...
+    {'external_tst_phreeqc', 'phreeqc_kinetics'}, ...
     'RTSPHEM:Config:UnknownChemistryMode');
 mustBeOneOf(config.transport.backend, {'cut_cell_fv', 'legacy_hyphm'}, ...
     'RTSPHEM:Config:UnknownTransportBackend');
@@ -150,10 +150,6 @@ mustBeOneOf(config.phreeqc.engine, ...
 end
 
 function validateCrossFieldRules(config)
-if strcmp(config.chemistry.mode, 'strict_molins') && ~strcmp(config.phreeqc.engine, 'none')
-    error('RTSPHEM:Config:StrictMolinsUsesNoPhreeqc', ...
-        'strict_molins must not configure a PHREEQC engine.');
-end
 if config.benchmark.enabled && ~strcmp(config.phreeqc.engine, 'none') && ...
         ~strcmp(config.phreeqc.databasePolicy, 'exact_local')
     error('RTSPHEM:Config:BenchmarkRequiresExactLocalDatabase', ...
@@ -171,16 +167,6 @@ end
 end
 
 function validateChemistryBasis(config)
-if strcmp(config.chemistry.mode, 'strict_molins')
-    requiredBasis = {'H_reactant'};
-    missing = setdiff(requiredBasis, config.chemistry.basis);
-    if ~isempty(missing)
-        error('RTSPHEM:Config:InvalidChemistryBasis', ...
-            'strict_molins basis must include H_reactant.');
-    end
-    return;
-end
-
 requiredBasis = {'Ca', 'C', 'Na', 'Cl'};
 missing = setdiff(requiredBasis, config.chemistry.basis);
 if ~isempty(missing)
@@ -198,8 +184,6 @@ end
 
 function names = defaultChemistryBasis(chemistryMode)
 switch chemistryMode
-    case 'strict_molins'
-        names = {'H_reactant'};
     case {'external_tst_phreeqc', 'phreeqc_kinetics'}
         names = {'Ca', 'C', 'Na', 'Cl', 'Alkalinity'};
     otherwise
@@ -209,8 +193,6 @@ end
 
 function names = defaultChemistryDerived(chemistryMode)
 switch chemistryMode
-    case 'strict_molins'
-        names = {};
     case {'external_tst_phreeqc', 'phreeqc_kinetics'}
         names = {'pH', 'H+', 'HCO3-', 'CO3-2', 'SI_Calcite'};
     otherwise
@@ -239,9 +221,6 @@ end
 
 function tf = isStaleStrictBasisForPhreeqc(value, chemistryMode)
 tf = false;
-if strcmp(chemistryMode, 'strict_molins')
-    return;
-end
 try
     names = normalizeNameList(value);
 catch
@@ -251,25 +230,15 @@ tf = isequal(names, {'H_reactant'});
 end
 
 function value = defaultPhreeqcEngine(chemistryMode)
-if strcmp(chemistryMode, 'strict_molins')
-    value = 'none';
-else
-    value = 'iphreeqc_com';
-end
+value = 'iphreeqc_com';
 end
 
 function value = defaultDatabasePolicy(chemistryMode)
-if strcmp(chemistryMode, 'strict_molins')
-    value = 'not_used';
-else
-    value = 'exact_local';
-end
+value = 'exact_local';
 end
 
 function value = chemistrySemantics(chemistryMode)
 switch chemistryMode
-    case 'strict_molins'
-        value = "strict Molins benchmark without PHREEQC";
     case 'external_tst_phreeqc'
         value = "explicit external TST rate + PHREEQC equilibrium closure";
     case 'phreeqc_kinetics'

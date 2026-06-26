@@ -8,14 +8,10 @@ addpath(rtmDir);
 addpath(fullfile(rtmDir, 'couplePhreeqc'));
 end
 
-function testStrictMolinsConfigDisablesPhreeqc(testCase)
-cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
-
-verifyEqual(testCase, cfg.chemistry.mode, 'strict_molins');
-verifyEqual(testCase, cfg.chemistry.semantics, ...
-    "strict Molins benchmark without PHREEQC");
-verifyEqual(testCase, cfg.phreeqc.engine, 'none');
-verifyEqual(testCase, cfg.phreeqc.databasePolicy, 'not_used');
+function testStrictMolinsModeIsNotAccepted(testCase)
+verifyError(testCase, @() rtm.config.ValidateReactiveTransportConfig(struct( ...
+    'chemistry', struct('mode', 'strict_molins'))), ...
+    'RTSPHEM:Config:UnknownChemistryMode');
 end
 
 function testExternalTstPhreeqcUsesReactionClosureNotKinetics(testCase)

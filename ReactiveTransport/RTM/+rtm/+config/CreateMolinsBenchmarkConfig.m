@@ -5,23 +5,6 @@ kind = lower(strrep(strtrim(char(kind)), '-', '_'));
 config = baseConfig();
 
 switch kind
-    case {'parti_strict', 'part_i_strict', 'part1_strict'}
-        config.benchmark.name = 'molins_partI_strict';
-        config.benchmark.part = 'I';
-        config.benchmark.strictBenchmark = true;
-        config.benchmark.initializeFromPartI = false;
-        config.chemistry.mode = 'strict_molins';
-        config.phreeqc.engine = 'none';
-        config.phreeqc.databasePolicy = 'not_used';
-        config.time.mode = 'fixed_geometry_steady_rt';
-    case {'partii_strict', 'part_ii_strict', 'part2_strict'}
-        config.benchmark.name = 'molins_partII_strict';
-        config.benchmark.part = 'II';
-        config.benchmark.strictBenchmark = true;
-        config.benchmark.initializeFromPartI = true;
-        config.chemistry.mode = 'strict_molins';
-        config.phreeqc.engine = 'none';
-        config.phreeqc.databasePolicy = 'not_used';
     case {'integration_phreeqc', 'molins_geometry_phreeqc'}
         config.benchmark.name = 'molins_geometry_phreeqc_integration';
         config.benchmark.part = 'II';
@@ -43,7 +26,7 @@ function config = baseConfig()
 config = struct();
 config.solverArchitecture = 'conservative_v2';
 config.strictMassConservation = true;
-config.chemistry = struct('mode', 'strict_molins', ...
+config.chemistry = struct('mode', 'external_tst_phreeqc', ...
     'chargeAbsoluteTolerance_eq', 1e-8);
 config.transport = struct('backend', 'cut_cell_fv');
 config.time = struct();
@@ -63,7 +46,7 @@ config.mass = struct('absoluteTolerance_mol', 1e-14, ...
     'relativeTolerance', 1e-8, 'globalRelativeTolerance', 1e-6);
 config.failure = struct('maxRetries', 12, 'shrinkFactor', 0.5, ...
     'minDt_s', 1e-8);
-config.phreeqc = struct('engine', 'none', 'databasePolicy', 'not_used', ...
+config.phreeqc = struct('engine', 'iphreeqc_com', 'databasePolicy', 'exact_local', ...
     'databaseName', 'phreeqc-m.dat', 'persistSession', true, ...
     'useRunString', true);
 config.benchmark = struct('enabled', true, 'name', '', 'part', '', ...

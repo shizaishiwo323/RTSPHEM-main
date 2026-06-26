@@ -1,10 +1,9 @@
 classdef ReactiveTransportDriver < handle
     %REACTIVETRANSPORTDRIVER Minimal conservative_v2 RTM driver.
     %
-    % The initial implementation wires strict_molins reaction-only steps
-    % through transaction, chemistry result application, geometry diagnostics,
-    % accepted-step validation, and dt retry. Full transport/flow/geometric
-    % remap loops are added as separate verified capabilities.
+    % Conservative_v2 RTM driver for PHREEQC-backed calcite chemistry,
+    % transaction handling, geometry diagnostics, accepted-step validation,
+    % and dt retry.
 
     properties (Access = private)
         Config
@@ -348,20 +347,6 @@ classdef ReactiveTransportDriver < handle
     methods (Access = private)
         function reactionInput = buildReactionInput(obj)
             switch obj.Config.chemistry.mode
-                case 'strict_molins'
-                    options = struct();
-                    options.rate_constant_cm_s = getNestedField(obj.Config, ...
-                        {'chemistry', 'rate_constant_cm_s'}, 0);
-                    options.maxReactantFraction = getNestedField(obj.Config, ...
-                        {'time', 'rt', 'maxReactantFraction'}, Inf);
-                    options.maxMineralFraction = getNestedField(obj.Config, ...
-                        {'time', 'geometry', 'maxMineralFraction'}, Inf);
-                    options.reaction_time_integration = getNestedField(obj.Config, ...
-                        {'chemistry', 'reaction_time_integration'}, 'explicit_euler');
-                    options.reactionClusterDepthCells = getNestedField(obj.Config, ...
-                        {'chemistry', 'reaction_cluster_depth_cells'}, 1);
-                    reactionInput = rtm.chemistry.BuildStrictMolinsReactionInput( ...
-                        obj.State, obj.Geometry, obj.Connectivity, options);
                 case {'external_tst_phreeqc', 'phreeqc_kinetics'}
                     reactionInput = getNestedField(obj.Config, ...
                         {'chemistry', 'options'}, struct());
@@ -406,8 +391,8 @@ classdef ReactiveTransportDriver < handle
                     end
                 otherwise
                     error('RTSPHEM:Driver:UnsupportedChemistryMode', ...
-                        ['ReactiveTransportDriver currently supports strict_molins, ', ...
-                        'external_tst_phreeqc, and phreeqc_kinetics only.']);
+                        ['ReactiveTransportDriver currently supports ', ...
+                        'external_tst_phreeqc and phreeqc_kinetics only.']);
             end
         end
 
@@ -454,9 +439,6 @@ classdef ReactiveTransportDriver < handle
 
         function reactionResult = react(obj, reactionInput, dtSeconds)
             switch obj.Config.chemistry.mode
-                case 'strict_molins'
-                    reactionResult = rtm.chemistry.StrictMolinsBackend( ...
-                        obj.State, obj.Geometry, dtSeconds, reactionInput);
                 case 'external_tst_phreeqc'
                     reactionResult = rtm.chemistry.ExternalTstPhreeqcBackend( ...
                         obj.State, obj.Geometry, dtSeconds, reactionInput);
@@ -465,8 +447,8 @@ classdef ReactiveTransportDriver < handle
                         obj.State, obj.Geometry, dtSeconds, reactionInput);
                 otherwise
                     error('RTSPHEM:Driver:UnsupportedChemistryMode', ...
-                        ['ReactiveTransportDriver currently supports strict_molins, ', ...
-                        'external_tst_phreeqc, and phreeqc_kinetics only.']);
+                        ['ReactiveTransportDriver currently supports ', ...
+                        'external_tst_phreeqc and phreeqc_kinetics only.']);
             end
         end
 

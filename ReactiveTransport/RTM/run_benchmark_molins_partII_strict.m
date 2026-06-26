@@ -1,12 +1,8 @@
 function run = run_benchmark_molins_partII_strict(mode, options)
-%RUN_BENCHMARK_MOLINS_PARTII_STRICT Run the strict Molins Part II suite.
+%RUN_BENCHMARK_MOLINS_PARTII_STRICT Removed strict Molins Part II entry point.
 
-if nargin < 1 || isempty(mode)
-    mode = 'diagnostic';
-end
-if nargin < 2 || isempty(options)
-    options = struct();
-end
-options.kinds = "partII_strict";
-run = run_molins_convergence_suites(mode, options);
+error('RTSPHEM:Benchmark:RemovedStrictMolinsMode', ...
+    ['strict_molins has been removed. Use run_molins_convergence_suites(''', ...
+    'integration'') for the PHREEQC-coupled Molins path, or the legacy ', ...
+    'reactionModel=''tst'' path for the traditional TST solver.']);
 end

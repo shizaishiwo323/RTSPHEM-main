@@ -13,8 +13,7 @@ if exist(outputRoot, 'dir') ~= 7
     mkdir(outputRoot);
 end
 
-kinds = string(getOption(options, 'kinds', ...
-    ["partI_strict"; "partII_strict"; "integration_phreeqc"]));
+kinds = string(getOption(options, 'kinds', "integration_phreeqc"));
 kinds = kinds(:);
 suites = struct([]);
 for iKind = 1:numel(kinds)
@@ -55,17 +54,6 @@ if isfield(options, 'observableName') && ~isempty(options.observableName)
 end
 normalizedKind = lower(strrep(char(kind), '-', '_'));
 switch normalizedKind
-    case {'parti_strict', 'part_i_strict', 'part1_strict'}
-        kindOptions.observableName = 'mean_effective_rate_mol_cm2_s';
-        reference = referenceValueFromMatrix(options.acceptanceMatrix, ...
-            {'partI_reference', 'mean_effective_rate_mol_cm2_s'}, NaN);
-        if isfinite(reference)
-            kindOptions.referenceTargetValue = reference;
-            kindOptions.referenceRelativeTolerance = 0.05;
-            kindOptions.referenceTargetRunNamePattern = 'dt_0p054';
-        end
-    case {'partii_strict', 'part_ii_strict', 'part2_strict'}
-        kindOptions.observableName = 'final_solid_volume_cm3';
     case {'integration_phreeqc', 'molins_geometry_phreeqc'}
         kindOptions.observableName = 'max_component_mass_residual_moles';
         kindOptions.observableMaximumTolerance = 1e-8;

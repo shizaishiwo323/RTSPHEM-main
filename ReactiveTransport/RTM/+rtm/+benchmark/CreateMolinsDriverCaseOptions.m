@@ -6,14 +6,6 @@ if nargin < 2 || isempty(options)
 end
 kind = lower(strrep(strtrim(char(kind)), '-', '_'));
 switch kind
-    case {'parti_strict', 'part_i_strict', 'part1_strict'}
-        configKind = 'partI_strict';
-        suiteName = "molins_partI_strict_driver";
-        chemistryMode = 'strict_molins';
-    case {'partii_strict', 'part_ii_strict', 'part2_strict'}
-        configKind = 'partII_strict';
-        suiteName = "molins_partII_strict_driver";
-        chemistryMode = 'strict_molins';
     case {'integration_phreeqc', 'molins_geometry_phreeqc'}
         configKind = 'integration_phreeqc';
         suiteName = "molins_external_tst_phreeqc_driver";
@@ -40,10 +32,6 @@ caseOptions.geometryMacroOptions = getOption(options, ...
     'geometryMacroOptions', struct());
 if isfield(options, 'acceptanceMatrix') && ~isempty(options.acceptanceMatrix)
     caseOptions.acceptanceMatrix = options.acceptanceMatrix;
-    observationTimes = partIIObservationTimes(configKind, options.acceptanceMatrix);
-    if ~isempty(observationTimes)
-        caseOptions.observationTimes_s = observationTimes;
-    end
 end
 caseOptions.configFactory = @(scale, runInfo) molinsConfigFactory( ...
     scale, runInfo, configKind, chemistryMode, options);
@@ -96,23 +84,6 @@ if isfield(options, 'outputDir') && ~isempty(options.outputDir)
 end
 end
 
-function observationTimes = partIIObservationTimes(configKind, matrix)
-observationTimes = [];
-if ~strcmp(configKind, 'partII_strict')
-    return;
-end
-if ~isstruct(matrix) || ~isfield(matrix, 'partII_observation_times_min') || ...
-        isempty(matrix.partII_observation_times_min)
-    return;
-end
-minutes = matrix.partII_observation_times_min(:);
-if any(~isfinite(minutes)) || any(minutes < 0)
-    error('RTSPHEM:Benchmark:InvalidAcceptanceObservationTimes', ...
-        'partII_observation_times_min must contain nonnegative finite values.');
-end
-observationTimes = minutes .* 60;
-end
-
 function cfg = molinsConfigFactory(refinementScale, runInfo, configKind, chemistryMode, options)
 caseSpec = acceptanceCaseForRun(refinementScale, runInfo, options);
 if ~isempty(caseSpec)
@@ -125,16 +96,8 @@ cfg.time.rt.requestedDt_s = refinementScale;
 cfg.chemistry.rate_constant_cm_s = getScalarOption(options, ...
     'rate_constant_cm_s', 0.1);
 mesh = meshSpecForScale(refinementScale, options, caseSpec);
-if strcmp(chemistryMode, 'strict_molins')
-    cfg.chemistry.reaction_time_integration = char(getOption(options, ...
-        'reaction_time_integration', 'exact_first_order'));
-    cfg.chemistry.reaction_cluster_depth_cells = reactionClusterDepth(mesh, options);
-    cfg.time.rt.maxReactantFraction = getFractionOption(options, ...
-        'maxReactantFraction', Inf);
-else
-    cfg.time.rt.maxReactantFraction = getFractionOption(options, ...
-        'maxReactantFraction', cfg.time.rt.maxReactantFraction);
-end
+cfg.time.rt.maxReactantFraction = getFractionOption(options, ...
+    'maxReactantFraction', cfg.time.rt.maxReactantFraction);
 cfg.time.geometry.maxMineralFraction = getFractionOption(options, ...
     'maxMineralFraction', cfg.time.geometry.maxMineralFraction);
 cfg.geometry.molarVolume_cm3_mol = getScalarOption(options, ...
@@ -179,19 +142,6 @@ if strcmp(chemistryMode, 'external_tst_phreeqc')
 end
 end
 
-function value = reactionClusterDepth(mesh, options)
-if isfield(options, 'reactionClusterDepthCells') && ...
-        ~isempty(options.reactionClusterDepthCells)
-    value = getIntegerOption(options, 'reactionClusterDepthCells', 1);
-    return;
-end
-if isstruct(mesh) && isfield(mesh, 'nx') && ~isempty(mesh.nx)
-    value = max(0, round(mesh.nx ./ 64) - 2);
-else
-    value = 1;
-end
-end
-
 function databasePath = exactLocalPhreeqcDatabasePath(databaseName)
 benchmarkDir = fileparts(mfilename('fullpath'));
 rtmDir = fileparts(fileparts(benchmarkDir));
@@ -208,40 +158,20 @@ if ~isempty(caseSpec)
     refinementScale = caseSpec.time_step_s;
 end
 numCells = molinsCellCount(refinementScale, options, caseSpec);
-if strcmp(chemistryMode, 'strict_molins')
-    state = struct();
-    state.component_names = {'H_reactant'};
-    if isfield(options, 'h_reactant_moles') && ~isempty(options.h_reactant_moles)
-        hReactantMoles = getScalarOption(options, 'h_reactant_moles', 1e-3);
-        state.component_moles = distributeScalarMoles(hReactantMoles, numCells);
-    else
-        mesh = meshSpecForScale(refinementScale, options, caseSpec);
-        if isempty(mesh)
-            hReactantMoles = 1e-3;
-            state.component_moles = distributeScalarMoles(hReactantMoles, numCells);
-        else
-            geometry = molinsGridGeometry(mesh, options);
-            initialConcentration = getScalarOption(options, ...
-                'initial_h_concentration_mol_cm3', 0);
-            state.component_moles = initialConcentration .* geometry.water_volume_cm3(:);
-        end
-    end
+state = struct();
+state.component_names = {'Ca', 'C', 'Na', 'Cl'};
+totals = [
+    getScalarOption(options, 'ca_moles', 0), ...
+    getScalarOption(options, 'c_moles', 0), ...
+    getScalarOption(options, 'na_moles', 1e-8), ...
+    getScalarOption(options, 'cl_moles', 1e-8)];
+mesh = meshSpecForScale(refinementScale, options, caseSpec);
+if isempty(mesh)
+    state.component_moles = distributeComponentTotals(totals, numCells);
 else
-    state = struct();
-    state.component_names = {'Ca', 'C', 'Na', 'Cl'};
-    totals = [
-        getScalarOption(options, 'ca_moles', 0), ...
-        getScalarOption(options, 'c_moles', 0), ...
-        getScalarOption(options, 'na_moles', 1e-8), ...
-        getScalarOption(options, 'cl_moles', 1e-8)];
-    mesh = meshSpecForScale(refinementScale, options, caseSpec);
-    if isempty(mesh)
-        state.component_moles = distributeComponentTotals(totals, numCells);
-    else
-        geometry = molinsGridGeometry(mesh, options);
-        state.component_moles = distributeComponentTotalsOverWater( ...
-            totals, geometry.water_volume_cm3(:));
-    end
+    geometry = molinsGridGeometry(mesh, options);
+    state.component_moles = distributeComponentTotalsOverWater( ...
+        totals, geometry.water_volume_cm3(:));
 end
 state.mineral_names = {'Calcite'};
 state.mineral_moles = molinsMineralMoles(refinementScale, options, caseSpec, numCells);

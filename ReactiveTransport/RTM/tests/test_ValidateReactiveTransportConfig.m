@@ -18,7 +18,7 @@ cfg = struct();
 validated = rtm.config.ValidateReactiveTransportConfig(cfg);
 
 verifyEqual(testCase, validated.solverArchitecture, 'conservative_v2');
-verifyEqual(testCase, validated.chemistry.mode, 'strict_molins');
+verifyEqual(testCase, validated.chemistry.mode, 'external_tst_phreeqc');
 verifyEqual(testCase, validated.chemistry.chargeAbsoluteTolerance_eq, 1e-8);
 verifyEqual(testCase, ...
     validated.chemistry.calciteStoichiometryAbsoluteTolerance_mol, 1e-14);
@@ -237,13 +237,12 @@ verifyError(testCase, @() rtm.config.ValidateReactiveTransportConfig(cfg), ...
     'RTSPHEM:Config:BenchmarkRequiresExactLocalDatabase');
 end
 
-function testStrictMolinsRejectsPhreeqcEngine(testCase)
+function testStrictMolinsModeIsRejected(testCase)
 cfg = conservativeConfig();
 cfg.chemistry.mode = 'strict_molins';
-cfg.phreeqc.engine = 'iphreeqc_com';
 
 verifyError(testCase, @() rtm.config.ValidateReactiveTransportConfig(cfg), ...
-    'RTSPHEM:Config:StrictMolinsUsesNoPhreeqc');
+    'RTSPHEM:Config:UnknownChemistryMode');
 end
 
 function testLegacyTransportCannotClaimStrictMassConservation(testCase)
@@ -273,9 +272,6 @@ end
 
 function testSupportsFixedGeometrySteadyRtMode(testCase)
 cfg = conservativeConfig();
-cfg.chemistry.mode = 'strict_molins';
-cfg.phreeqc.engine = 'none';
-cfg.phreeqc.databasePolicy = 'not_used';
 cfg.time.mode = 'fixed_geometry_steady_rt';
 
 validated = rtm.config.ValidateReactiveTransportConfig(cfg);

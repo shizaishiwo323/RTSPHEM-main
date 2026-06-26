@@ -12,28 +12,14 @@ function teardownOnce(~)
 % Keep shared MATLAB paths available when directory suites run.
 end
 
-function testStrictPartIConfigUsesStrictMolinsDefaults(testCase)
-cfg = rtm.config.CreateMolinsBenchmarkConfig('partI_strict');
-
-verifyEqual(testCase, cfg.benchmark.name, 'molins_partI_strict');
-verifyEqual(testCase, cfg.benchmark.part, 'I');
-verifyEqual(testCase, cfg.chemistry.mode, 'strict_molins');
-verifyEqual(testCase, cfg.phreeqc.engine, 'none');
-verifyEqual(testCase, cfg.transport.backend, 'cut_cell_fv');
-verifyEqual(testCase, cfg.time.mode, 'fixed_geometry_steady_rt');
-verifyTrue(testCase, cfg.strictMassConservation);
-verifyEqual(testCase, cfg.geometry.solidRelativeTolerance, 1e-6);
-rtm.config.ValidateReactiveTransportConfig(cfg);
+function testStrictPartIConfigIsRemoved(testCase)
+verifyError(testCase, @() rtm.config.CreateMolinsBenchmarkConfig('partI_strict'), ...
+    'RTSPHEM:Config:UnknownMolinsBenchmark');
 end
 
-function testStrictPartIIConfigRequiresPartISteadyInitializer(testCase)
-cfg = rtm.config.CreateMolinsBenchmarkConfig('partII_strict');
-
-verifyEqual(testCase, cfg.benchmark.name, 'molins_partII_strict');
-verifyEqual(testCase, cfg.benchmark.part, 'II');
-verifyTrue(testCase, cfg.benchmark.initializeFromPartI);
-verifyEqual(testCase, cfg.chemistry.mode, 'strict_molins');
-rtm.config.ValidateReactiveTransportConfig(cfg);
+function testStrictPartIIConfigIsRemoved(testCase)
+verifyError(testCase, @() rtm.config.CreateMolinsBenchmarkConfig('partII_strict'), ...
+    'RTSPHEM:Config:UnknownMolinsBenchmark');
 end
 
 function testPhreeqcIntegrationConfigIsNotStrictBenchmark(testCase)
