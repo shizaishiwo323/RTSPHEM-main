@@ -29,6 +29,25 @@ switch rateLaw
         active = interfaceAreaCm2(:) > 0;
         ratePerArea(~active) = 0;
     otherwise
+        interfaceRateMode = normalizeRateMode(getOption(options, ...
+            'phreeqcInterfaceRateMode', getOption(options, ...
+            'interfaceRateMode', 'per_area_from_dissolved_moles')));
+        if strcmp(interfaceRateMode, 'kin_delta_over_kin_time')
+            if isfield(result, 'calciteKinDeltaRate_mol_s') && ...
+                    ~isempty(result.calciteKinDeltaRate_mol_s)
+                ratePerArea = max(result.calciteKinDeltaRate_mol_s(:), 0);
+            elseif isfield(result, 'calciteRate_mol_s') && ~isempty(result.calciteRate_mol_s)
+                ratePerArea = max(result.calciteRate_mol_s(:), 0);
+            elseif isfield(result, 'calciteDissolvedMoles')
+                ratePerArea = max(result.calciteDissolvedMoles(:), 0) ./ ...
+                    max(timeStepSize, eps);
+            else
+                ratePerArea = zeros(size(interfaceAreaCm2(:)));
+            end
+            ratePerArea(interfaceAreaCm2(:) <= 0) = 0;
+            ratePerArea(~isfinite(ratePerArea)) = 0;
+            return;
+        end
         if isfield(result, 'calciteDissolvedMoles')
             dissolvedMoles = result.calciteDissolvedMoles;
         else
@@ -47,5 +66,17 @@ if isstruct(options) && isfield(options, fieldName) && ~isempty(options.(fieldNa
     value = options.(fieldName);
 else
     value = defaultValue;
+end
+end
+
+function mode = normalizeRateMode(mode)
+mode = lower(strrep(strtrim(char(mode)), '-', '_'));
+switch mode
+    case {'kin_delta_over_kin_time', 'kin_delta_rate', ...
+            'phreeqc_kin_delta_rate', 'phreeqc_cell_rate', ...
+            'direct_kin_delta'}
+        mode = 'kin_delta_over_kin_time';
+    otherwise
+        mode = 'per_area_from_dissolved_moles';
 end
 end

@@ -109,6 +109,10 @@ numCells = numel(result.h_mol_cm3);
 if ~isfield(result, 'calciteDeltaMoles') || isempty(result.calciteDeltaMoles)
     return;
 end
+if ~isfield(result, 'calciteKinDeltaRate_mol_s') || ...
+        isempty(result.calciteKinDeltaRate_mol_s)
+    result.calciteKinDeltaRate_mol_s = result.calciteRate_mol_s;
+end
 
 waterVolume = optionalColumn(state, 'water_volume_cm3', numCells, 0);
 calciteMoles = optionalColumn(state, 'calcite_moles', numCells, Inf);
@@ -228,6 +232,7 @@ result.na_mol_cm3 = result.na_total_mol_cm3;
 result.calciteSI = NaN(numCells, 1);
 result.calciteDeltaMoles = zeros(numCells, 1);
 result.calciteDissolvedMoles = zeros(numCells, 1);
+result.calciteKinDeltaRate_mol_s = zeros(numCells, 1);
 result.calciteRate_mol_s = zeros(numCells, 1);
 result.calcite_cell_rate_mol_s = zeros(numCells, 1);
 result.solutionNumber = (1:numCells)';

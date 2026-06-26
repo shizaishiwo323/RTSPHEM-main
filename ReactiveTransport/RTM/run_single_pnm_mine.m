@@ -88,7 +88,7 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
-cfg.inletVelocity = 0.001;
+cfg.inletVelocity = 0.01;
 
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
@@ -107,7 +107,15 @@ cfg.phreeqcRunGroup = 'phreeqc_database_calcite';
 cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
-cfg.phreeqcMaxSpecificSurfaceArea = 10;
+cfg.phreeqcMaxSpecificSurfaceArea = Inf;
+% PHREEQC database 反应速率回写方式：
+%   'kin_delta_over_kin_time' 直接使用 PHREEQC 输出的 -KIN_DELTA/KIN_TIME，
+%   与 Two_Min_TripleDataSet_Parallel.m 的旧耦合思路一致，不再除以界面面积。
+cfg.phreeqcInterfaceRateMode = 'kin_delta_over_kin_time';
+% PHREEQC 专用反应聚合网格。20 um = 20e-4 cm = 0.002 cm。
+cfg.useSeparatePhreeqcGrid = true;
+cfg.phreeqcGridHmax = 20e-4;
+cfg.exportPhreeqcGridPlot = true;
 cfg.phreeqcBadStepMax = 5000;
 cfg.phreeqcMinHForPHMolL = 1e-7;
 cfg.phreeqcMinActiveWaterVolumeFraction = 1e-2;

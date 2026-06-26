@@ -644,6 +644,7 @@ verifyEqual(testCase, mockEngine.RunStringCount, 1);
 verifyTextContains(testCase, mockEngine.LastInputText, '-cells 1-1');
 verifyEqual(testCase, result.calciteDissolvedMoles, [1e-9; 0; 0], ...
     'RelTol', 1e-12, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.calciteKinDeltaRate_mol_s(1), 0, 'AbsTol', 0);
 verifyEqual(testCase, result.ca_total_mol_cm3(2:3), state.ca_mol_cm3(2:3), ...
     'AbsTol', 0);
 verifyEqual(testCase, result.na_total_mol_cm3(2:3), state.na_mol_cm3(2:3), ...
@@ -852,6 +853,62 @@ ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
     result, interfaceAreaCm2, timeStepSize, options, legacyHMolCm3);
 
 verifyEqual(testCase, ratePerArea, [1e-8; 1.5e-8; 0], 'AbsTol', 1e-15);
+end
+
+function testDatabaseCalciteInterfaceRateCanUseKinDeltaOverKinTimeDirectly(testCase)
+result = struct();
+result.calciteDissolvedMoles = [2e-8; 6e-8; 3e-8];
+result.calciteRate_mol_s = [9e-8; 8e-8; 7e-8];
+result.calciteKinDeltaRate_mol_s = [1e-8; 3e-8; 4e-8];
+interfaceAreaCm2 = [1; 2; 0];
+timeStepSize = 2;
+legacyHMolCm3 = [1e-5; 2e-5; 3e-5];
+options = struct();
+options.rateLaw = 'database_calcite';
+options.phreeqcInterfaceRateMode = 'kin_delta_over_kin_time';
+
+ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
+    result, interfaceAreaCm2, timeStepSize, options, legacyHMolCm3);
+
+verifyEqual(testCase, ratePerArea, [1e-8; 3e-8; 0], 'AbsTol', 1e-15);
+end
+
+function testRunBatchPreservesRawKinDeltaRateForDirectRateMode(testCase)
+databasePath = findPhreeqcDatabase(testCase);
+assumeTrue(testCase, ~isempty(databasePath), 'No PHREEQC database found for mock integration test.');
+
+raw = {
+    'soln', 'pH', 'charge(eq)', 'Ca', 'C', 'Na', 'Cl', ...
+        'm_H+', 'm_Ca+2', 'm_HCO3-', 'm_CO3-2', 'm_Cl-', 'm_Na+', ...
+        'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
+    1, 3.0, 0, 1e-6, 1e-6, 1e-5, 1e-5, ...
+        1e-3, 1e-6, 1e-6, 0, 1e-5, 1e-5, ...
+        -1, -4e-6, 2e-6
+    };
+mockEngine = MockIPhreeqcEngine(raw);
+session = rtm.phreeqc.PhreeqcSession(struct('engine', mockEngine));
+cleanupSession = onCleanup(@() session.close());
+
+state = oneCellAcidCalciteState();
+state.water_volume_cm3 = 10;
+options = struct();
+options.databasePath = databasePath;
+options.phreeqcSession = session;
+options.writeInputFiles = false;
+options.rateLaw = 'database_calcite';
+options.timeStepSize = 2;
+options.solutionWaterKg = 1;
+options.phreeqcInterfaceRateMode = 'kin_delta_over_kin_time';
+
+result = RunPhreeqcCalciteBatch(state, options);
+ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
+    result, state.interface_area_cm2, options.timeStepSize, options);
+
+verifyEqual(testCase, result.calciteKinDeltaRate_mol_s, 2e-6, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.calciteRate_mol_s, 2e-8, 'AbsTol', 1e-18);
+verifyEqual(testCase, ratePerArea, 2e-6, 'AbsTol', 1e-18);
+
+clear cleanupSession;
 end
 
 function vertexSpeed = expectedInventoryLimitedVertexSpeed( ...

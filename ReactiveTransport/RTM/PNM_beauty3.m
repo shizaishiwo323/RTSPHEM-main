@@ -370,6 +370,12 @@ phreeqcTransportFirstSplit = usePhreeqc && strcmpi(phreeqcRateLaw, 'tst_match');
 phreeqcTstRateCoefficient = cfgget(config, 'phreeqcTstRateCoefficient', rateCoefficientTST);
 phreeqcKineticsCorrectionFactor = cfgget(config, 'phreeqcKineticsCorrectionFactor', 1);
 phreeqcMaxSpecificSurfaceArea = cfgget(config, 'phreeqcMaxSpecificSurfaceArea', 10);
+phreeqcInterfaceRateMode = char(cfgget(config, ...
+    'phreeqcInterfaceRateMode', 'per_area_from_dissolved_moles'));
+useSeparatePhreeqcGrid = usePhreeqc && logical(cfgget(config, ...
+    'useSeparatePhreeqcGrid', false)) && ~strcmpi(phreeqcRateLaw, 'tst_match');
+phreeqcGridHmax = cfgget(config, 'phreeqcGridHmax', 20e-4);
+exportPhreeqcGridPlot = logical(cfgget(config, 'exportPhreeqcGridPlot', true));
 if usePhreeqc && strcmpi(phreeqcRateLaw, 'tst_match') && ...
         ~cfgHasNonEmptyField(config, 'phreeqcMaxSpecificSurfaceArea')
     phreeqcMaxSpecificSurfaceArea = Inf;
@@ -428,6 +434,9 @@ if usePhreeqc
     fprintf('PHREEQC database               : %s\n', phreeqcDatabasePath);
     fprintf('PHREEQC run group              : %s\n', phreeqcRunGroup);
     fprintf('PHREEQC rate law               : %s\n', phreeqcRateLaw);
+    if useSeparatePhreeqcGrid
+        fprintf('PHREEQC reaction grid Hmax     : %.4e cm\n', phreeqcGridHmax);
+    end
     if strcmpi(phreeqcRateLaw, 'tst_match')
         fprintf('PHREEQC TST-match coefficient  : %.4e config value, law c_H*1000*k\n', ...
             phreeqcTstRateCoefficient);
@@ -1225,6 +1234,15 @@ macroCoordCell = mat2cell(gridHyPHM.baryT, ones(gridHyPHM.numT, 1), 2);
 flowConfig = GetFlowBoundaryConfig(flowDirection, lengthXAxis, lengthYAxis, nxParts, nyParts);
 fprintf('Flow direction: %s\n', flowConfig.direction);
 
+phreeqcReactionGrid = [];
+phreeqcReactionProjection = [];
+if useSeparatePhreeqcGrid
+    phreeqcReactionGrid = domainRectangle(0, lengthXAxis, 0, lengthYAxis, phreeqcGridHmax);
+    phreeqcReactionProjection = BuildPhreeqcReactionGridProjection(gridHyPHM, phreeqcReactionGrid);
+    fprintf('PHREEQC reaction grid          : %d triangles (fine grid: %d)\n', ...
+        phreeqcReactionGrid.numT, gridHyPHM.numT);
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Calculation of initial effective parameters
@@ -1439,6 +1457,8 @@ phreeqcOutputDir = '';
 phreeqcWorkDir = '';
 phreeqcSummaryCsvFile = '';
 phreeqcSpeciesPlotDir = '';
+phreeqcReactionGridPlotPath = "";
+phreeqcReactionGridDiagnosticsPlotPath = "";
 if usePhreeqc
     phreeqcOutputDir = fullfile(resultsDir, 'phreeqc_results');
     phreeqcWorkDir = fullfile(phreeqcOutputDir, 'inputs');
@@ -1469,6 +1489,9 @@ if usePhreeqc
         'phreeqcTstRateCoefficient', phreeqcTstRateCoefficient, ...
         'kineticsCorrectionFactor', phreeqcKineticsCorrectionFactor, ...
         'maxSpecificSurfaceArea', phreeqcMaxSpecificSurfaceArea, ...
+        'phreeqcInterfaceRateMode', phreeqcInterfaceRateMode, ...
+        'useSeparatePhreeqcGrid', useSeparatePhreeqcGrid, ...
+        'phreeqcGridHmax', phreeqcGridHmax, ...
         'badStepMax', phreeqcBadStepMax, ...
         'minHForPHMolL', phreeqcMinHForPHMolL, ...
         'minActiveWaterVolumeFraction', phreeqcMinActiveWaterVolumeFraction, ...
@@ -1539,6 +1562,27 @@ if ~exist(individualPlotsDir, 'dir'); mkdir(individualPlotsDir); end
 if usePhreeqc
     phreeqcSpeciesPlotDir = fullfile(individualPlotsDir, 'phreeqc_species');
     if ~exist(phreeqcSpeciesPlotDir, 'dir'); mkdir(phreeqcSpeciesPlotDir); end
+end
+if useSeparatePhreeqcGrid && exportPhreeqcGridPlot
+    phreeqcGridPlotDir = fullfile(individualPlotsDir, 'phreeqc_grid');
+    if ~exist(phreeqcGridPlotDir, 'dir'); mkdir(phreeqcGridPlotDir); end
+    phreeqcReactionGridPlotPath = string(fullfile( ...
+        phreeqcGridPlotDir, 'phreeqc_reaction_grid_initial.png'));
+    phreeqcReactionGridDiagnosticsPlotPath = string(fullfile( ...
+        meshDiagnosticsDir, 'phreeqc_reaction_grid_initial.png'));
+    try
+        ExportPhreeqcReactionGridPlot( ...
+            {char(phreeqcReactionGridPlotPath), ...
+            char(phreeqcReactionGridDiagnosticsPlotPath)}, ...
+            phreeqcReactionGrid, X0_initContour, Y0_initContour, phi0_initContour, ...
+            phreeqcGridHmax, lengthXAxis, lengthYAxis);
+        fprintf('PHREEQC reaction grid plot     : %s\n', phreeqcReactionGridPlotPath);
+        fprintf('PHREEQC reaction grid copy     : %s\n', ...
+            phreeqcReactionGridDiagnosticsPlotPath);
+    catch ME
+        warning('MATLAB:PhreeqcReactionGridPlot', ...
+            'Failed to export PHREEQC reaction grid plot: %s', ME.message);
+    end
 end
 subplot1Dir = fullfile(individualPlotsDir, 'concentration');
 subplot2Dir = fullfile(individualPlotsDir, 'interface');
@@ -1611,6 +1655,14 @@ metadata.parameters = struct( ...
     'phreeqcTemperatureC', phreeqcTemperatureC, ...
     'phreeqcKineticsCorrectionFactor', phreeqcKineticsCorrectionFactor, ...
     'phreeqcMaxSpecificSurfaceArea_m2_kgw', phreeqcMaxSpecificSurfaceArea, ...
+    'phreeqcInterfaceRateMode', string(phreeqcInterfaceRateMode), ...
+    'useSeparatePhreeqcGrid', useSeparatePhreeqcGrid, ...
+    'phreeqcGridHmax_cm', phreeqcGridHmax, ...
+    'exportPhreeqcGridPlot', exportPhreeqcGridPlot, ...
+    'phreeqcReactionGridPlotPath', phreeqcReactionGridPlotPath, ...
+    'phreeqcReactionGridDiagnosticsPlotPath', ...
+    phreeqcReactionGridDiagnosticsPlotPath, ...
+    'phreeqcReactionGridNumTriangles', getGridTriangleCount(phreeqcReactionGrid), ...
     'phreeqcBadStepMax', phreeqcBadStepMax, ...
     'phreeqcMinHForPHMolL', phreeqcMinHForPHMolL, ...
     'phreeqcMinActiveWaterVolumeFraction', phreeqcMinActiveWaterVolumeFraction, ...
@@ -2048,6 +2100,7 @@ while transportStepper.next
         phreeqcBaseState = collectPhreeqcState(hydrogenTransport, calciumTransport, carbonTransport, ...
             sodiumTransport, chlorideTransport, timeIterationStep, phreeqcGeometryState);
         phreeqcState = phreeqcBaseState;
+        phreeqcFineStateTemplate = phreeqcBaseState;
         prescribedInterfaceMoles = [];
         projectedMoles = [];
         agglomerateWeightMatrix = [];
@@ -2129,8 +2182,16 @@ while transportStepper.next
                 phreeqcState = phreeqcReactionInputState;
             end
         end
+        if useSeparatePhreeqcGrid && ~strcmpi(phreeqcRateLaw, 'tst_match')
+            phreeqcState = AggregatePhreeqcStateToReactionGrid( ...
+                phreeqcState, phreeqcReactionProjection);
+        end
         phreeqcSpeciesData = RunPhreeqcCalciteBatch( ...
             phreeqcState, phreeqcOptions);
+        if useSeparatePhreeqcGrid && ~strcmpi(phreeqcRateLaw, 'tst_match')
+            phreeqcSpeciesData = ExpandPhreeqcReactionGridResult( ...
+                phreeqcSpeciesData, phreeqcFineStateTemplate, phreeqcReactionProjection);
+        end
         if strcmpi(phreeqcRateLaw, 'tst_match') && ...
                 ~isempty(agglomerateWeightMatrix) && nnz(agglomerateWeightMatrix) > 0
             phreeqcSpeciesData = applyAgglomeratedPhreeqcUpdate( ...
@@ -2144,7 +2205,7 @@ while transportStepper.next
         if ~strcmpi(phreeqcRateLaw, 'tst_match')
             phreeqcCalciteRateData = ComputePhreeqcInterfaceRatePerArea( ...
                 phreeqcSpeciesData, phreeqcGeometryState.interface_area_cm2, ...
-                macroscaleTimeStepSize, phreeqcOptions, phreeqcState.h_mol_cm3);
+                macroscaleTimeStepSize, phreeqcOptions, phreeqcBaseState.h_mol_cm3);
         end
         phreeqcSpeciesData.calciteRatePerArea_mol_cm2_s = phreeqcCalciteRateData;
         if strcmpi(phreeqcRateLaw, 'tst_match')
@@ -4837,6 +4898,18 @@ if isstruct(config) && isfield(config, fieldName) && ~isempty(config.(fieldName)
     value = config.(fieldName);
 else
     value = defaultValue;
+end
+end
+
+function n = getGridTriangleCount(grid)
+if isempty(grid)
+    n = 0;
+elseif isstruct(grid) && isfield(grid, 'numT')
+    n = grid.numT;
+elseif isobject(grid) && isprop(grid, 'numT')
+    n = grid.numT;
+else
+    n = 0;
 end
 end
 
