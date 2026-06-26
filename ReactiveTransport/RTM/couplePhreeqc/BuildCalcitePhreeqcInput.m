@@ -5,7 +5,8 @@ function text = BuildCalcitePhreeqcInput(state, options)
 % PHREEQC mol/kgw-style numbers with the common dilute-solution approximation
 % 1 mol/L = 1e-3 mol/cm^3. Following the reference Live Script coupling,
 % the PHREEQC batch solution uses a reference water mass by default; the PNM
-% caller scales KIN_DELTA back to each cell's real water volume after the run.
+% caller scales PHREEQC kinetic-reactant deltas back to each cell's real
+% water volume after the run.
 
 arguments
     state struct
@@ -61,13 +62,19 @@ minHForPH = getOption(options, 'minHForPHMolL', 1e-7);
 balancePhCharge = logical(getOption(options, 'balancePhCharge', true));
 kineticsCorrectionFactor = getOption(options, 'kineticsCorrectionFactor', ...
     getOption(options, 'phreeqcKineticsCorrectionFactor', 1));
+kineticsParameterConvention = lower(strrep(strtrim(char(getOption(options, ...
+    'calciteKineticsParameterConvention', getOption(options, ...
+    'phreeqcCalciteKineticsParameterConvention', 'phreeqc_rates_cm2_per_mol')))), '-', '_'));
+calciteSurfaceAreaExponent = getOption(options, ...
+    'calciteSurfaceAreaExponent', getOption(options, ...
+    'phreeqcCalciteSurfaceAreaExponent', 1));
 kineticsTolerance = getOption(options, 'kineticsTolerance', 1e-8);
 badStepMax = getOption(options, 'badStepMax', 5000);
 mineralFormula = char(getOption(options, 'mineralFormula', 'CaCO3'));
 rateLaw = char(getOption(options, 'rateLaw', getOption(options, 'phreeqcRateLaw', 'database_calcite')));
 rateCoefficientTST = getOption(options, 'rateCoefficientTST', ...
     getOption(options, 'phreeqcTstRateCoefficient', 1e-4));
-[mineralName, kineticsParm2, usePrescribedCalciteReaction] = resolveCalciteRateLaw( ...
+[mineralName, legacyKineticsParm2, usePrescribedCalciteReaction] = resolveCalciteRateLaw( ...
     rateLaw, options, kineticsCorrectionFactor, rateCoefficientTST);
 
 interfaceAreaCm2 = max(interfaceAreaCm2(:), 0);
@@ -87,19 +94,23 @@ else
 end
 prescribedReferenceMoles = prescribedDissolvedMoles .* solutionWaterKg ./ reactionWaterKg;
 activeKinetics = interfaceAreaCm2 > 0 & waterVolumeCm3 > 0 & calciteMoles > 0;
+referenceScale = solutionWaterKg ./ max(waterKg, minWaterKg);
 if hasCalciteInventory
-    kineticsMoles = max(calciteMoles(:), minKineticsMoles);
-    kineticsM0 = max(initialCalciteMoles(:), minKineticsM0);
+    kineticsMoles = max(calciteMoles(:) .* referenceScale(:), minKineticsMoles);
+    kineticsM0 = max(initialCalciteMoles(:) .* referenceScale(:), minKineticsM0);
 else
     kineticsMoles = repmat(max(kineticsReservoirMoles, minKineticsMoles), ...
         numCells, 1);
     kineticsM0 = repmat(max(kineticsReservoirMoles, minKineticsM0), ...
         numCells, 1);
 end
-kineticsSurfaceArea = specificSurfaceArea;
+[kineticsParm1, kineticsParm2] = buildCalciteKineticsParameters( ...
+    kineticsParameterConvention, interfaceAreaCm2, waterKg, solutionWaterKg, ...
+    kineticsM0, specificSurfaceArea, kineticsCorrectionFactor, ...
+    legacyKineticsParm2, calciteSurfaceAreaExponent);
 kineticsMoles(~activeKinetics) = minKineticsMoles;
 kineticsM0(~activeKinetics) = minKineticsM0;
-kineticsSurfaceArea(~activeKinetics) = minKineticsSurfaceArea;
+kineticsParm1(~activeKinetics) = minKineticsSurfaceArea;
 lines = strings(0, 1);
 lines(end + 1) = "TITLE RTSPHEM single-calcite PHREEQC coupling";
 
@@ -133,7 +144,7 @@ for iCell = 1:numCells
         lines(end + 1) = sprintf('-formula  %s  1', mineralFormula);
         lines(end + 1) = sprintf('-m        %.15g', kineticsMoles(iCell));
         lines(end + 1) = sprintf('-m0       %.15g', kineticsM0(iCell));
-        lines(end + 1) = sprintf('-parms    %.15g  %.15g', kineticsSurfaceArea(iCell), kineticsParm2);
+        lines(end + 1) = sprintf('-parms    %.15g  %.15g', kineticsParm1(iCell), kineticsParm2(iCell));
         lines(end + 1) = sprintf('-tol %.15g', kineticsTolerance);
         lines(end + 1) = sprintf('-bad_step_max %.15g', badStepMax);
     end
@@ -150,6 +161,9 @@ lines(end + 1) = "-alkalinity true";
 lines(end + 1) = "-totals Ca C Na Cl";
 lines(end + 1) = "-molalities H+ Ca+2 HCO3- CO3-2 Cl- Na+";
 lines(end + 1) = "-saturation_indices Calcite";
+if ~usePrescribedCalciteReaction
+    lines(end + 1) = "-kinetic_reactants Calcite";
+end
 lines(end + 1) = "USER_PUNCH";
 lines(end + 1) = "-headings KIN_DELTA_Calcite RATE_Calcite";
 lines(end + 1) = "-start";
@@ -166,6 +180,29 @@ lines(end + 1) = sprintf('-time_step %.15g', dt);
 lines(end + 1) = "END";
 
 text = char(strjoin(lines, newline));
+end
+
+function [parm1, parm2] = buildCalciteKineticsParameters( ...
+    convention, interfaceAreaCm2, waterKg, solutionWaterKg, kineticsM0, ...
+    legacySpecificSurfaceArea, kineticsCorrectionFactor, legacyParm2, ...
+    surfaceAreaExponent)
+switch convention
+    case {'phreeqc_rates_cm2_per_mol', 'phreeqc_rates', ...
+            'cm2_per_mol_calcite', 'latest_phreeqc_rates'}
+        referenceAreaCm2 = interfaceAreaCm2(:) .* solutionWaterKg ./ ...
+            max(waterKg(:), eps);
+        referenceAreaCm2 = referenceAreaCm2 .* kineticsCorrectionFactor;
+        parm1 = referenceAreaCm2 ./ max(kineticsM0(:), eps);
+        parm2 = repmat(surfaceAreaExponent, numel(parm1), 1);
+    case {'legacy_m2_per_kgw', 'phreeqc_m', 'm2_per_kgw'}
+        parm1 = legacySpecificSurfaceArea(:);
+        parm2 = repmat(legacyParm2, numel(parm1), 1);
+    otherwise
+        error('RTSPHEM:Phreeqc:UnknownCalciteKineticsParameterConvention', ...
+            'Unknown calcite kinetics parameter convention: %s.', convention);
+end
+parm1(~isfinite(parm1)) = 0;
+parm2(~isfinite(parm2)) = 1;
 end
 
 function values = requireColumn(state, fieldName)

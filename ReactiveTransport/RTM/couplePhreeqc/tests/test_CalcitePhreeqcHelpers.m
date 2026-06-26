@@ -34,7 +34,7 @@ options.kineticsCorrectionFactor = 1;
 text = BuildCalcitePhreeqcInput(state, options);
 
 verifyFalse(testCase, contains(string(text), 'RATES'), ...
-    'Calcite kinetics must come from phreeqc-m.dat, not an inline RATES block.');
+    'Calcite kinetics must come from phreeqc_rates.dat, not an inline RATES block.');
 verifyFalse(testCase, contains(string(text), 'Calcite_RTSPHEM'), ...
     'The simplified Calcite_RTSPHEM rate law must not be used.');
 verifyTextContains(testCase, text, 'SOLUTION 1');
@@ -47,14 +47,15 @@ verifyTextContains(testCase, text, 'Cl 0.11');
 verifyTextContains(testCase, text, 'KINETICS 1');
 verifyTextContains(testCase, text, 'Calcite');
 verifyTextContains(testCase, text, '-formula  CaCO3  1');
-verifyTextContains(testCase, text, '-m        3e-06');
-verifyTextContains(testCase, text, '-m0       3e-06');
-verifyTextContains(testCase, text, '-parms    0.02  1');
+verifyTextContains(testCase, text, '-m        3');
+verifyTextContains(testCase, text, '-m0       3');
+verifyTextContains(testCase, text, '-parms    66.6666666666667  1');
 verifyTextContains(testCase, text, '-bad_step_max 5000');
 verifyTextContains(testCase, text, 'RUN_CELLS');
 verifyTextContains(testCase, text, '-cells 1-2');
 verifyTextContains(testCase, text, '-time_step 0.25');
 verifyTextContains(testCase, text, '-molalities H+ Ca+2 HCO3- CO3-2 Cl- Na+');
+verifyTextContains(testCase, text, '-kinetic_reactants Calcite');
 verifyTextContains(testCase, text, 'KIN_DELTA("Calcite")/KIN_TIME');
 end
 
@@ -91,8 +92,8 @@ state.initial_calcite_moles = 8e-6;
 
 text = BuildCalcitePhreeqcInput(state, struct());
 
-verifyTextContains(testCase, text, '-m        3e-06');
-verifyTextContains(testCase, text, '-m0       8e-06');
+verifyTextContains(testCase, text, '-m        3');
+verifyTextContains(testCase, text, '-m0       8');
 end
 
 function testBuildInputUsesPrescribedCalciteReactionForTstMatch(testCase)
@@ -449,9 +450,9 @@ verifyEqual(testCase, cfg.phreeqcRunGroup, 'phreeqc_database_calcite');
 verifyEqual(testCase, cfg.phreeqcRateLaw, 'database_calcite');
 verifyEqual(testCase, cfg.runName, 'phreeqc_database_calcite_unitstamp');
 verifyFalse(testCase, contains(string(text), 'RATES'), ...
-    'Database calcite group must keep using phreeqc-m.dat RATES.');
+    'Database calcite group must keep using phreeqc_rates.dat RATES.');
 verifyTextContains(testCase, text, 'Calcite');
-verifyTextContains(testCase, text, '-parms    0.0001  7');
+verifyTextContains(testCase, text, '-parms    7  1');
 end
 
 function testConfigureRunGroupPassesTstMatchToInputBuilder(testCase)
@@ -524,6 +525,7 @@ state.calcite_moles = 1e-8;
 options = struct();
 options.maxSpecificSurfaceArea = 100;
 options.badStepMax = 1234;
+options.phreeqcCalciteKineticsParameterConvention = 'legacy_m2_per_kgw';
 
 text = BuildCalcitePhreeqcInput(state, options);
 
@@ -644,7 +646,7 @@ verifyEqual(testCase, mockEngine.RunStringCount, 1);
 verifyTextContains(testCase, mockEngine.LastInputText, '-cells 1-1');
 verifyEqual(testCase, result.calciteDissolvedMoles, [1e-9; 0; 0], ...
     'RelTol', 1e-12, 'AbsTol', 1e-18);
-verifyEqual(testCase, result.calciteKinDeltaRate_mol_s(1), 0, 'AbsTol', 0);
+verifyEqual(testCase, result.calciteKinDeltaRate_mol_s(1), 1e-9, 'AbsTol', 1e-18);
 verifyEqual(testCase, result.ca_total_mol_cm3(2:3), state.ca_mol_cm3(2:3), ...
     'AbsTol', 0);
 verifyEqual(testCase, result.na_total_mol_cm3(2:3), state.na_mol_cm3(2:3), ...
@@ -677,6 +679,22 @@ verifyFalse(testCase, isfield(result, 'calciteRate_mol_dm2_s'));
 verifyEqual(testCase, result.calciteDeltaMoles, [-3e-6; -4e-6], 'AbsTol', 1e-15);
 verifyEqual(testCase, result.calciteDissolvedMoles, [3e-6; 4e-6], 'AbsTol', 1e-15);
 verifyEqual(testCase, result.solutionNumber, [1; 2]);
+end
+
+function testParseSelectedOutputPrefersKineticReactantDelta(testCase)
+raw = {
+    'soln', 'pH', 'Ca', 'C', 'si_Calcite', ...
+        'KIN_DELTA_Calcite', 'RATE_Calcite', 'k_Calcite', 'dk_Calcite';
+    1, 1.1, 7e-5, 7e-5, -10, 0, NaN, 0.9999, -7e-5
+    };
+
+result = ParsePhreeqcSelectedOutput(raw, 1);
+
+verifyEqual(testCase, result.calciteDeltaMoles, -7e-5, 'AbsTol', 1e-15);
+verifyEqual(testCase, result.calciteDissolvedMoles, 7e-5, 'AbsTol', 1e-15);
+verifyEqual(testCase, result.calciteRawKineticDeltaMoles, -7e-5, 'AbsTol', 1e-15);
+verifyEqual(testCase, result.calciteRawUserPunchDeltaMoles, 0, 'AbsTol', 0);
+verifyEqual(testCase, result.calciteKineticReactantMoles, 0.9999, 'AbsTol', 1e-15);
 end
 
 function testDiagnosticInferCalciteDissolutionFromTotalsWhenKinDeltaIsUnavailable(testCase)
@@ -839,7 +857,7 @@ expected = legacyHMolCm3(:) * 1000 * options.rateCoefficientTST;
 verifyEqual(testCase, ratePerArea, expected, 'RelTol', 1e-12, 'AbsTol', 1e-15);
 end
 
-function testDatabaseCalciteInterfaceRateUsesPhreeqcDissolution(testCase)
+function testDatabaseCalciteInterfaceRateFallsBackToScaledDissolution(testCase)
 result = struct();
 result.calciteDissolvedMoles = [2e-8; 6e-8; 3e-8];
 interfaceAreaCm2 = [1; 2; 0];
@@ -853,6 +871,24 @@ ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
     result, interfaceAreaCm2, timeStepSize, options, legacyHMolCm3);
 
 verifyEqual(testCase, ratePerArea, [1e-8; 1.5e-8; 0], 'AbsTol', 1e-15);
+end
+
+function testDatabaseCalciteInterfaceRateUsesRawKineticMotionScale(testCase)
+result = struct();
+result.calciteDissolvedMoles = [2e-8; 6e-8; 3e-8];
+result.calciteRawKineticDeltaMoles = [-4e-6; -8e-6; -1e-5];
+interfaceAreaCm2 = [1; 2; 0];
+timeStepSize = 2;
+options = struct();
+options.rateLaw = 'database_calcite';
+options.molarVolume = 36.9;
+
+ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
+    result, interfaceAreaCm2, timeStepSize, options);
+
+expectedScale = 20 * 39.63e-3 / 36.9;
+verifyEqual(testCase, ratePerArea, [2e-6; 4e-6; 0] .* expectedScale, ...
+    'RelTol', 1e-12, 'AbsTol', 1e-18);
 end
 
 function testDatabaseCalciteInterfaceRateCanUseKinDeltaOverKinTimeDirectly(testCase)
@@ -873,17 +909,17 @@ ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
 verifyEqual(testCase, ratePerArea, [1e-8; 3e-8; 0], 'AbsTol', 1e-15);
 end
 
-function testRunBatchPreservesRawKinDeltaRateForDirectRateMode(testCase)
+function testRunBatchUsesKineticReactantDeltaForScaledRate(testCase)
 databasePath = findPhreeqcDatabase(testCase);
 assumeTrue(testCase, ~isempty(databasePath), 'No PHREEQC database found for mock integration test.');
 
 raw = {
     'soln', 'pH', 'charge(eq)', 'Ca', 'C', 'Na', 'Cl', ...
         'm_H+', 'm_Ca+2', 'm_HCO3-', 'm_CO3-2', 'm_Cl-', 'm_Na+', ...
-        'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
+        'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite', 'k_Calcite', 'dk_Calcite';
     1, 3.0, 0, 1e-6, 1e-6, 1e-5, 1e-5, ...
         1e-3, 1e-6, 1e-6, 0, 1e-5, 1e-5, ...
-        -1, -4e-6, 2e-6
+        -1, 0, NaN, 0.999996, -4e-6
     };
 mockEngine = MockIPhreeqcEngine(raw);
 session = rtm.phreeqc.PhreeqcSession(struct('engine', mockEngine));
@@ -904,9 +940,11 @@ result = RunPhreeqcCalciteBatch(state, options);
 ratePerArea = ComputePhreeqcInterfaceRatePerArea( ...
     result, state.interface_area_cm2, options.timeStepSize, options);
 
-verifyEqual(testCase, result.calciteKinDeltaRate_mol_s, 2e-6, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.calciteRawKinDeltaRate_mol_s, 2e-6, 'AbsTol', 1e-18);
+verifyEqual(testCase, result.calciteKinDeltaRate_mol_s, 2e-8, 'AbsTol', 1e-18);
 verifyEqual(testCase, result.calciteRate_mol_s, 2e-8, 'AbsTol', 1e-18);
-verifyEqual(testCase, ratePerArea, 2e-6, 'AbsTol', 1e-18);
+expectedScale = 20 * 39.63e-3 / 36.9;
+verifyEqual(testCase, ratePerArea, 2e-6 * expectedScale, 'AbsTol', 1e-18);
 
 clear cleanupSession;
 end
@@ -949,6 +987,7 @@ function databasePath = findPhreeqcDatabase(testCase)
 helperDir = testCase.TestData.helperDir;
 rtmDir = fileparts(helperDir);
 candidates = {
+    fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc_rates.dat')
     fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc-m.dat')
     fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc.dat')
     fullfile(helperDir, 'phreeqc-m.dat')

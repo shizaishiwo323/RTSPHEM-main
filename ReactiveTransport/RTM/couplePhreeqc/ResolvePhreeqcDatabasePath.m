@@ -9,7 +9,7 @@ if nargin < 1 || isempty(rtmDir)
     rtmDir = fileparts(fileparts(mfilename('fullpath')));
 end
 if nargin < 2 || isempty(preferredDatabaseName)
-    preferredDatabaseName = 'phreeqc-m.dat';
+    preferredDatabaseName = 'phreeqc_rates.dat';
 end
 if nargin < 3 || isempty(options)
     options = struct();
@@ -35,6 +35,7 @@ end
 
 candidates = {
     exactLocalPath
+    fullfile(runtimeDatabaseDir, 'phreeqc_rates.dat')
     fullfile(runtimeDatabaseDir, 'phreeqc-m.dat')
     fullfile(runtimeDatabaseDir, 'phreeqc.dat')
     fullfile(rtmDir, 'couplePhreeqc', 'phreeqc-m.dat')

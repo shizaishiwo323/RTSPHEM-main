@@ -1,0 +1,7 @@
+Source: https://github.com/phreeqc-dev/phreeqc3
+Commit: b0b3be767158ccc3322d2c816625cf470045e67e
+Updated locally: 2026-06-26
+
+The RTM PHREEQC coupling defaults to phreeqc_rates.dat from this database
+snapshot. Previous local phreeqc-m.dat and phreeqc.dat copies were moved to
+backup_legacy_20260626 for reproducibility.

@@ -106,6 +106,7 @@ end
 
 function result = scaleKineticDissolutionToCellInventory(result, state, options)
 numCells = numel(result.h_mol_cm3);
+timeStepSize = getOption(options, 'timeStepSize', 1);
 if ~isfield(result, 'calciteDeltaMoles') || isempty(result.calciteDeltaMoles)
     return;
 end
@@ -113,11 +114,16 @@ if ~isfield(result, 'calciteKinDeltaRate_mol_s') || ...
         isempty(result.calciteKinDeltaRate_mol_s)
     result.calciteKinDeltaRate_mol_s = result.calciteRate_mol_s;
 end
+if ~isfield(result, 'calciteRawKineticDeltaMoles') || ...
+        isempty(result.calciteRawKineticDeltaMoles)
+    result.calciteRawKineticDeltaMoles = result.calciteDeltaMoles;
+end
+result.calciteRawKinDeltaRate_mol_s = max(-result.calciteRawKineticDeltaMoles(:), 0) ./ ...
+    max(timeStepSize, eps);
 
 waterVolume = optionalColumn(state, 'water_volume_cm3', numCells, 0);
 calciteMoles = optionalColumn(state, 'calcite_moles', numCells, Inf);
 solutionWaterKg = getOption(options, 'solutionWaterKg', 1);
-timeStepSize = getOption(options, 'timeStepSize', 1);
 
 scale = max(waterVolume(:), 0) * 1e-3 ./ max(solutionWaterKg, eps);
 rawDissolvedMoles = max(-result.calciteDeltaMoles(:), 0);
@@ -128,6 +134,7 @@ dissolvedMoles(~isfinite(dissolvedMoles)) = 0;
 result.calciteDissolvedMoles = dissolvedMoles;
 result.calciteDeltaMoles = -dissolvedMoles;
 result.calciteRate_mol_s = dissolvedMoles ./ max(timeStepSize, eps);
+result.calciteKinDeltaRate_mol_s = result.calciteRate_mol_s;
 result.calcite_cell_rate_mol_s = result.calciteRate_mol_s;
 end
 
@@ -146,6 +153,7 @@ dissolvedMoles(~isfinite(dissolvedMoles)) = 0;
 result.calciteDissolvedMoles = dissolvedMoles;
 result.calciteDeltaMoles = -dissolvedMoles;
 result.calciteRate_mol_s = dissolvedMoles ./ max(timeStepSize, eps);
+result.calciteKinDeltaRate_mol_s = result.calciteRate_mol_s;
 result.calcite_cell_rate_mol_s = result.calciteRate_mol_s;
 end
 
@@ -233,6 +241,9 @@ result.calciteSI = NaN(numCells, 1);
 result.calciteDeltaMoles = zeros(numCells, 1);
 result.calciteDissolvedMoles = zeros(numCells, 1);
 result.calciteKinDeltaRate_mol_s = zeros(numCells, 1);
+result.calciteRawKinDeltaRate_mol_s = zeros(numCells, 1);
+result.calciteRawKineticDeltaMoles = zeros(numCells, 1);
+result.calciteKineticReactantMoles = NaN(numCells, 1);
 result.calciteRate_mol_s = zeros(numCells, 1);
 result.calcite_cell_rate_mol_s = zeros(numCells, 1);
 result.solutionNumber = (1:numCells)';

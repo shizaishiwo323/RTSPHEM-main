@@ -31,7 +31,7 @@ verifyEqual(testCase, coarse.water_volume_cm3, [8; 4] * 1e-6, 'RelTol', 1e-12);
 verifyEqual(testCase, coarse.calcite_moles, [24; 17] * 1e-9, 'RelTol', 1e-12);
 end
 
-function testExpandReactionGridResultUsesRawKinDeltaRateForFineInterfaces(testCase)
+function testExpandReactionGridResultDistributesKineticRatesByFineInterface(testCase)
 fineTemplate = struct();
 fineTemplate.h_mol_cm3 = zeros(3, 1);
 fineTemplate.ca_total_mol_cm3 = zeros(3, 1);
@@ -59,8 +59,9 @@ fineResult = ExpandPhreeqcReactionGridResult(coarseResult, fineTemplate, project
 
 verifyEqual(testCase, fineResult.h_mol_cm3, [4; 4; 8] * 1e-6, 'RelTol', 1e-12);
 verifyEqual(testCase, fineResult.ca_total_mol_cm3, [1; 1; 2] * 1e-9, 'RelTol', 1e-12);
-verifyEqual(testCase, fineResult.calciteKinDeltaRate_mol_s, [9; 9; 7] * 1e-8, 'RelTol', 1e-12);
-verifyEqual(testCase, fineResult.calciteRate_mol_s, [1; 1; 2] * 1e-10, 'RelTol', 1e-12);
-verifyEqual(testCase, fineResult.calciteKinDeltaRate_mol_s(2), 9e-8, ...
-    'AbsTol', 1e-18, 'The raw PHREEQC rate is expanded by reaction cell, not by fine-cell area.');
+verifyEqual(testCase, fineResult.calciteKinDeltaRate_mol_s, [9; 0; 7] * 1e-8, 'RelTol', 1e-12);
+verifyEqual(testCase, fineResult.calciteRate_mol_s, [1; 0; 2] * 1e-10, 'RelTol', 1e-12);
+verifyEqual(testCase, fineResult.calciteDissolvedMoles, [5; 0; 6] * 1e-12, 'RelTol', 1e-12);
+verifyEqual(testCase, fineResult.calciteKinDeltaRate_mol_s(2), 0, ...
+    'AbsTol', 1e-18, 'Fine cells without interface area must not receive kinetic rate.');
 end

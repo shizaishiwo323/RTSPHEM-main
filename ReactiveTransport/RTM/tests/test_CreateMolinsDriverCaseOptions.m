@@ -104,14 +104,14 @@ cfg = options.caseOptions.configFactory(0.5, struct('name', "dt_0p5"));
 
 verifyEqual(testCase, cfg.phreeqc.engine, 'iphreeqc_com');
 verifyEqual(testCase, cfg.phreeqc.databasePolicy, 'exact_local');
-verifyEqual(testCase, cfg.phreeqc.databaseName, 'phreeqc-m.dat');
+verifyEqual(testCase, cfg.phreeqc.databaseName, 'phreeqc_rates.dat');
 verifyTrue(testCase, isfield(cfg.phreeqc, 'databasePath'));
 verifyTrue(testCase, isfield(cfg.chemistry.options, 'databasePath'));
 verifyEqual(testCase, string(cfg.phreeqc.databasePath), ...
     string(cfg.chemistry.options.databasePath));
 verifyTrue(testCase, exist(cfg.chemistry.options.databasePath, 'file') == 2);
 verifyTrue(testCase, endsWith(string(cfg.chemistry.options.databasePath), ...
-    fullfile('phreeqc', 'database', 'phreeqc-m.dat')));
+    fullfile('phreeqc', 'database', 'phreeqc_rates.dat')));
 end
 
 function testIntegrationAcceptanceGridDoesNotPlaceSoluteInDryCells(testCase)

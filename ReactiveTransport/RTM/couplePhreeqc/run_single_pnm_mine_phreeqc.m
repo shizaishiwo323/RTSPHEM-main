@@ -102,22 +102,24 @@ cfg.initialHydrogenConcentration = 1e-4;
 % 旧 TST 求解器仍可通过 cfg.reactionModel = 'tst' 使用。
 cfg.reactionModel = 'phreeqc';
 % 默认跑两组：
-%   phreeqc_database_calcite : phreeqc-m.dat 中真实 Calcite carbonate chemistry
+%   phreeqc_database_calcite : phreeqc_rates.dat 中真实 Calcite carbonate chemistry
 %   external_tst_phreeqc     : 输运后的 H+ 场定义一级 TST 反应量，再交给 PHREEQC 做物种平衡
 % 如只想跑单组，可改为 {'external_tst_phreeqc'} 或 {'phreeqc_database_calcite'}。
 cfg.phreeqcRunGroups = {'phreeqc_database_calcite', 'external_tst_phreeqc'};
-cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = 10;
+cfg.phreeqcCalciteKineticsParameterConvention = 'phreeqc_rates_cm2_per_mol';
+cfg.phreeqcCalciteSurfaceAreaExponent = 1;
 cfg.phreeqcBadStepMax = 5000;
 cfg.phreeqcKineticsTolerance = 1e-8;
 cfg.phreeqcMinHForPHMolL = 1e-7;
 cfg.phreeqcMinActiveWaterVolumeFraction = 0;
 cfg.phreeqcMinActiveWaterVolumeCm3 = 0;
 cfg.phreeqcReactNeutralInterfaceCells = false;
-% 与参考 Live Script 保持一致：PHREEQC 中每个 solution 用 1 kg 参考水量、
-% KINETICS 矿物 reservoir 用 1 mol；回写 PNM 时再按真实单元 water kg 缩放 KIN_DELTA。
+% PHREEQC 中每个 solution 用 1 kg 参考水量；回写 PNM 时再按真实单元
+% water kg 缩放 dk_Calcite。
 cfg.phreeqcSolutionWaterKg = 1;
 cfg.phreeqcWriteSolutionWaterLine = false;
 cfg.phreeqcKineticsReservoirMoles = 1;

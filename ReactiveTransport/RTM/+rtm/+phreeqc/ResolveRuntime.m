@@ -14,7 +14,7 @@ engineType = string(getFieldOrDefault(phreeqcConfig, 'engine', ...
 databasePolicy = string(getFieldOrDefault(phreeqcConfig, ...
     'databasePolicy', 'allow_fallback'));
 databaseName = string(getFieldOrDefault(phreeqcConfig, ...
-    'databaseName', 'phreeqc-m.dat'));
+    'databaseName', 'phreeqc_rates.dat'));
 configuredDatabasePath = string(getFieldOrDefault(phreeqcConfig, ...
     'databasePath', ""));
 comProgId = string(getFieldOrDefault(phreeqcConfig, ...
@@ -67,6 +67,7 @@ switch normalizedPolicy
     case 'allow_fallback'
         databasePath = firstExistingDatabase({
             exactLocalPath
+            fullfile(runtimeDatabaseDir, 'phreeqc_rates.dat')
             fullfile(runtimeDatabaseDir, 'phreeqc-m.dat')
             fullfile(runtimeDatabaseDir, 'phreeqc.dat')
             fullfile(char(rtmDir), 'couplePhreeqc', 'phreeqc-m.dat')

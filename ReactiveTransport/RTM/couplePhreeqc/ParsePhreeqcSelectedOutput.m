@@ -33,11 +33,39 @@ result.co3_mol_cm3 = numericColumn(data, headings, ["m_CO3-2", "CO3-2"], 0) / 10
 result.cl_mol_cm3 = numericColumn(data, headings, ["m_Cl-", "Cl-"], 0) / 1000;
 result.na_mol_cm3 = numericColumn(data, headings, ["m_Na+", "Na+"], 0) / 1000;
 result.calciteSI = numericColumn(data, headings, ["si_Calcite", "si_calcite", "Calcite"], NaN);
-result.calciteDeltaMoles = numericColumn(data, headings, ["KIN_DELTA_Calcite", "kin_delta_Calcite"], 0);
+legacyDelta = numericColumn(data, headings, ["KIN_DELTA_Calcite", "kin_delta_Calcite"], NaN);
+kineticDelta = numericColumn(data, headings, ...
+    ["dk_Calcite", "d_Calcite", "delta_Calcite", "dk_Calcite(mol)"], NaN);
+result.calciteKineticReactantMoles = numericColumn(data, headings, ...
+    ["k_Calcite", "kin_Calcite", "Calcite"], NaN);
+result.calciteRawKineticDeltaMoles = kineticDelta;
+result.calciteRawUserPunchDeltaMoles = legacyDelta;
+result.calciteDeltaMoles = preferFiniteColumn(kineticDelta, legacyDelta, 0);
 result.calciteDissolvedMoles = max(-result.calciteDeltaMoles, 0);
-result.calciteRate_mol_s = numericColumn(data, headings, ["RATE_Calcite", "rate_Calcite"], 0);
+result.calciteRawUserPunchRate_mol_s = numericColumn(data, headings, ...
+    ["RATE_Calcite", "rate_Calcite"], NaN);
+result.calciteRate_mol_s = preferFiniteColumn(result.calciteRawUserPunchRate_mol_s, [], 0);
 result.calciteKinDeltaRate_mol_s = result.calciteRate_mol_s;
 result.calcite_cell_rate_mol_s = result.calciteRate_mol_s;
+end
+
+function values = preferFiniteColumn(primary, secondary, defaultValue)
+if nargin < 2 || isempty(secondary)
+    secondary = [];
+end
+values = primary(:);
+if isempty(values)
+    values = zeros(size(secondary(:)));
+end
+if ~isempty(secondary)
+    secondary = secondary(:);
+    if numel(values) ~= numel(secondary)
+        values = repmat(defaultValue, numel(secondary), 1);
+    end
+    replace = ~isfinite(values);
+    values(replace) = secondary(replace);
+end
+values(~isfinite(values)) = defaultValue;
 end
 
 function values = numericColumn(data, headings, candidates, defaultValue)

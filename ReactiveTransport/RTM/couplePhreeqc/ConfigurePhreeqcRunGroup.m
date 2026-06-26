@@ -36,7 +36,7 @@ switch canonicalGroup
     case 'phreeqc_database_calcite'
         cfg.phreeqcRateLaw = 'database_calcite';
         cfg.chemistryMode = 'phreeqc_kinetics';
-        cfg.chemistrySemantics = 'PHREEQC database Calcite kinetics';
+        cfg.chemistrySemantics = 'PHREEQC phreeqc_rates.dat Calcite kinetics';
     case 'external_tst_phreeqc'
         cfg.phreeqcRateLaw = 'tst_match';
         cfg.chemistryMode = 'external_tst_phreeqc';

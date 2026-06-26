@@ -108,7 +108,7 @@ cfg.inletCarbonConcentration = 0;
 cfg.inletSodiumConcentration = 0;
 cfg.inletChlorideConcentration = cfg.initialHydrogenConcentration;
 
-cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcBadStepMax = 5000;

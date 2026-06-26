@@ -14,10 +14,10 @@ end
 
 function testExactLocalReturnsOnlyBundledPreferredDatabase(testCase)
 rtmDir = createTempRtmTree(testCase);
-databasePath = fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc-m.dat');
+databasePath = fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc_rates.dat');
 writeTextFile(databasePath, 'TITLE exact local');
 
-resolved = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat', ...
+resolved = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat', ...
     struct('databasePolicy', 'exact_local'));
 
 verifyEqual(testCase, string(resolved), string(databasePath));
@@ -29,7 +29,7 @@ writeTextFile(fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc.dat'), ...
     'TITLE fallback should not be used');
 
 verifyError(testCase, ...
-    @() ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat', ...
+    @() ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat', ...
     struct('databasePolicy', 'exact_local')), ...
     'RTSPHEM:Phreeqc:MissingExactLocalDatabase');
 end
@@ -39,7 +39,7 @@ rtmDir = createTempRtmTree(testCase);
 fallbackPath = fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc.dat');
 writeTextFile(fallbackPath, 'TITLE fallback allowed');
 
-resolved = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat', ...
+resolved = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat', ...
     struct('databasePolicy', 'allow_fallback'));
 
 verifyEqual(testCase, string(resolved), string(fallbackPath));
@@ -65,6 +65,7 @@ end
 
 function removeTempTreeFiles(rtmDir)
 databaseDir = fullfile(rtmDir, 'phreeqc', 'database');
+deleteIfFile(fullfile(databaseDir, 'phreeqc_rates.dat'));
 deleteIfFile(fullfile(databaseDir, 'phreeqc-m.dat'));
 deleteIfFile(fullfile(databaseDir, 'phreeqc.dat'));
 if exist(databaseDir, 'dir') == 7

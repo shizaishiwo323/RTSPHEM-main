@@ -29,6 +29,19 @@ switch rateLaw
         active = interfaceAreaCm2(:) > 0;
         ratePerArea(~active) = 0;
     otherwise
+        rawMotionRate = rawCalciteKineticRate(result, timeStepSize);
+        if ~isempty(rawMotionRate)
+            currentMolarVolume = getOption(options, 'molarVolume', ...
+                getOption(options, 'molarVolume_cm3_mol', 36.9));
+            legacySpaceScale = getOption(options, 'phreeqcLegacySpeedScaleFactor', 20);
+            legacyCalciteMolarVolume = getOption(options, ...
+                'phreeqcLegacyCalciteMolarVolumeForSpeed', 39.63e-3);
+            ratePerArea = rawMotionRate .* legacySpaceScale .* ...
+                legacyCalciteMolarVolume ./ max(currentMolarVolume, eps);
+            ratePerArea(interfaceAreaCm2(:) <= 0) = 0;
+            ratePerArea(~isfinite(ratePerArea)) = 0;
+            return;
+        end
         interfaceRateMode = normalizeRateMode(getOption(options, ...
             'phreeqcInterfaceRateMode', getOption(options, ...
             'interfaceRateMode', 'per_area_from_dissolved_moles')));
@@ -59,6 +72,21 @@ switch rateLaw
 end
 
 ratePerArea(~isfinite(ratePerArea)) = 0;
+end
+
+function rawRate = rawCalciteKineticRate(result, timeStepSize)
+rawRate = [];
+if isfield(result, 'calciteRawKineticDeltaMoles') && ...
+        ~isempty(result.calciteRawKineticDeltaMoles)
+    rawRate = max(-result.calciteRawKineticDeltaMoles(:), 0) ./ ...
+        max(timeStepSize, eps);
+elseif isfield(result, 'calciteRawKinDeltaRate_mol_s') && ...
+        ~isempty(result.calciteRawKinDeltaRate_mol_s)
+    rawRate = max(result.calciteRawKinDeltaRate_mol_s(:), 0);
+end
+if ~isempty(rawRate) && ~any(rawRate > 0 & isfinite(rawRate))
+    rawRate = [];
+end
 end
 
 function value = getOption(options, fieldName, defaultValue)

@@ -97,23 +97,31 @@ cfg.flowDirection = 'left_to_right';
 cfg.initialHydrogenConcentration = 1e-4;
 
 % 化学反应求解器：
-%   'phreeqc' 使用 phreeqc-m.dat 中的 Calcite RATES + 每单元 KINETICS；
+%   'phreeqc' 使用官方 phreeqc_rates.dat 中的 Calcite RATES + 每单元 KINETICS；
 %   'tst'     使用原有简化 TST 速率模型。
 cfg.reactionModel = 'phreeqc';
 % PHREEQC 运行组：
 %   phreeqc_database_calcite : 真实 PHREEQC carbonate chemistry；
 %   phreeqc_tst_match        : PHREEQC 框架中复刻旧 TST 速率律。
 cfg.phreeqcRunGroup = 'phreeqc_database_calcite';
-cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc-m.dat');
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat');
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = Inf;
-% PHREEQC database 反应速率回写方式：
-%   'kin_delta_over_kin_time' 直接使用 PHREEQC 输出的 -KIN_DELTA/KIN_TIME，
-%   与 Two_Min_TripleDataSet_Parallel.m 的旧耦合思路一致，不再除以界面面积。
-cfg.phreeqcInterfaceRateMode = 'kin_delta_over_kin_time';
-% PHREEQC 专用反应聚合网格。20 um = 20e-4 cm = 0.002 cm。
-cfg.useSeparatePhreeqcGrid = true;
+cfg.phreeqcCalciteKineticsParameterConvention = 'phreeqc_rates_cm2_per_mol';
+cfg.phreeqcCalciteSurfaceAreaExponent = 1;
+% PHREEQC database 界面推进：当前 database_calcite 模式按旧脚本尺度使用
+% PHREEQC 原始 dk_Calcite/dt，即 normalSpeed ≈ rawRate * 20 * 39.63e-3。
+cfg.phreeqcInterfaceRateMode = 'per_area_from_dissolved_moles';
+cfg.phreeqcLegacySpeedScaleFactor = 1;
+cfg.phreeqcLegacyCalciteMolarVolumeForSpeed = 39.63e-3;
+% PHREEQC 网格模式：
+%   'separate'  使用 PHREEQC 专用反应聚合网格；
+%   'level_set' 使用与 level-set / transport 相同的 gridHyPHM 网格。
+cfg.phreeqcGridMode = 'level-set';
+cfg.useSeparatePhreeqcGrid = strcmpi(cfg.phreeqcGridMode, 'separate');
+% PHREEQC 专用反应聚合网格尺寸。仅 phreeqcGridMode='separate' 时生效。
+% 20 um = 20e-4 cm = 0.002 cm。
 cfg.phreeqcGridHmax = 20e-4;
 cfg.exportPhreeqcGridPlot = true;
 cfg.phreeqcBadStepMax = 5000;
@@ -157,7 +165,7 @@ cfg.endTime = [];
 % 目标溶解过程切片数。设置为 100 时，会自动按溶解进度调整时间步，
 % 预计从初始结构到接近完全溶解约导出 100 个 RTM/DXF 过程切片。
 % 留空 [] 时沿用 timeStepperType/exportEvery 的原始行为。
-cfg.targetDissolutionSlices = 100;
+cfg.targetDissolutionSlices = 10;
 
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 10000000;

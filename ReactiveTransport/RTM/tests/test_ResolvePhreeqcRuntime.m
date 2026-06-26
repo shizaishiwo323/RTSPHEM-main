@@ -14,18 +14,18 @@ end
 
 function testExactLocalRuntimeRecordsDatabaseManifest(testCase)
 rtmDir = createTempRtmTree(testCase);
-databasePath = fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc-m.dat');
+databasePath = fullfile(rtmDir, 'phreeqc', 'database', 'phreeqc_rates.dat');
 writeTextFile(databasePath, 'TITLE exact local runtime');
 cfg = struct();
 cfg.phreeqc = struct('engine', 'mock', ...
     'databasePolicy', 'exact_local', ...
-    'databaseName', 'phreeqc-m.dat', ...
+    'databaseName', 'phreeqc_rates.dat', ...
     'comProgId', 'MockIPhreeqc.Object');
 
 runtime = rtm.phreeqc.ResolveRuntime(rtmDir, cfg);
 
 verifyEqual(testCase, runtime.databasePath, string(databasePath));
-verifyEqual(testCase, runtime.databaseName, "phreeqc-m.dat");
+verifyEqual(testCase, runtime.databaseName, "phreeqc_rates.dat");
 verifyEqual(testCase, runtime.databasePolicy, "exact_local");
 verifyEqual(testCase, strlength(runtime.databaseSha256), 64);
 verifyGreaterThan(testCase, runtime.databaseSizeBytes, 0);
@@ -39,7 +39,7 @@ rtmDir = createTempRtmTree(testCase);
 cfg = struct();
 cfg.phreeqc = struct('engine', 'mock', ...
     'databasePolicy', 'exact_local', ...
-    'databaseName', 'phreeqc-m.dat');
+    'databaseName', 'phreeqc_rates.dat');
 
 verifyError(testCase, @() rtm.phreeqc.ResolveRuntime(rtmDir, cfg), ...
     'RTSPHEM:Phreeqc:MissingExactLocalDatabase');
@@ -76,6 +76,7 @@ end
 
 function removeTempTreeFiles(rtmDir)
 databaseDir = fullfile(rtmDir, 'phreeqc', 'database');
+deleteIfFile(fullfile(databaseDir, 'phreeqc_rates.dat'));
 deleteIfFile(fullfile(databaseDir, 'phreeqc-m.dat'));
 deleteIfFile(fullfile(databaseDir, 'phreeqc.dat'));
 if exist(databaseDir, 'dir') == 7
