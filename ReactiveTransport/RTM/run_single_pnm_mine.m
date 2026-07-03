@@ -88,30 +88,31 @@ cfg.externalDxfImportDirection = 'rotate90_cw';
 
 %% ===================== 物理参数 =====================
 % 入口流速 [cm/s]
-cfg.inletVelocity = 0.01;
+cfg.inletVelocity = 0.001;
 
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
 
 % 入口 H+ 浓度 [mol/cm^3]
-cfg.initialHydrogenConcentration = 1e-4;
+cfg.initialHydrogenConcentration = 1e-2;
 
 % 化学反应求解器：
-%   'phreeqc' 使用官方 phreeqc_rates.dat 中的 Calcite RATES + 每单元 KINETICS；
+%   'phreeqc' 使用 PHREEQC Calcite RATES + 每单元 KINETICS；
 %   'tst'     使用原有简化 TST 速率模型。
 cfg.reactionModel = 'phreeqc';
 % PHREEQC 运行组：
 %   phreeqc_database_calcite : 真实 PHREEQC carbonate chemistry；
 %   phreeqc_tst_match        : PHREEQC 框架中复刻旧 TST 速率律。
 cfg.phreeqcRunGroup = 'phreeqc_database_calcite';
-cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath(rtmDir, 'phreeqc_rates.dat');
+cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath( ...
+    rtmDir, fullfile('backup_legacy_20260626', 'phreeqc.dat'));
 cfg.phreeqcTemperatureC = 25;
 cfg.phreeqcKineticsCorrectionFactor = 1;
 cfg.phreeqcMaxSpecificSurfaceArea = Inf;
-cfg.phreeqcCalciteKineticsParameterConvention = 'phreeqc_rates_cm2_per_mol';
+cfg.phreeqcCalciteKineticsParameterConvention = 'legacy_m2_per_kgw';
 cfg.phreeqcCalciteSurfaceAreaExponent = 1;
 % PHREEQC database 界面推进：当前 database_calcite 模式按旧脚本尺度使用
-% PHREEQC 原始 dk_Calcite/dt，即 normalSpeed ≈ rawRate * 20 * 39.63e-3。
+% PHREEQC 原始 dk_Calcite/dt，即 normalSpeed ≈ rawRate * phreeqcLegacySpeedScaleFactor * 39.63e-3。
 cfg.phreeqcInterfaceRateMode = 'per_area_from_dissolved_moles';
 cfg.phreeqcLegacySpeedScaleFactor = 1;
 cfg.phreeqcLegacyCalciteMolarVolumeForSpeed = 39.63e-3;

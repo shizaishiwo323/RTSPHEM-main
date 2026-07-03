@@ -4243,6 +4243,12 @@ cutCellGeometry = rtm.geometry.BuildCutCellMetrics(grid, levels, ...
     struct('thickness_cm', thickness));
 geom = cutCellGeometry;
 geom.calcite_moles = cutCellGeometry.solid_volume_cm3 ./ max(molarVolume, eps);
+cellAreaCm2 = max(cutCellGeometry.cell_volume_cm3 ./ max(thickness, eps), 0);
+interfaceLengthCm = cutCellGeometry.interface_area_cm2 ./ max(thickness, eps);
+geom.specific_surface_area = zeros(size(interfaceLengthCm));
+activeInterface = interfaceLengthCm > 0 & cellAreaCm2 > 0;
+geom.specific_surface_area(activeInterface) = interfaceLengthCm(activeInterface) ./ ...
+    max(sqrt(cellAreaCm2(activeInterface)), eps);
 end
 
 function area = triangleAreaBelowLevelZero(points, values)
@@ -4360,6 +4366,10 @@ if nargin >= 7 && ~isempty(geometryState)
     state.interface_area_cm2 = geometryState.interface_area_cm2;
     state.water_volume_cm3 = geometryState.water_volume_cm3;
     state.calcite_moles = geometryState.calcite_moles;
+    if isfield(geometryState, 'specific_surface_area') && ...
+            ~isempty(geometryState.specific_surface_area)
+        state.specific_surface_area = geometryState.specific_surface_area;
+    end
 end
 end
 

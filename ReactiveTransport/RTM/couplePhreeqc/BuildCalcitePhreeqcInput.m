@@ -23,6 +23,10 @@ hasAlkalinity = isfield(state, 'alkalinity_mol_cm3') && ...
     ~isempty(state.alkalinity_mol_cm3);
 alkalinity = optionalColumn(state, 'alkalinity_mol_cm3', numCells, 0);
 interfaceAreaCm2 = optionalColumn(state, 'interface_area_cm2', numCells, 1);
+hasProvidedSpecificSurfaceArea = isfield(state, 'specific_surface_area') && ...
+    ~isempty(state.specific_surface_area);
+providedSpecificSurfaceArea = optionalColumn(state, ...
+    'specific_surface_area', numCells, NaN);
 waterVolumeCm3 = optionalColumn(state, 'water_volume_cm3', numCells, 1000);
 if isfield(state, 'reaction_water_volume_cm3') && ~isempty(state.reaction_water_volume_cm3)
     reactionWaterVolumeCm3 = optionalColumn(state, 'reaction_water_volume_cm3', numCells, 0);
@@ -84,6 +88,11 @@ waterKg = max(waterVolumeCm3 * 1e-3, minWaterKg);
 reactionWaterKg = max(reactionWaterVolumeCm3 * 1e-3, minWaterKg);
 solutionWaterKg = max(solutionWaterKg, minSolutionWaterKg);
 specificSurfaceArea = max((interfaceAreaCm2 * 1e-4) ./ waterKg, minSpecificSurfaceArea);
+if hasProvidedSpecificSurfaceArea
+    providedMask = isfinite(providedSpecificSurfaceArea);
+    specificSurfaceArea(providedMask) = max( ...
+        providedSpecificSurfaceArea(providedMask), minSpecificSurfaceArea);
+end
 specificSurfaceArea = min(specificSurfaceArea, maxSpecificSurfaceArea);
 calciteMoles = max(calciteMoles(:), minCalciteMoles);
 initialCalciteMoles = max(initialCalciteMoles(:), minCalciteMoles);
@@ -94,10 +103,10 @@ else
 end
 prescribedReferenceMoles = prescribedDissolvedMoles .* solutionWaterKg ./ reactionWaterKg;
 activeKinetics = interfaceAreaCm2 > 0 & waterVolumeCm3 > 0 & calciteMoles > 0;
-referenceScale = solutionWaterKg ./ max(waterKg, minWaterKg);
-if hasCalciteInventory
-    kineticsMoles = max(calciteMoles(:) .* referenceScale(:), minKineticsMoles);
-    kineticsM0 = max(initialCalciteMoles(:) .* referenceScale(:), minKineticsM0);
+legacySurfaceAreaConvention = isLegacySurfaceAreaConvention(kineticsParameterConvention);
+if hasCalciteInventory && ~legacySurfaceAreaConvention
+    kineticsMoles = max(calciteMoles(:), minKineticsMoles);
+    kineticsM0 = max(initialCalciteMoles(:), minKineticsM0);
 else
     kineticsMoles = repmat(max(kineticsReservoirMoles, minKineticsMoles), ...
         numCells, 1);
@@ -189,10 +198,8 @@ function [parm1, parm2] = buildCalciteKineticsParameters( ...
 switch convention
     case {'phreeqc_rates_cm2_per_mol', 'phreeqc_rates', ...
             'cm2_per_mol_calcite', 'latest_phreeqc_rates'}
-        referenceAreaCm2 = interfaceAreaCm2(:) .* solutionWaterKg ./ ...
-            max(waterKg(:), eps);
-        referenceAreaCm2 = referenceAreaCm2 .* kineticsCorrectionFactor;
-        parm1 = referenceAreaCm2 ./ max(kineticsM0(:), eps);
+        cellAreaCm2 = interfaceAreaCm2(:) .* kineticsCorrectionFactor;
+        parm1 = cellAreaCm2 ./ max(kineticsM0(:), eps);
         parm2 = repmat(surfaceAreaExponent, numel(parm1), 1);
     case {'legacy_m2_per_kgw', 'phreeqc_m', 'm2_per_kgw'}
         parm1 = legacySpecificSurfaceArea(:);
@@ -203,6 +210,10 @@ switch convention
 end
 parm1(~isfinite(parm1)) = 0;
 parm2(~isfinite(parm2)) = 1;
+end
+
+function tf = isLegacySurfaceAreaConvention(convention)
+tf = ismember(convention, {'legacy_m2_per_kgw', 'phreeqc_m', 'm2_per_kgw'});
 end
 
 function values = requireColumn(state, fieldName)

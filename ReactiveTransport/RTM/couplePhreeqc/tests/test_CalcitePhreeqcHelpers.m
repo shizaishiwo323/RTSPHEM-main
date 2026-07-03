@@ -46,9 +46,11 @@ verifyTextContains(testCase, text, 'Na 0.01');
 verifyTextContains(testCase, text, 'Cl 0.11');
 verifyTextContains(testCase, text, 'KINETICS 1');
 verifyTextContains(testCase, text, 'Calcite');
+verifyFalse(testCase, contains(string(text), 'Quartz'), ...
+    'PHREEQC kinetics must be bound to Calcite, not Quartz.');
 verifyTextContains(testCase, text, '-formula  CaCO3  1');
-verifyTextContains(testCase, text, '-m        3');
-verifyTextContains(testCase, text, '-m0       3');
+verifyTextContains(testCase, text, '-m        3e-06');
+verifyTextContains(testCase, text, '-m0       3e-06');
 verifyTextContains(testCase, text, '-parms    66.6666666666667  1');
 verifyTextContains(testCase, text, '-bad_step_max 5000');
 verifyTextContains(testCase, text, 'RUN_CELLS');
@@ -92,8 +94,29 @@ state.initial_calcite_moles = 8e-6;
 
 text = BuildCalcitePhreeqcInput(state, struct());
 
-verifyTextContains(testCase, text, '-m        3');
-verifyTextContains(testCase, text, '-m0       8');
+verifyTextContains(testCase, text, '-m        3e-06');
+verifyTextContains(testCase, text, '-m0       8e-06');
+end
+
+function testBuildKineticsInputDoesNotScaleInventoryToOneKgWater(testCase)
+state = struct();
+state.h_mol_cm3 = 1e-7;
+state.ca_mol_cm3 = 0;
+state.c_mol_cm3 = 0;
+state.na_mol_cm3 = 0;
+state.cl_mol_cm3 = 1e-7;
+state.interface_area_cm2 = 2e-4;
+state.water_volume_cm3 = 1e-6;
+state.calcite_moles = 3e-6;
+state.initial_calcite_moles = 3e-6;
+
+text = string(BuildCalcitePhreeqcInput(state, struct()));
+
+verifyTextContains(testCase, text, '-m        3e-06');
+verifyTextContains(testCase, text, '-m0       3e-06');
+verifyTextContains(testCase, text, '-parms    66.6666666666667  1');
+verifyFalse(testCase, contains(text, '-m        3000'), ...
+    'Calcite KINETICS inventory must not be scaled to the 1 kg PHREEQC solution basis.');
 end
 
 function testBuildInputUsesPrescribedCalciteReactionForTstMatch(testCase)
@@ -531,6 +554,31 @@ text = BuildCalcitePhreeqcInput(state, options);
 
 verifyTextContains(testCase, text, '-parms    100  1');
 verifyTextContains(testCase, text, '-bad_step_max 1234');
+end
+
+function testLegacyKineticsUsesReferenceInventoryAndProvidedSurfaceArea(testCase)
+state = struct();
+state.h_mol_cm3 = 1e-4;
+state.interface_area_cm2 = 2e-6;
+state.water_volume_cm3 = 1e-9;
+state.calcite_moles = 3e-12;
+state.initial_calcite_moles = 3e-12;
+state.specific_surface_area = 0.75;
+
+options = struct();
+options.phreeqcCalciteKineticsParameterConvention = 'legacy_m2_per_kgw';
+options.kineticsReservoirMoles = 1;
+
+text = BuildCalcitePhreeqcInput(state, options);
+
+verifyTextContains(testCase, text, '-m        1');
+verifyTextContains(testCase, text, '-m0       1');
+verifyTextContains(testCase, text, '-parms    0.75  1');
+verifyTextContains(testCase, text, 'KIN_DELTA("Calcite")');
+verifyFalse(testCase, contains(string(text), 'Quartz'), ...
+    'Legacy PHREEQC input must not bind the kinetic rate to Quartz.');
+verifyFalse(testCase, contains(string(text), '-parms    200'), ...
+    'Legacy PHREEQC coupling should use the REV surface-area field, not interface area scaled by tiny water mass.');
 end
 
 function testBuildInputUsesNeutralWaterFloorForZeroAcid(testCase)
