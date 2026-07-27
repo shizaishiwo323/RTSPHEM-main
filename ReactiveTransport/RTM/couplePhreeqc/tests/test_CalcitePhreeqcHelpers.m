@@ -145,8 +145,12 @@ verifyFalse(testCase, contains(text, 'KINETICS'), ...
 verifyTextContains(testCase, text, 'REACTION 1');
 verifyTextContains(testCase, text, 'CaCO3 1');
 verifyTextContains(testCase, text, '0.002 moles');
-verifyTextContains(testCase, text, '-headings KIN_DELTA_Calcite RATE_Calcite');
-verifyTextContains(testCase, text, 'PUNCH 0 0');
+verifyTextContains(testCase, text, '-percent_error true');
+verifyTextContains(testCase, text, '-ionic_strength true');
+verifyTextContains(testCase, text, '-activities H+ Ca+2 HCO3- CO3-2 Cl- Na+');
+verifyTextContains(testCase, text, ...
+    '-headings KIN_DELTA_Calcite RATE_Calcite SpecificConductance_uS_cm');
+verifyTextContains(testCase, text, 'PUNCH 0, 0, SC');
 end
 
 function testBuildInputUsesReactionWaterVolumeForCutCellMixing(testCase)
@@ -253,6 +257,9 @@ verifyEqual(testCase, result.calciteRate_mol_s, ...
     'RelTol', 1e-12, 'AbsTol', 1e-15);
 verifyGreaterThan(testCase, result.ca_total_mol_cm3, state.ca_mol_cm3);
 verifyGreaterThan(testCase, result.c_total_mol_cm3, state.c_mol_cm3);
+verifyTrue(testCase, isfinite(result.ionicStrength_mol_kgw));
+verifyTrue(testCase, isfinite(result.h_activity_dimensionless));
+verifyGreaterThan(testCase, result.fluidConductivity_S_m, 0);
 end
 
 function testTstMatchPrescribedReactionActivatesReceiverWithoutCalciteInventory(testCase)
@@ -705,11 +712,11 @@ end
 
 function testParseSelectedOutputKeepsLastRowsAndNamedSpecies(testCase)
 raw = {
-    'sim', 'state', 'soln', 'pH', 'charge(eq)', 'Ca(mol/kgw)', 'C(mol/kgw)', 'Na(mol/kgw)', 'Cl(mol/kgw)', 'Alkalinity(mol/kgw)', 'm_H+(mol/kgw)', 'm_Ca+2(mol/kgw)', 'm_HCO3-(mol/kgw)', 'm_CO3-2(mol/kgw)', 'm_Cl-(mol/kgw)', 'm_Na+(mol/kgw)', 'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite';
-    1, 'initial', 1, 2.0, 0.01, 0, 0, 0.01, 0.11, 0, 0.1, 0, 0, 0, 0.11, 0.01, -5, 0, 1e-5;
-    1, 'initial', 2, 3.0, 0.02, 0, 0, 0.01, 0.06, 0, 0.001, 0, 0, 0, 0.06, 0.01, -4, 0, 2e-5;
-    1, 'react', 1, 2.1, 0.03, 1e-4, 1e-4, 0.01, 0.11, 3e-4, 0.08, 1e-4, 8e-5, 1e-8, 0.11, 0.01, -3, -3e-6, 3e-5;
-    1, 'react', 2, 3.1, 0.04, 2e-4, 2e-4, 0.01, 0.06, 4e-4, 8e-4, 2e-4, 1.8e-4, 2e-8, 0.06, 0.01, -2, -4e-6, 4e-5
+    'sim', 'state', 'soln', 'pH', 'charge(eq)', 'Ca(mol/kgw)', 'C(mol/kgw)', 'Na(mol/kgw)', 'Cl(mol/kgw)', 'Alkalinity(mol/kgw)', 'm_H+(mol/kgw)', 'm_Ca+2(mol/kgw)', 'm_HCO3-(mol/kgw)', 'm_CO3-2(mol/kgw)', 'm_Cl-(mol/kgw)', 'm_Na+(mol/kgw)', 'si_Calcite', 'KIN_DELTA_Calcite', 'RATE_Calcite', 'pct_err', 'mu', 'mass_H2O', 'la_H+', 'la_Ca+2', 'la_HCO3-', 'la_CO3-2', 'la_Cl-', 'la_Na+', 'SpecificConductance_uS_cm';
+    1, 'initial', 1, 2.0, 0.01, 0, 0, 0.01, 0.11, 0, 0.1, 0, 0, 0, 0.11, 0.01, -5, 0, 1e-5, 0.1, 0.11, 1, -1, -10, -10, -12, -0.96, -2, 50000;
+    1, 'initial', 2, 3.0, 0.02, 0, 0, 0.01, 0.06, 0, 0.001, 0, 0, 0, 0.06, 0.01, -4, 0, 2e-5, 0.2, 0.06, 1, -3, -10, -10, -12, -1.22, -2, 30000;
+    1, 'react', 1, 2.1, 0.03, 1e-4, 1e-4, 0.01, 0.11, 3e-4, 0.08, 1e-4, 8e-5, 1e-8, 0.11, 0.01, -3, -3e-6, 3e-5, 0.03, 0.12, 0.99, -1.1, -4, -4.1, -8, -0.95, -2.1, 51000;
+    1, 'react', 2, 3.1, 0.04, 2e-4, 2e-4, 0.01, 0.06, 4e-4, 8e-4, 2e-4, 1.8e-4, 2e-8, 0.06, 0.01, -2, -4e-6, 4e-5, 0.04, 0.07, 0.98, -3.1, -3.7, -3.8, -7.7, -1.2, -2.1, 31000
 };
 
 result = ParsePhreeqcSelectedOutput(raw, 2);
@@ -727,6 +734,11 @@ verifyFalse(testCase, isfield(result, 'calciteRate_mol_dm2_s'));
 verifyEqual(testCase, result.calciteDeltaMoles, [-3e-6; -4e-6], 'AbsTol', 1e-15);
 verifyEqual(testCase, result.calciteDissolvedMoles, [3e-6; 4e-6], 'AbsTol', 1e-15);
 verifyEqual(testCase, result.solutionNumber, [1; 2]);
+verifyEqual(testCase, result.phreeqcPercentError, [0.03; 0.04], 'AbsTol', 1e-12);
+verifyEqual(testCase, result.ionicStrength_mol_kgw, [0.12; 0.07], 'AbsTol', 1e-12);
+verifyEqual(testCase, result.h_activity_dimensionless, 10 .^ [-1.1; -3.1], ...
+    'RelTol', 1e-12);
+verifyEqual(testCase, result.fluidConductivity_S_m, [5.1; 3.1], 'AbsTol', 1e-12);
 end
 
 function testParseSelectedOutputPrefersKineticReactantDelta(testCase)

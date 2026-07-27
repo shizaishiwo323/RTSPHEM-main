@@ -166,20 +166,26 @@ lines(end + 1) = "-state true";
 lines(end + 1) = "-solution true";
 lines(end + 1) = "-pH true";
 lines(end + 1) = "-charge_balance true";
+lines(end + 1) = "-percent_error true";
 lines(end + 1) = "-alkalinity true";
+lines(end + 1) = "-ionic_strength true";
+lines(end + 1) = "-water true";
 lines(end + 1) = "-totals Ca C Na Cl";
 lines(end + 1) = "-molalities H+ Ca+2 HCO3- CO3-2 Cl- Na+";
+lines(end + 1) = "-activities H+ Ca+2 HCO3- CO3-2 Cl- Na+";
 lines(end + 1) = "-saturation_indices Calcite";
 if ~usePrescribedCalciteReaction
     lines(end + 1) = "-kinetic_reactants Calcite";
 end
 lines(end + 1) = "USER_PUNCH";
-lines(end + 1) = "-headings KIN_DELTA_Calcite RATE_Calcite";
+lines(end + 1) = "-headings KIN_DELTA_Calcite RATE_Calcite SpecificConductance_uS_cm";
 lines(end + 1) = "-start";
 if usePrescribedCalciteReaction
-    lines(end + 1) = "10 PUNCH 0 0";
+    lines(end + 1) = "10 PUNCH 0, 0, SC";
 else
-    lines(end + 1) = sprintf('10 PUNCH KIN_DELTA("%s") -KIN_DELTA("%s")/KIN_TIME', mineralName, mineralName);
+    lines(end + 1) = sprintf( ...
+        '10 PUNCH KIN_DELTA("%s"), -KIN_DELTA("%s")/KIN_TIME, SC', ...
+        mineralName, mineralName);
 end
 lines(end + 1) = "-end";
 lines(end + 1) = "END";

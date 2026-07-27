@@ -20,6 +20,12 @@ result = struct();
 result.solutionNumber = numericColumn(data, headings, ["soln", "solution"], NaN);
 result.pH = numericColumn(data, headings, "pH", NaN);
 result.chargeBalance = numericColumn(data, headings, ["charge_balance", "charge", "charge(eq)"], NaN);
+result.phreeqcPercentError = numericColumn(data, headings, ...
+    ["pct_err", "percent_error", "percenterror"], NaN);
+result.ionicStrength_mol_kgw = numericColumn(data, headings, ...
+    ["mu", "ionic_strength", "ionicstrength"], NaN);
+result.solutionWaterMass_kg = numericColumn(data, headings, ...
+    ["mass_H2O", "water", "water_kg"], NaN);
 result.ca_total_mol_cm3 = numericColumn(data, headings, "Ca", 0) / 1000;
 result.c_total_mol_cm3 = numericColumn(data, headings, "C", 0) / 1000;
 result.na_total_mol_cm3 = numericColumn(data, headings, "Na", 0) / 1000;
@@ -32,6 +38,22 @@ result.hco3_mol_cm3 = numericColumn(data, headings, ["m_HCO3-", "HCO3-"], 0) / 1
 result.co3_mol_cm3 = numericColumn(data, headings, ["m_CO3-2", "CO3-2"], 0) / 1000;
 result.cl_mol_cm3 = numericColumn(data, headings, ["m_Cl-", "Cl-"], 0) / 1000;
 result.na_mol_cm3 = numericColumn(data, headings, ["m_Na+", "Na+"], 0) / 1000;
+result.h_log10_activity = numericColumn(data, headings, ["la_H+", "la_H"], NaN);
+result.ca_log10_activity = numericColumn(data, headings, ["la_Ca+2", "la_Ca"], NaN);
+result.hco3_log10_activity = numericColumn(data, headings, ["la_HCO3-", "la_HCO3"], NaN);
+result.co3_log10_activity = numericColumn(data, headings, ["la_CO3-2", "la_CO3"], NaN);
+result.cl_log10_activity = numericColumn(data, headings, ["la_Cl-", "la_Cl"], NaN);
+result.na_log10_activity = numericColumn(data, headings, ["la_Na+", "la_Na"], NaN);
+result.h_activity_dimensionless = power(10, result.h_log10_activity);
+result.ca_activity_dimensionless = power(10, result.ca_log10_activity);
+result.hco3_activity_dimensionless = power(10, result.hco3_log10_activity);
+result.co3_activity_dimensionless = power(10, result.co3_log10_activity);
+result.cl_activity_dimensionless = power(10, result.cl_log10_activity);
+result.na_activity_dimensionless = power(10, result.na_log10_activity);
+result.h_activity_mol_cm3 = result.h_activity_dimensionless / 1000;
+result.specificConductance_uS_cm = numericColumn(data, headings, ...
+    ["SpecificConductance_uS_cm", "specific_conductance_us_cm", "SC"], NaN);
+result.fluidConductivity_S_m = result.specificConductance_uS_cm * 1e-4;
 result.calciteSI = numericColumn(data, headings, ["si_Calcite", "si_calcite", "Calcite"], NaN);
 legacyDelta = numericColumn(data, headings, ["KIN_DELTA_Calcite", "kin_delta_Calcite"], NaN);
 kineticDelta = numericColumn(data, headings, ...

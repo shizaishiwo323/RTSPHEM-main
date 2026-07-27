@@ -29,3 +29,6 @@ venv/
 .vscode/
 .idea/
 *.log
+
+# Local literature collection
+literature_deng_reactive_transport/
