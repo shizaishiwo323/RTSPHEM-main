@@ -22,6 +22,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# PHREEQC runtime leftovers
+error.inp
+
 # Local environments and editor state
 .venv/
 venv/
