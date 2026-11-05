@@ -14,6 +14,8 @@ verifyEqual(testCase, cfg.crossSectionLength, 0.15);
 verifyEqual(testCase, cfg.segmentEdges, linspace(0, 0.266, 6));
 verifyEqual(testCase, cfg.axisIndex, 2);
 verifyEqual(testCase, cfg.transverseAxisIndex, 1);
+verifyEqual(testCase, cfg.inletEdgePredicate([0, 0; 0.1, 0.2]), ...
+    [true; false]);
 end
 
 function testLeftToRightBoundaryMappingIsDefault(testCase)
@@ -28,4 +30,6 @@ verifyEqual(testCase, cfg.crossSectionLength, 0.266);
 verifyEqual(testCase, cfg.segmentEdges, linspace(0, 0.15, 6));
 verifyEqual(testCase, cfg.axisIndex, 1);
 verifyEqual(testCase, cfg.transverseAxisIndex, 2);
+verifyEqual(testCase, cfg.inletEdgePredicate([0, 0; 0.1, 0.2]), ...
+    [true; false]);
 end

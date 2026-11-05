@@ -73,6 +73,10 @@ maxTotalTimeSteps = cfgget(config, 'maxTotalTimeSteps', []);
 hasExplicitMaxTotalTimeSteps = isstruct(config) && isfield(config, 'maxTotalTimeSteps') && ...
     ~isempty(config.maxTotalTimeSteps);
 targetDissolutionSlices = cfgget(config, 'targetDissolutionSlices', []);
+targetDissolutionFinalPorosity = cfgget(config, ...
+    'targetDissolutionFinalPorosity', 1);
+validateattributes(targetDissolutionFinalPorosity, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive', '<=', 1});
 targetDissolutionSliceSafetyFactor = cfgget(config, 'targetDissolutionSliceSafetyFactor', 2.0);
 targetDissolutionSliceMinExtraSteps = cfgget(config, 'targetDissolutionSliceMinExtraSteps', 20);
 porosityStepTarget = cfgget(config, 'porosityStepTarget', 0.01);
@@ -85,7 +89,8 @@ targetSliceStepBoundaryFactor = cfgget(config, 'targetSliceStepBoundaryFactor', 
 adaptiveMinTimeStep = cfgget(config, 'adaptiveMinTimeStep', 1e-5);
 targetSliceSettings = ResolveTargetDissolutionSlices( ...
     targetDissolutionSlices, NaN, maxTotalTimeSteps, porosityStepTarget, ...
-    targetDissolutionSliceSafetyFactor, targetDissolutionSliceMinExtraSteps);
+    targetDissolutionSliceSafetyFactor, targetDissolutionSliceMinExtraSteps, ...
+    targetDissolutionFinalPorosity);
 if targetSliceSettings.enabled
     timeStepperType = 'adaptive_porosity';
     maxTotalTimeSteps = targetSliceSettings.maxTotalTimeSteps;
@@ -345,6 +350,12 @@ flowDirection = cfgget(config, 'flowDirection', 'left_to_right');
 initialHydrogenConcentration = cfgget(config, 'initialHydrogenConcentration', 1e-4); % [ mol cm^(-3) ]
 reactionModel = lower(char(cfgget(config, 'reactionModel', 'tst')));
 usePhreeqc = strcmpi(reactionModel, 'phreeqc');
+phreeqcTransportBasis = lower(char(cfgget(config, ...
+    'phreeqcTransportBasis', 'legacy_free_h')));
+if ~ismember(phreeqcTransportBasis, {'legacy_free_h', 'conserved_totals'})
+    error('RTSPHEM:Chemistry:UnknownTransportBasis', ...
+        'phreeqcTransportBasis must be legacy_free_h or conserved_totals.');
+end
 initialCalciumConcentration = cfgget(config, 'initialCalciumConcentration', 0); % [ mol cm^(-3) ]
 initialCarbonConcentration = cfgget(config, 'initialCarbonConcentration', 0); % [ mol cm^(-3) ]
 initialSodiumConcentration = cfgget(config, 'initialSodiumConcentration', 0); % [ mol cm^(-3) ]
@@ -356,6 +367,9 @@ inletChlorideConcentration = cfgget(config, 'inletChlorideConcentration', initia
 phreeqcTemperatureC = cfgget(config, 'phreeqcTemperatureC', 25);
 phreeqcDatabasePath = cfgget(config, 'phreeqcDatabasePath', defaultPhreeqcDatabasePath());
 phreeqcExportEvery = cfgget(config, 'phreeqcExportEvery', exportEvery);
+phreeqcEarlyExportSteps = cfgget(config, 'phreeqcEarlyExportSteps', 0);
+validateattributes(phreeqcEarlyExportSteps, {'numeric'}, ...
+    {'scalar', 'integer', 'nonnegative', 'finite'}, mfilename, 'phreeqcEarlyExportSteps');
 phreeqcPersistSession = logical(cfgget(config, 'phreeqcPersistSession', true));
 phreeqcUseRunString = phreeqcPersistSession && logical(cfgget(config, 'phreeqcUseRunString', true));
 phreeqcRunGroup = char(cfgget(config, 'phreeqcRunGroup', 'phreeqc_database_calcite'));
@@ -407,7 +421,44 @@ phreeqcWriteSolutionWaterLine = logical(cfgget(config, 'phreeqcWriteSolutionWate
 phreeqcKineticsReservoirMoles = cfgget(config, 'phreeqcKineticsReservoirMoles', 1);
 phreeqcKineticsTolerance = cfgget(config, 'phreeqcKineticsTolerance', 1e-8);
 phreeqcTransportMaxFactor = cfgget(config, 'phreeqcTransportMaxFactor', Inf);
+transportUpwindMode = lower(char(cfgget(config, 'transportUpwindMode', 'exp')));
+if ~ismember(transportUpwindMode, {'none', 'full', 'exp', 'alt'})
+    error('RTSPHEM:Transport:UnknownUpwindMode', ...
+        'transportUpwindMode must be none, full, exp, or alt.');
+end
+transportInletBoundaryMode = lower(char(cfgget(config, ...
+    'transportInletBoundaryMode', 'flux')));
+if ~ismember(transportInletBoundaryMode, {'flux', 'dirichlet'})
+    error('RTSPHEM:Transport:UnknownInletBoundaryMode', ...
+        'transportInletBoundaryMode must be flux or dirichlet.');
+end
+transportFlowProjectionMode = lower(char(cfgget(config, ...
+    'transportFlowProjectionMode', 'midpoint')));
+if ~ismember(transportFlowProjectionMode, ...
+        {'midpoint', 'edge_average', 'conservative_edge_average'})
+    error('RTSPHEM:Transport:UnknownFlowProjectionMode', ...
+        ['transportFlowProjectionMode must be midpoint, edge_average, ', ...
+        'or conservative_edge_average.']);
+end
+transportAccumulationCoefficient = cfgget(config, ...
+    'transportAccumulationCoefficient', 1);
+validateattributes(transportAccumulationCoefficient, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'nonnegative'});
+transportSolverBackend = lower(char(cfgget(config, ...
+    'transportSolverBackend', 'hyphm')));
+if ~ismember(transportSolverBackend, {'hyphm', 'cut_cell_fv'})
+    error('RTSPHEM:Transport:UnknownSolverBackend', ...
+        'transportSolverBackend must be hyphm or cut_cell_fv.');
+end
+isolateLargeLinearSolves = logical(cfgget(config, ...
+    'isolateLargeLinearSolves', false));
+% Large target-slice runs only need the expensive exact cell-problem K on
+% saved states; Stokes flow is still recomputed every transport step.
+permeabilityOnExportOnly = logical(cfgget(config, ...
+    'permeabilityOnExportOnly', ...
+    isolateLargeLinearSolves && targetSliceSettings.enabled));
 phreeqcExportSeismoelectric = logical(cfgget(config, 'phreeqcExportSeismoelectric', false));
+phreeqcWriteSpeciesTable = logical(cfgget(config, 'phreeqcWriteSpeciesTable', true));
 phreeqcTransportSpeciesNames = {'H', 'Ca_total', 'C_total', 'Na_total', 'Cl_total'};
 phreeqcTransportUpperBounds = [ ...
     max(initialHydrogenConcentration, 0) * phreeqcTransportMaxFactor; ...
@@ -729,18 +780,23 @@ switch (timeStepperType)
         adaptiveMaxTimeStep = max(adaptiveMinTimeStep, adaptiveMaxTimeStep);
         initialMacroscaleTimeStepSize = min(max(initialMacroscaleTimeStepSize, adaptiveMinTimeStep), adaptiveMaxTimeStep);
 
-        timeSteps = zeros(1, maxTotalTimeSteps + 1);
-        timeSteps(1) = 0;
-        nextStepSize = initialMacroscaleTimeStepSize;
-        for kStep = 1:maxTotalTimeSteps
-            timeSteps(kStep + 1) = min(timeSteps(kStep) + nextStepSize, endTime);
-            if timeSteps(kStep + 1) >= endTime - EPS
-                timeSteps = timeSteps(1:(kStep + 1));
-                break;
+        if targetSliceSettings.enabled && ~hasExplicitMaxTotalTimeSteps
+            % Target-slice runs extend the Stepper on demand.
+            timeSteps = [0, min(initialMacroscaleTimeStepSize, endTime)];
+        else
+            timeSteps = zeros(1, maxTotalTimeSteps + 1);
+            timeSteps(1) = 0;
+            nextStepSize = initialMacroscaleTimeStepSize;
+            for kStep = 1:maxTotalTimeSteps
+                timeSteps(kStep + 1) = min(timeSteps(kStep) + nextStepSize, endTime);
+                if timeSteps(kStep + 1) >= endTime - EPS
+                    timeSteps = timeSteps(1:(kStep + 1));
+                    break;
+                end
+                nextStepSize = min(adaptiveMaxTimeStep, nextStepSize * adaptiveGrowthFactor);
             end
-            nextStepSize = min(adaptiveMaxTimeStep, nextStepSize * adaptiveGrowthFactor);
+            endTime = timeSteps(end);
         end
-        endTime = timeSteps(end);
         fprintf(['adaptive_porosity: target dPorosity=[%.4g, %.4g], ', ...
             'dt0=%g s, dt range=[%g, %g] s, safety steps=%d\n'], ...
             porosityStepTarget, porosityStepTarget * porosityStepUpperFactor, initialMacroscaleTimeStepSize, ...
@@ -1217,6 +1273,15 @@ end
 
 % assemble HyPHM grid and label outer edges
 gridHyPHM = Grid(coord, microscaleGrid.triangles);
+workerMeshPath = '';
+if isolateLargeLinearSolves
+    workerMeshPath = fullfile(resultsDir, 'worker_static_mesh.mat');
+    if exist(workerMeshPath, 'file') ~= 2
+        workerCoord = coord; %#ok<NASGU>
+        workerTriangles = microscaleGrid.triangles; %#ok<NASGU>
+        save(workerMeshPath, 'workerCoord', 'workerTriangles', '-v7.3');
+    end
+end
 
 % 修复边界条件判断 - 确保索引在有效范围内
 numV = size(gridHyPHM.coordV, 1);
@@ -1283,14 +1348,16 @@ end
 initialPorosityForTargetSlices = InitialPoreVolume / max(lengthXAxis * lengthYAxis, eps);
 targetSliceSettings = ResolveTargetDissolutionSlices( ...
     targetDissolutionSlices, initialPorosityForTargetSlices, maxTotalTimeSteps, ...
-    porosityStepTarget, targetDissolutionSliceSafetyFactor, targetDissolutionSliceMinExtraSteps);
+    porosityStepTarget, targetDissolutionSliceSafetyFactor, ...
+    targetDissolutionSliceMinExtraSteps, targetDissolutionFinalPorosity);
 if targetSliceSettings.enabled
     porosityStepTarget = targetSliceSettings.porosityStepTarget;
     maxTotalTimeSteps = targetSliceSettings.maxTotalTimeSteps;
     fprintf(['targetDissolutionSlices=%d: initial porosity=%.4f, ', ...
-        'target dPorosity per exported RTM step=%.4g, safety steps=%d\n'], ...
+        'final porosity=%.4f, target dPorosity per exported RTM step=%.4g, ', ...
+        'safety steps=%d\n'], ...
         targetSliceSettings.targetSliceCount, initialPorosityForTargetSlices, ...
-        porosityStepTarget, maxTotalTimeSteps);
+        targetSliceSettings.finalPorosity, porosityStepTarget, maxTotalTimeSteps);
 end
 allowAdaptiveTimeGridExtension = targetSliceSettings.enabled && ~hasExplicitMaxTotalTimeSteps;
 targetExportEnabled = targetSliceSettings.enabled;
@@ -1332,14 +1399,20 @@ catch
 end
 
 flowStepper.next;
-StokesL.computeLevel('s');
+StokesL = solveStokesLevel(StokesL, flowStepper.curstep, ...
+    isolateLargeLinearSolves, workerMeshPath, levelSet{1}(:, 1), ...
+    flowDirection, lengthXAxis, lengthYAxis, nxParts, nyParts, ...
+    inletVelocity, mu);
 flowStepper.prev;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 flow = Variable(gridHyPHM, flowStepper, 'Flow', 'RT0');
 helper = StokesL.U.getdata(1);
-flow.setdata(helper(gridHyPHM.numV + 1:end, 1).*gridHyPHM.nuE(:, 1)+helper(gridHyPHM.numV + 1:end, 2).*gridHyPHM.nuE(:, 2));
+flow.setdata(projectP2VelocityToRt0( ...
+    gridHyPHM, helper, transportFlowProjectionMode, levelSet{1}(:, 1)));
+reportRt0FluxDivergence(gridHyPHM, flow.getdata(1), ...
+    levelSet{1}(:, 1), transportFlowProjectionMode);
 porosityFunc = @(t, x) porosityHelperFun(t, x, porosities, numberOfSlices, 1);
 
 % Boundary IDs: 1 = down, 2 = right, 3 = up, 4 = left
@@ -1349,34 +1422,43 @@ disp('Initializing hydrogen transport...');
 
 hydrogenConcentration = Variable(gridHyPHM, transportStepper, ...
     'H^+_pH', 'P0');
-% hydrogenConcentration.setdata(0, @(t, x) initialHydrogenConcentration);
 hydrogenConcentration.setdata(0, @(t, x) 0);
 hydrogenTransport = TransportLEVEL(gridHyPHM, transportStepper, 'H^+ Transport');
 hydrogenTransport.id2N = {1, 2, 3};
-hydrogenTransport.id2F = {4};
 hydrogenTransport.U = hydrogenConcentration;
-hydrogenTransport.D.setdata(diffusionCoefficient*eye(2));
-hydrogenTransport.gF.setdata( ...
-    @(t, x) -initialHydrogenConcentration*inletVelocity*(x(1) < EPS));
-hydrogenTransport.A.setdata(0, @(t, x) 1);
+hydrogenTransport.D.setdata(0, diffusionCoefficient*eye(2));
+if strcmp(transportInletBoundaryMode, 'dirichlet')
+    hydrogenTransport.id2D = {4};
+    hydrogenTransport.uD.setdata(0, @(t, x) initialHydrogenConcentration);
+    hydrogenTransport.gF.setdata(0, @(t, x) 0);
+else
+    hydrogenTransport.id2F = {4};
+    hydrogenTransport.gF.setdata(0, ...
+        @(t, x) -initialHydrogenConcentration*inletVelocity*(x(1) < EPS));
+end
+hydrogenTransport.A.setdata(0, @(t, x) transportAccumulationCoefficient);
 hydrogenTransport.C.setdata(0, flow.getdata(1));
-hydrogenTransport.isUpwind = 'exp';
+hydrogenTransport.isUpwind = transportUpwindMode;
 fprintf('Transport upwinding mode: %s\n', hydrogenTransport.isUpwind);
 
 if usePhreeqc
     disp('Initializing PHREEQC transport components...');
     calciumTransport = createPhreeqcTransport(gridHyPHM, transportStepper, flow, ...
         'Ca_total', initialCalciumConcentration, inletCalciumConcentration, ...
-        diffusionCoefficient, inletVelocity, EPS, 'exp');
+        diffusionCoefficient, inletVelocity, EPS, transportUpwindMode, ...
+        transportInletBoundaryMode, transportAccumulationCoefficient);
     carbonTransport = createPhreeqcTransport(gridHyPHM, transportStepper, flow, ...
         'C_total', initialCarbonConcentration, inletCarbonConcentration, ...
-        diffusionCoefficient, inletVelocity, EPS, 'exp');
+        diffusionCoefficient, inletVelocity, EPS, transportUpwindMode, ...
+        transportInletBoundaryMode, transportAccumulationCoefficient);
     sodiumTransport = createPhreeqcTransport(gridHyPHM, transportStepper, flow, ...
         'Na_total', initialSodiumConcentration, inletSodiumConcentration, ...
-        diffusionCoefficient, inletVelocity, EPS, 'exp');
+        diffusionCoefficient, inletVelocity, EPS, transportUpwindMode, ...
+        transportInletBoundaryMode, transportAccumulationCoefficient);
     chlorideTransport = createPhreeqcTransport(gridHyPHM, transportStepper, flow, ...
         'Cl_total', initialChlorideConcentration, inletChlorideConcentration, ...
-        diffusionCoefficient, inletVelocity, EPS, 'exp');
+        diffusionCoefficient, inletVelocity, EPS, transportUpwindMode, ...
+        transportInletBoundaryMode, transportAccumulationCoefficient);
 end
 
 hydrogenDataOld = hydrogenConcentration.getdata(0);
@@ -1408,6 +1490,8 @@ Volume = nan(1, numel(timeSteps));
 % --- 新增：初始化孔隙率与渗透率存储数组（插入点：Volume = nan(...) 之后） ---
 Porosity = nan(1, numel(timeSteps));
 Permeability = nan(1, numel(timeSteps));
+PermeabilityTensor_cm2 = nan(2, 2, numel(timeSteps));
+PermeabilityTensor_mD = nan(2, 2, numel(timeSteps));
 PV_injected = nan(1, numel(timeSteps)); % 新增：PV 数组
 OutletHConc = nan(1, numel(timeSteps)); % 新增：出口处平均 H+ 浓度
 Tortuosity  = nan(1, numel(timeSteps)); % 迂曲度 τ = <|v|>/<vx>（基于孔隙速度场）
@@ -1426,7 +1510,8 @@ if writeExcel && exist(tortuositySegXlsxFile, 'file'), delete(tortuositySegXlsxF
 
 if ~exist(logfile, 'file')
     fid = fopen(logfile, 'w');
-    fprintf(fid, ['timestep,time_s,porosity,permeability_mD,k_k0,avg_dissolution_rate,', ...
+    fprintf(fid, ['timestep,time_s,porosity,permeability_mD,k_k0,Kxx_cm2,Kxy_cm2,Kyx_cm2,Kyy_cm2,', ...
+        'Kxx_mD,Kxy_mD,Kyx_mD,Kyy_mD,avg_dissolution_rate,', ...
         'interface_tst_rate_mol_cm2_s,flux_apparent_rate_mol_cm2_s,', ...
         'surface_area_cm2,grain_volume_cm3,injected_pv,outlet_H_conc,tortuosity\n']);
     fclose(fid);
@@ -1641,6 +1726,7 @@ if usePhreeqc && exportPhreeqcGridPlot && ~isempty(phreeqcReactionGrid)
             'Failed to export PHREEQC reaction grid plot: %s', ME.message);
     end
 end
+clear cellProblemSystemMatrix rhs isDoF triangleVolumes triangleSurfaces;
 subplot1Dir = fullfile(individualPlotsDir, 'concentration');
 subplot2Dir = fullfile(individualPlotsDir, 'interface');
 subplot3Dir = fullfile(individualPlotsDir, 'velocity');
@@ -1742,8 +1828,11 @@ metadata.parameters = struct( ...
     'phreeqcWriteSolutionWaterLine', phreeqcWriteSolutionWaterLine, ...
     'phreeqcKineticsReservoirMoles', phreeqcKineticsReservoirMoles, ...
     'phreeqcKineticsTolerance', phreeqcKineticsTolerance, ...
+    'phreeqcTransportBasis', string(phreeqcTransportBasis), ...
     'phreeqcTransportMaxFactor', phreeqcTransportMaxFactor, ...
     'phreeqcExportSeismoelectric', phreeqcExportSeismoelectric, ...
+    'phreeqcEarlyExportSteps', phreeqcEarlyExportSteps, ...
+    'phreeqcWriteSpeciesTable', phreeqcWriteSpeciesTable, ...
     'initialCalciumConcentration_mol_cm3', initialCalciumConcentration, ...
     'initialCarbonConcentration_mol_cm3', initialCarbonConcentration, ...
     'initialSodiumConcentration_mol_cm3', initialSodiumConcentration, ...
@@ -1757,6 +1846,7 @@ metadata.parameters = struct( ...
     'maximalStep_s', maximalStep, ...
     'adaptiveMaxTimeStep_s', adaptiveMaxTimeStep, ...
     'targetDissolutionSlices', targetDissolutionSlices, ...
+    'targetDissolutionFinalPorosity', targetDissolutionFinalPorosity, ...
     'targetDissolutionSliceSafetyFactor', targetDissolutionSliceSafetyFactor, ...
     'targetDissolutionSliceMinExtraSteps', targetDissolutionSliceMinExtraSteps, ...
     'allowAdaptiveTimeGridExtension', allowAdaptiveTimeGridExtension, ...
@@ -1768,6 +1858,12 @@ metadata.parameters = struct( ...
     'adaptiveShrinkSafety', adaptiveShrinkSafety, ...
     'targetSliceStepBoundaryFactor', targetSliceStepBoundaryFactor, ...
     'transportUpwindMode', string(hydrogenTransport.isUpwind), ...
+    'transportInletBoundaryMode', string(transportInletBoundaryMode), ...
+    'transportFlowProjectionMode', string(transportFlowProjectionMode), ...
+    'transportAccumulationCoefficient', transportAccumulationCoefficient, ...
+    'transportSolverBackend', string(transportSolverBackend), ...
+    'permeabilityMethod', "upstream_RTSPHEM_reference_cell_L2", ...
+    'permeabilityOnExportOnly', permeabilityOnExportOnly, ...
     'enableHardCflLimit', enableHardCflLimit, ...
     'hardCflLimitInitialGrid', hardCflLimitInitialGrid, ...
     'enableConcentrationCflLimit', enableConcentrationCflLimit, ...
@@ -1961,6 +2057,7 @@ while transportStepper.next
         surfaceArea{i}(timeIterationStep + 1) = sum(triangleSurfaces);
     end
     Volume(timeIterationStep+1) = (lengthYAxis * lengthXAxis - porosities);
+    clear cellProblemSystemMatrix rhs isDoF triangleVolumes triangleSurfaces SOL diffusion;
     cellProblemTime(timeIterationStep) = toc;
     disp(['    ... done in ', num2str(cellProblemTime(timeIterationStep)), ...
         ' seconds.']);
@@ -1988,46 +2085,36 @@ while transportStepper.next
     StokesL.L.setdata(levelSet{1}(:, timeIterationStep + 1))
 
     flowStepper.next;
-    StokesL.computeLevel('s');
+    StokesL = solveStokesLevel(StokesL, flowStepper.curstep, ...
+        isolateLargeLinearSolves, workerMeshPath, ...
+        levelSet{1}(:, timeIterationStep + 1), flowDirection, ...
+        lengthXAxis, lengthYAxis, nxParts, nyParts, inletVelocity, mu);
 
     helper = StokesL.U.getdata(1);
-    flow.setdata(helper(gridHyPHM.numV + 1:end, 1).*gridHyPHM.nuE(:, 1)+helper(gridHyPHM.numV + 1:end, 2).*gridHyPHM.nuE(:, 2));
+    flow.setdata(projectP2VelocityToRt0( ...
+        gridHyPHM, helper, transportFlowProjectionMode, ...
+        levelSet{1}(:, timeIterationStep + 1)));
     flowStepper.prev;
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-    % --- 新增：基于边界流量与压降估算等效渗透率（cm^2） ---
-    edgesRight = flowConfig.outletEdgePredicate(gridHyPHM.baryE);
-    edgeFlux = flow.getdata(1);                     % per-edge flux or normal velocity
-    Q = sum(edgeFlux .* gridHyPHM.areaE .* double(edgesRight));  % [cm^3/s]
+    if ~permeabilityOnExportOnly
+        [K_cm2, K_mD] = computeUpstreamPermeabilityTensor( ...
+            microscaleGrid, coord, levelSet{1}(:, timeIterationStep + 1), ...
+            isolateLargeLinearSolves, workerMeshPath);
+        PermeabilityTensor_cm2(:, :, timeIterationStep + 1) = K_cm2;
+        PermeabilityTensor_mD(:, :, timeIterationStep + 1) = K_mD;
+        if strcmp(flowConfig.direction, 'left_to_right')
+            k_eff_mD = K_mD(1, 1);
+        else
+            k_eff_mD = K_mD(2, 2);
+        end
+        Permeability(timeIterationStep+1) = k_eff_mD;
 
-    pData = phead.getdata(1);
-    leftNodes = flowConfig.inletNodePredicate(gridHyPHM.coordV);
-    rightNodes = flowConfig.outletNodePredicate(gridHyPHM.coordV);
-    dp = mean(pData(leftNodes)) - mean(pData(rightNodes));
-
-    A = flowConfig.crossSectionLength * thickness;  % [cm^2]
-    L = flowConfig.flowLength;                      % [cm]
-
-    if abs(dp) < EPS
-        k_eff_cm2 = NaN;
-    else
-        k_eff_cm2 = mu * Q * L / (A * dp);          % 渗透率（cm^2）
-    end
-
-    % --- 单位转换：cm^2 → mD ---
-    % 正确值：1 Darcy = 9.869233e-9 cm², 1 mD = 9.869233e-12 cm²
-    darcy_to_cm2 = 9.869233e-9;          % 1 Darcy = 9.869233e-9 cm^2
-    md_to_cm2    = darcy_to_cm2 * 1e-3;  % 1 mD = 9.869233e-12 cm^2
-    k_eff_mD = k_eff_cm2 / md_to_cm2;
-
-    % k_eff_mD = 100000;  % 占位符，保持代码结构完整,待替换为真实渗透率计算
-    % 存储（单位：mD）
-    Permeability(timeIterationStep+1) = k_eff_mD;
-    
-    % 存储初始渗透率 k0（仅在第一步时设置）
-    if isnan(k0) && ~isnan(k_eff_mD)
-        k0 = k_eff_mD;
+        % 存储初始渗透率 k0（仅在第一步时设置）
+        if isnan(k0) && ~isnan(k_eff_mD)
+            k0 = k_eff_mD;
+        end
     end
     
     % --- 迂曲度计算：τ = Σ|v| / Σv_flow，仅在孔隙空间节点上求和 ---
@@ -2120,7 +2207,9 @@ while transportStepper.next
     end
 
     hydrogenTransportRhsData = zeros(gridHyPHM.numE, 1);
-    hydrogenTransport.A.setdata(timeIterationStep, @(t, x) 1);
+    copyTransportStaticCoefficientsToStep(hydrogenTransport, timeIterationStep);
+    hydrogenTransport.A.setdata(timeIterationStep, ...
+        @(t, x) transportAccumulationCoefficient);
     hydrogenTransport.gF.setdata(timeIterationStep, hydrogenTransport.gF.getdata(0)+hydrogenTransportRhsData);
     hydrogenTransport.C.setdata(timeIterationStep, flow.getdata(1));
 
@@ -2136,18 +2225,36 @@ while transportStepper.next
     end
 
     if usePhreeqc
-        setPhreeqcTransportStepData(calciumTransport, timeIterationStep, flow.getdata(1));
-        setPhreeqcTransportStepData(carbonTransport, timeIterationStep, flow.getdata(1));
-        setPhreeqcTransportStepData(sodiumTransport, timeIterationStep, flow.getdata(1));
-        setPhreeqcTransportStepData(chlorideTransport, timeIterationStep, flow.getdata(1));
+        setPhreeqcTransportStepData(calciumTransport, timeIterationStep, ...
+            flow.getdata(1), transportAccumulationCoefficient);
+        setPhreeqcTransportStepData(carbonTransport, timeIterationStep, ...
+            flow.getdata(1), transportAccumulationCoefficient);
+        setPhreeqcTransportStepData(sodiumTransport, timeIterationStep, ...
+            flow.getdata(1), transportAccumulationCoefficient);
+        setPhreeqcTransportStepData(chlorideTransport, timeIterationStep, ...
+            flow.getdata(1), transportAccumulationCoefficient);
         speciesCells = {hydrogenTransport; calciumTransport; carbonTransport; sodiumTransport; chlorideTransport};
-        for iSpeciesSolve = 1:numel(speciesCells)
-            [nonlinearFunc, nonlinearJacFunc] = zeroPhreeqcNonlinearFunctions(1, gridHyPHM.numT);
-            newtonIteration(speciesCells(iSpeciesSolve), nonlinearFunc, nonlinearJacFunc, 2);
+        if strcmp(transportSolverBackend, 'cut_cell_fv')
+            inletConcentrations = [initialHydrogenConcentration, ...
+                inletCalciumConcentration, inletCarbonConcentration, ...
+                inletSodiumConcentration, inletChlorideConcentration];
+            speciesCells = solvePhreeqcCutCellTransport(speciesCells, Corrector, ...
+                timeIterationStep, gridHyPHM, ...
+                levelSet{1}(:, timeIterationStep), Levels, flow.getdata(1), ...
+                flowConfig, thickness, macroscaleTimeStepSize, ...
+                diffusionCoefficient, inletConcentrations, molarVolume, ...
+                phreeqcTemperatureC, phreeqcTransportBasis);
+        else
+            for iSpeciesSolve = 1:numel(speciesCells)
+                speciesCells{iSpeciesSolve}.computeLevel('silent');
+            end
         end
         applyTransportCorrector(speciesCells, Corrector, timeIterationStep);
+        transportFluidTriangles = any(Levels(gridHyPHM.V0T) < -eps, 2);
+        transportFullFluidTriangles = all(Levels(gridHyPHM.V0T) < -eps, 2);
         speciesCells = limitPhreeqcTransportBounds(speciesCells, phreeqcTransportUpperBounds, ...
-            phreeqcTransportSpeciesNames, timeIterationStep);
+            phreeqcTransportSpeciesNames, timeIterationStep, transportFluidTriangles, ...
+            transportFullFluidTriangles);
         hydrogenTransport = speciesCells{1};
         calciumTransport = speciesCells{2};
         carbonTransport = speciesCells{3};
@@ -2360,6 +2467,7 @@ while transportStepper.next
             surfaceArea{i}(timeIterationStep + 1) = sum(triangleSurfaces);
         end
         Volume(timeIterationStep+1) = (lengthYAxis * lengthXAxis - porosities);
+        clear cellProblemSystemMatrix rhs isDoF triangleVolumes triangleSurfaces SOL diffusion;
         cellProblemTime(timeIterationStep) = toc;
         disp(['    ... done in ', num2str(cellProblemTime(timeIterationStep)), ...
             ' seconds.']);
@@ -2381,37 +2489,33 @@ while transportStepper.next
         StokesL.L.setdata(levelSet{1}(:, timeIterationStep + 1))
 
         flowStepper.next;
-        StokesL.computeLevel('s');
+        StokesL = solveStokesLevel(StokesL, flowStepper.curstep, ...
+            isolateLargeLinearSolves, workerMeshPath, ...
+            levelSet{1}(:, timeIterationStep + 1), flowDirection, ...
+            lengthXAxis, lengthYAxis, nxParts, nyParts, inletVelocity, mu);
 
         helper = StokesL.U.getdata(1);
-        flow.setdata(helper(gridHyPHM.numV + 1:end, 1).*gridHyPHM.nuE(:, 1)+helper(gridHyPHM.numV + 1:end, 2).*gridHyPHM.nuE(:, 2));
+        flow.setdata(projectP2VelocityToRt0( ...
+            gridHyPHM, helper, transportFlowProjectionMode, ...
+            levelSet{1}(:, timeIterationStep + 1)));
         flowStepper.prev;
 
-        edgesRight = flowConfig.outletEdgePredicate(gridHyPHM.baryE);
-        edgeFlux = flow.getdata(1);
-        Q = sum(edgeFlux .* gridHyPHM.areaE .* double(edgesRight));
+        if ~permeabilityOnExportOnly
+            [K_cm2, K_mD] = computeUpstreamPermeabilityTensor( ...
+                microscaleGrid, coord, levelSet{1}(:, timeIterationStep + 1), ...
+                isolateLargeLinearSolves, workerMeshPath);
+            PermeabilityTensor_cm2(:, :, timeIterationStep + 1) = K_cm2;
+            PermeabilityTensor_mD(:, :, timeIterationStep + 1) = K_mD;
+            if strcmp(flowConfig.direction, 'left_to_right')
+                k_eff_mD = K_mD(1, 1);
+            else
+                k_eff_mD = K_mD(2, 2);
+            end
+            Permeability(timeIterationStep+1) = k_eff_mD;
 
-        pData = phead.getdata(1);
-        leftNodes = flowConfig.inletNodePredicate(gridHyPHM.coordV);
-        rightNodes = flowConfig.outletNodePredicate(gridHyPHM.coordV);
-        dp = mean(pData(leftNodes)) - mean(pData(rightNodes));
-
-        A = flowConfig.crossSectionLength * thickness;
-        L = flowConfig.flowLength;
-
-        if abs(dp) < EPS
-            k_eff_cm2 = NaN;
-        else
-            k_eff_cm2 = mu * Q * L / (A * dp);
-        end
-
-        darcy_to_cm2 = 9.869233e-9;
-        md_to_cm2 = darcy_to_cm2 * 1e-3;
-        k_eff_mD = k_eff_cm2 / md_to_cm2;
-        Permeability(timeIterationStep+1) = k_eff_mD;
-
-        if isnan(k0) && ~isnan(k_eff_mD)
-            k0 = k_eff_mD;
+            if isnan(k0) && ~isnan(k_eff_mD)
+                k0 = k_eff_mD;
+            end
         end
 
         velocityDataTau = StokesL.U.getdata(1);
@@ -2473,11 +2577,18 @@ while transportStepper.next
 
     % --- 计算出口处平均 H+ 浓度：必须在输运求解之后读取当前步浓度 ---
     hydrogenDataCurrent = hydrogenTransport.U.getdata(timeIterationStep);
-    outletTriangles = flowConfig.outletTrianglePredicate(gridHyPHM.baryT);
+    currentLevels = levelSet{1}(:, timeIterationStep + 1);
+    currentFluidTriangles = any(currentLevels(gridHyPHM.V0T) < -eps, 2);
+    outletTriangles = flowConfig.outletTrianglePredicate(gridHyPHM.baryT) & ...
+        currentFluidTriangles;
     OutletHConc(timeIterationStep+1) = ComputeOutletConcentration(hydrogenDataCurrent, outletTriangles);
-    fluxApparentRateNow = computeHydrogenFluxApparentRate( ...
-        hydrogenTransport, timeIterationStep, initialHydrogenConcentration, ...
-        inletVelocity, flowConfig, gridHyPHM, surfaceArea{1}(timeIterationStep));
+    if usePhreeqc && strcmp(phreeqcTransportBasis, 'conserved_totals')
+        fluxApparentRateNow = NaN;
+    else
+        fluxApparentRateNow = computeHydrogenFluxApparentRate( ...
+            hydrogenTransport, timeIterationStep, initialHydrogenConcentration, ...
+            inletVelocity, flowConfig, gridHyPHM, surfaceArea{1}(timeIterationStep));
+    end
     interfaceTstRateNow = NaN;
 
     if usePhreeqc
@@ -2510,6 +2621,8 @@ while transportStepper.next
     t_now = currentTime;                    % 当前时间（s）
     por_now = Porosity(timeIterationStep+1);
     perm_now = Permeability(timeIterationStep+1); % 已经是 mD
+    K_cm2_now = PermeabilityTensor_cm2(:, :, timeIterationStep + 1);
+    K_mD_now = PermeabilityTensor_mD(:, :, timeIterationStep + 1);
     rate_now = Rate(timeIterationStep+1);
 
     % surfaceArea 存储为 cell，确保索引存在
@@ -2681,14 +2794,39 @@ while transportStepper.next
     if targetExportEnabled
         [doExportStep, nextTargetExportIndex] = ShouldExportTargetDissolutionSlice( ...
             timeIterationStep, porosityVal, targetExportInitialPorosity, ...
-            targetSliceSettings.targetSliceCount, targetExportLastIndex, stopAfterThisStep);
+            targetSliceSettings.targetSliceCount, targetExportLastIndex, ...
+            stopAfterThisStep, targetSliceSettings.finalPorosity);
         if doExportStep
             targetExportLastIndex = nextTargetExportIndex;
             targetExportCount = targetExportCount + 1;
         end
+        if targetExportLastIndex >= targetSliceSettings.targetSliceCount
+            stopAfterThisStep = true;
+        end
     else
         doExportStep = shouldExportStep(timeIterationStep, transportStepper.numsteps, ...
             exportEvery, stopAfterThisStep);
+    end
+
+    doPhreeqcExportStep = usePhreeqc && ...
+        (timeIterationStep <= phreeqcEarlyExportSteps || ...
+         mod(timeIterationStep, phreeqcExportEvery) == 0 || doExportStep);
+
+    if permeabilityOnExportOnly && doPhreeqcExportStep
+        [K_cm2_now, K_mD_now] = computeUpstreamPermeabilityTensor( ...
+            microscaleGrid, coord, levelSet{1}(:, timeIterationStep + 1), ...
+            isolateLargeLinearSolves, workerMeshPath);
+        PermeabilityTensor_cm2(:, :, timeIterationStep + 1) = K_cm2_now;
+        PermeabilityTensor_mD(:, :, timeIterationStep + 1) = K_mD_now;
+        if strcmp(flowConfig.direction, 'left_to_right')
+            perm_now = K_mD_now(1, 1);
+        else
+            perm_now = K_mD_now(2, 2);
+        end
+        Permeability(timeIterationStep + 1) = perm_now;
+        if isnan(k0) && ~isnan(perm_now)
+            k0 = perm_now;
+        end
     end
 
     % 计算 k/k0 渗透率比值
@@ -2699,11 +2837,24 @@ while transportStepper.next
     end
     outletHConc_now = OutletHConc(timeIterationStep+1);
 
+    stabilityPrevious = hydrogenData;
+    stabilityCurrent = hydrogenDataCurrent;
+    stabilitySourceScale = SorceScale;
+    stabilityRateCoefficient = rateCoefficientTST;
+    stabilityInletConcentration = initialHydrogenConcentration;
+    if usePhreeqc && strcmp(phreeqcTransportBasis, 'conserved_totals')
+        stabilityPrevious = chlorideTransport.U.getdata(timeIterationStep - 1);
+        stabilityCurrent = chlorideTransport.U.getdata(timeIterationStep);
+        stabilitySourceScale = zeros(size(SorceScale));
+        stabilityRateCoefficient = 0;
+        stabilityInletConcentration = inletChlorideConcentration;
+    end
     stabilityDiagnostics = computeStabilityDiagnostics( ...
-        gridHyPHM, levelSet{1}(:, timeIterationStep + 1), hydrogenData, ...
-        hydrogenDataCurrent, flow.getdata(1), StokesL.U.getdata(1), ...
+        gridHyPHM, levelSet{1}(:, timeIterationStep + 1), stabilityPrevious, ...
+        stabilityCurrent, flow.getdata(1), StokesL.U.getdata(1), ...
         diffusionCoefficient, meshMinLengthForCfl, macroscaleTimeStepSize, ...
-        SorceScale, rateCoefficientTST, thickness, initialHydrogenConcentration, ...
+        stabilitySourceScale, stabilityRateCoefficient, thickness, ...
+        stabilityInletConcentration, ...
         inletVelocity, flowConfig, normalSpeedMax, por_now, perm_now, ...
         k_k0_now, hydrogenTransport.isUpwind);
     nextHardCflStepSize = computeHardCflStepSize(stabilityDiagnostics, ...
@@ -2738,9 +2889,11 @@ while transportStepper.next
     % 追加写入 CSV（每步一行）
     fid = fopen(logfile, 'a');
     if fid ~= -1
-        fprintf(fid, ['%d,%.6f,%.6f,%.6f,%.6f,%.6e,%.6e,%.6e,', ...
-            '%.6e,%.6e,%.6f,%.6e,%.6f\n'], ...
+        fprintf(fid, ['%d,%.6f,%.6f,%.6f,%.6f,%.12e,%.12e,%.12e,%.12e,', ...
+            '%.6f,%.6f,%.6f,%.6f,%.6e,%.6e,%.6e,%.6e,%.6e,%.6f,%.6e,%.6f\n'], ...
             timeIterationStep, t_now, por_now, perm_now, k_k0_now, ...
+            K_cm2_now(1,1), K_cm2_now(1,2), K_cm2_now(2,1), K_cm2_now(2,2), ...
+            K_mD_now(1,1), K_mD_now(1,2), K_mD_now(2,1), K_mD_now(2,2), ...
             rate_now, interfaceTstRateNow, fluxApparentRateNow, ...
             sa_now, vol_now, currentPV, outletHConc_now, tau_now);
         fclose(fid);
@@ -2752,10 +2905,13 @@ while transportStepper.next
     if writeExcel
         try
             T_row = table(timeIterationStep, t_now, por_now, perm_now, k_k0_now, ...
+                K_cm2_now(1,1), K_cm2_now(1,2), K_cm2_now(2,1), K_cm2_now(2,2), ...
+                K_mD_now(1,1), K_mD_now(1,2), K_mD_now(2,1), K_mD_now(2,2), ...
                 rate_now, interfaceTstRateNow, fluxApparentRateNow, ...
                 sa_now, vol_now, currentPV, outletHConc_now, tau_now, ...
                 'VariableNames', {'TimeStep', 'Time_s', 'Porosity', 'Permeability_mD', ...
-                'k_k0', 'DissolutionRate', 'InterfaceTstRate_mol_cm2_s', ...
+                'k_k0', 'Kxx_cm2', 'Kxy_cm2', 'Kyx_cm2', 'Kyy_cm2', ...
+                'Kxx_mD', 'Kxy_mD', 'Kyx_mD', 'Kyy_mD', 'DissolutionRate', 'InterfaceTstRate_mol_cm2_s', ...
                 'FluxApparentRate_mol_cm2_s', 'SurfaceArea_cm2', 'GrainVolume_cm3', ...
                 'InjectedPV', 'OutletHConc', 'Tortuosity'});
             writetable(T_row, xlsxFile, 'WriteMode', 'append');
@@ -3047,8 +3203,11 @@ while transportStepper.next
     safeCloseFigure(figSub3);
     end
 
-    if usePhreeqc && (mod(timeIterationStep, phreeqcExportEvery) == 0 || doExportStep)
-        WritePhreeqcSpeciesTable(phreeqcOutputDir, timeIterationStep, t_now, gridHyPHM, phreeqcSpeciesData);
+    if doPhreeqcExportStep
+        if phreeqcWriteSpeciesTable
+            WritePhreeqcSpeciesTable(phreeqcOutputDir, timeIterationStep, t_now, ...
+                gridHyPHM, phreeqcSpeciesData);
+        end
         if phreeqcExportSeismoelectric
             seRtState = struct( ...
                 'porosity', por_now, ...
@@ -3281,6 +3440,12 @@ while transportStepper.next
     safeCloseFigure(rtFig);
     end
 
+    if usePhreeqc
+        discardCompletedTransportHistory( ...
+            {hydrogenTransport; calciumTransport; carbonTransport; ...
+            sodiumTransport; chlorideTransport}, timeIterationStep);
+    end
+
     elapsedWallSeconds = toc(simulationTimer);
     if elapsedWallSeconds > maxExperimentWallSeconds
         timedOut = true;
@@ -3325,7 +3490,8 @@ while transportStepper.next
                 nextMacroscaleStepSize, macroscaleTimeStepSize, porosityDeltaForStep, ...
                 porosityVal, targetExportInitialPorosity, targetExportLastIndex, ...
                 targetSliceSettings.targetSliceCount, adaptiveMinTimeStep, ...
-                adaptiveMaxTimeStep, targetSliceStepBoundaryFactor);
+                adaptiveMaxTimeStep, targetSliceStepBoundaryFactor, ...
+                targetSliceSettings.finalPorosity);
             if wasTargetBoundaryLimited
                 didUpdateNextStep = true;
                 fprintf(' target_slice_dt: limiting next dt to %g s for porosity boundary %.5f\n', ...
@@ -3386,6 +3552,8 @@ while transportStepper.next
                 Volume(newNumTimePoints) = NaN;
                 Porosity(newNumTimePoints) = NaN;
                 Permeability(newNumTimePoints) = NaN;
+                PermeabilityTensor_cm2(:, :, newNumTimePoints) = NaN;
+                PermeabilityTensor_mD(:, :, newNumTimePoints) = NaN;
                 PV_injected(newNumTimePoints) = NaN;
                 OutletHConc(newNumTimePoints) = NaN;
                 Tortuosity(newNumTimePoints) = NaN;
@@ -4260,25 +4428,314 @@ for iField = 1:numel(variableFields)
 end
 end
 
+function qRt0 = projectP2VelocityToRt0(grid, velocityP2, mode, levels)
+edgeVelocity = velocityP2(grid.numV + 1:end, :);
+if ismember(mode, {'edge_average', 'conservative_edge_average'})
+    edgeVelocity = (velocityP2(grid.V0E(:, 1), :) + 4 * edgeVelocity + ...
+        velocityP2(grid.V0E(:, 2), :)) / 6;
+end
+qRt0 = edgeVelocity(:, 1) .* grid.nuE(:, 1) + ...
+    edgeVelocity(:, 2) .* grid.nuE(:, 2);
+if strcmp(mode, 'conservative_edge_average')
+    qRt0 = enforceFluidCellFluxBalance(grid, qRt0, levels);
+end
+end
+
+function qRt0 = enforceFluidCellFluxBalance(grid, qRt0, levels, edgeMeasure, ...
+        inletBoundaryEdges, outletBoundaryEdges)
+useCutCellEdges = nargin >= 4;
+if nargin < 4
+    edgeMeasure = grid.areaE;
+end
+if nargin < 6
+    inletBoundaryEdges = grid.idE == 4;
+    outletBoundaryEdges = grid.idE == 2;
+end
+fluid = any(levels(grid.V0T) < -eps, 2);
+incidence = sparse(repmat((1:grid.numT)', 1, 3), grid.E0T, ...
+    grid.sigE0T .* edgeMeasure(grid.E0T), grid.numT, grid.numE);
+adjacentFluidCount = sum(reshape(fluid(max(grid.T0E, 1)), size(grid.T0E)) ...
+    .* (grid.T0E > 0), 2);
+if useCutCellEdges
+    internalTransportEdges = adjacentFluidCount == 2 & edgeMeasure > 0;
+    inletTransportEdges = adjacentFluidCount == 1 & inletBoundaryEdges & ...
+        edgeMeasure > 0;
+    outletTransportEdges = adjacentFluidCount == 1 & outletBoundaryEdges & ...
+        edgeMeasure > 0;
+    transportEdges = internalTransportEdges | inletTransportEdges | ...
+        outletTransportEdges;
+    qRt0(~transportEdges) = 0;
+    poreGraph = graph(grid.T0E(internalTransportEdges, 1), ...
+        grid.T0E(internalTransportEdges, 2), [], grid.numT);
+    componentId = conncomp(poreGraph).';
+    outletCells = max(grid.T0E(outletTransportEdges, :), [], 2);
+    outletComponents = unique(componentId(outletCells));
+    inletIds = find(inletTransportEdges);
+    inletCells = max(grid.T0E(inletIds, :), [], 2);
+    blindInlet = ~ismember(componentId(inletCells), outletComponents);
+    qRt0(inletIds(blindInlet)) = 0;
+    freeEdges = internalTransportEdges | outletTransportEdges;
+else
+    freeEdges = adjacentFluidCount == 2 | ...
+        (adjacentFluidCount == 1 & grid.idE == 2);
+end
+balanceMatrix = incidence(fluid, freeEdges);
+residual = incidence(fluid, :) * qRt0;
+if isempty(residual) || ~any(freeEdges)
+    return;
+end
+normalMatrix = balanceMatrix * balanceMatrix';
+matrixScale = max(abs(diag(normalMatrix)), [], 'omitnan');
+regularization = max(matrixScale * 1e-13, realmin);
+projectionMatrix = normalMatrix + ...
+    regularization * speye(size(normalMatrix));
+multiplier = projectionMatrix \ (-residual);
+fluxCorrection = balanceMatrix' * multiplier;
+imbalance = balanceMatrix * fluxCorrection + residual;
+relativeResidual = norm(imbalance) / max(norm(residual), eps);
+if relativeResidual > 1e-8
+    multiplierCorrection = projectionMatrix \ (-imbalance);
+    fluxCorrection = fluxCorrection + balanceMatrix' * multiplierCorrection;
+    imbalance = balanceMatrix * fluxCorrection + residual;
+    relativeResidual = norm(imbalance) / ...
+    max(norm(residual), eps);
+end
+if ~all(isfinite(fluxCorrection)) || relativeResidual > 1e-8
+    error('RTSPHEM:Transport:FlowProjectionFailed', ...
+        'Conservative RT0 projection failed (relres=%.3e).', ...
+        relativeResidual);
+end
+qRt0(freeEdges) = qRt0(freeEdges) + fluxCorrection;
+end
+
+function reportRt0FluxDivergence(grid, qRt0, levels, mode)
+signedFlux = grid.sigE0T .* grid.areaE(grid.E0T) .* qRt0(grid.E0T);
+cellResidual = sum(signedFlux, 2);
+cellThroughput = sum(abs(signedFlux), 2);
+fluid = any(levels(grid.V0T) < -eps, 2);
+relativeL1 = sum(abs(cellResidual(fluid))) / ...
+    max(sum(cellThroughput(fluid)), eps);
+relativeCell = abs(cellResidual(fluid)) ./ ...
+    max(cellThroughput(fluid), eps);
+fprintf(['RT0 flow projection (%s): fluid divergence L1 ratio=%.3e, ', ...
+    'max cell ratio=%.3e\n'], mode, relativeL1, max(relativeCell));
+end
+
+function speciesCells = solvePhreeqcCutCellTransport(speciesCells, corrector, ...
+        timeStep, grid, oldLevels, newLevels, flowData, flowConfig, thickness, ...
+        dtSeconds, diffusionCoefficient, inletConcentrations, molarVolume, ...
+        temperatureC, transportBasis)
+oldGeometry = rtm.geometry.BuildCutCellMetrics(grid, oldLevels, ...
+    struct('thickness_cm', thickness));
+newGeometry = rtm.geometry.BuildCutCellMetrics(grid, newLevels, ...
+    struct('thickness_cm', thickness));
+
+if strcmp(transportBasis, 'conserved_totals')
+    transportIndices = 2:5;
+    componentNames = {'Ca', 'C', 'Na', 'Cl'};
+else
+    transportIndices = 1:numel(speciesCells);
+    componentNames = {'H', 'Ca_total', 'C_total', 'Na_total', 'Cl_total'};
+end
+numSpecies = numel(transportIndices);
+oldConcentrations = zeros(grid.numT, numSpecies);
+for iSpecies = 1:numSpecies
+    sourceIndex = transportIndices(iSpecies);
+    oldConcentrations(:, iSpecies) = max(0, ...
+        speciesCells{sourceIndex}.U.getdata(timeStep - 1) - ...
+        corrector(:, sourceIndex));
+end
+state = struct( ...
+    'component_names', {componentNames}, ...
+    'component_moles', oldConcentrations .* oldGeometry.water_volume_cm3, ...
+    'mineral_names', {{'Calcite'}}, ...
+    'mineral_moles', oldGeometry.solid_volume_cm3 ./ max(molarVolume, eps), ...
+    'temperature_C', repmat(temperatureC, grid.numT, 1), ...
+    'pressure_atm', ones(grid.numT, 1), ...
+    'time_s', 0);
+[state, ~] = rtm.geometry.ConservativeRemap(state, oldGeometry, newGeometry, ...
+    struct('new_mineral_moles', ...
+    newGeometry.solid_volume_cm3 ./ max(molarVolume, eps)));
+
+edgeOpenFraction = fluidEdgeFraction(newLevels(grid.V0E));
+edgeOpenLength = grid.areaE .* edgeOpenFraction;
+flowData = enforceFluidCellFluxBalance(grid, flowData, newLevels, edgeOpenLength, ...
+    flowConfig.inletEdgePredicate(grid.baryE), ...
+    flowConfig.outletEdgePredicate(grid.baryE));
+activeCell = newGeometry.water_volume_cm3 > 0;
+internalEdge = all(grid.T0E > 0, 2) & edgeOpenLength > 0 & ...
+    activeCell(max(grid.T0E(:, 1), 1)) & activeCell(max(grid.T0E(:, 2), 1));
+outerBoundaryEdge = any(grid.T0E == 0, 2);
+inletEdge = flowConfig.inletEdgePredicate(grid.baryE) & ...
+    outerBoundaryEdge & edgeOpenLength > 0;
+outletEdge = flowConfig.outletEdgePredicate(grid.baryE) & ...
+    outerBoundaryEdge & edgeOpenLength > 0;
+boundaryEdge = inletEdge | outletEdge;
+boundaryCell = max(grid.T0E(boundaryEdge, :), [], 2);
+if timeStep == 1
+    signedCellFlow = sum(grid.sigE0T .* ...
+        (flowData(grid.E0T) .* edgeOpenLength(grid.E0T)), 2);
+    cellThroughput = sum(abs(flowData(grid.E0T) .* ...
+        edgeOpenLength(grid.E0T)), 2);
+    fprintf(['Cut-cell flow: inlet=%.6e, outlet=%.6e cm^2/s, ', ...
+        'reversed inlet/outlet=%d/%d, divergence L1=%.3e\n'], ...
+        -sum(flowData(inletEdge) .* edgeOpenLength(inletEdge)), ...
+        sum(flowData(outletEdge) .* edgeOpenLength(outletEdge)), ...
+        nnz(flowData(inletEdge) > 0), nnz(flowData(outletEdge) < 0), ...
+        sum(abs(signedCellFlow(activeCell))) / ...
+        max(sum(cellThroughput(activeCell)), eps));
+end
+
+options = struct();
+options.time_integration = 'implicit_euler';
+options.internal_face_cells = grid.T0E(internalEdge, :);
+options.internal_face_area_cm2 = edgeOpenLength(internalEdge) .* thickness;
+options.internal_face_distance_cm = max(eps, sqrt(sum( ...
+    (grid.baryT(options.internal_face_cells(:, 1), :) - ...
+    grid.baryT(options.internal_face_cells(:, 2), :)) .^ 2, 2)));
+options.internal_face_velocity_cm_s = flowData(internalEdge);
+options.boundary_face_cells = boundaryCell;
+options.boundary_face_area_cm2 = edgeOpenLength(boundaryEdge) .* thickness;
+options.boundary_face_distance_cm = max(eps, sqrt(sum( ...
+    (grid.baryT(boundaryCell, :) - grid.baryE(boundaryEdge, :)) .^ 2, 2)));
+options.boundary_face_velocity_cm_s = abs(flowData(boundaryEdge));
+options.boundary_type = repmat("outflow", nnz(boundaryEdge), 1);
+options.boundary_type(inletEdge(boundaryEdge)) = "dirichlet";
+options.boundary_concentration_mol_cm3 = repmat( ...
+    inletConcentrations(transportIndices), nnz(boundaryEdge), 1);
+options.diffusion_coefficient_cm2_s = diffusionCoefficient;
+
+[state, ledger] = rtm.transport.CutCellTransportFV( ...
+    state, newGeometry, dtSeconds, options);
+concentrations = zeros(size(state.component_moles));
+concentrations(activeCell, :) = state.component_moles(activeCell, :) ./ ...
+    newGeometry.water_volume_cm3(activeCell);
+upperBound = max([oldConcentrations; inletConcentrations(transportIndices)], [], 1);
+maximumConcentration = max(concentrations, [], 1);
+violated = maximumConcentration > upperBound .* (1 + 1e-8) + 1e-14;
+if any(violated)
+    firstViolation = find(violated, 1, 'first');
+    error('RTSPHEM:Transport:MaximumPrincipleViolation', ...
+        ['Implicit cut-cell FV transport violated the passive-scalar maximum ', ...
+        'principle for %s: max %.6e, bound %.6e mol/cm^3.'], ...
+        componentNames{firstViolation}, maximumConcentration(firstViolation), ...
+        upperBound(firstViolation));
+end
+if ledger.max_abs_component_residual_moles > 1e-12
+    error('RTSPHEM:Transport:MassBalanceViolation', ...
+        'Implicit cut-cell FV transport residual is %.3e mol.', ...
+        ledger.max_abs_component_residual_moles);
+end
+componentFlux = zeros(grid.numE, numSpecies);
+internalIds = find(internalEdge);
+internalCells = grid.T0E(internalIds, :);
+internalDistance = options.internal_face_distance_cm;
+positiveFlow = flowData(internalIds) >= 0;
+upwindConcentration = concentrations(internalCells(:, 2), :);
+upwindConcentration(positiveFlow, :) = ...
+    concentrations(internalCells(positiveFlow, 1), :);
+componentFlux(internalIds, :) = flowData(internalIds) .* upwindConcentration + ...
+    diffusionCoefficient .* ...
+    (concentrations(internalCells(:, 1), :) - ...
+    concentrations(internalCells(:, 2), :)) ./ internalDistance;
+inletIds = find(inletEdge);
+inletCells = max(grid.T0E(inletIds, :), [], 2);
+inletDistance = max(eps, sqrt(sum( ...
+    (grid.baryT(inletCells, :) - grid.baryE(inletIds, :)) .^ 2, 2)));
+componentFlux(inletIds, :) = flowData(inletIds) .* ...
+    inletConcentrations(transportIndices) + ...
+    diffusionCoefficient .* ...
+    (concentrations(inletCells, :) - ...
+    inletConcentrations(transportIndices)) ./ inletDistance;
+outletIds = find(outletEdge);
+outletCells = max(grid.T0E(outletIds, :), [], 2);
+componentFlux(outletIds, :) = flowData(outletIds) .* ...
+    concentrations(outletCells, :);
+if strcmp(transportBasis, 'conserved_totals')
+    % Free H+ is a PHREEQC-derived species, not a transported conserved total.
+    speciesCells{1}.U.setdata(timeStep, max( ...
+        speciesCells{1}.U.getdata(timeStep - 1), 0));
+    speciesCells{1}.Q.setdata(timeStep, zeros(grid.numE, 1));
+end
+for iSpecies = 1:numSpecies
+    targetIndex = transportIndices(iSpecies);
+    speciesCells{targetIndex}.U.setdata(timeStep, concentrations(:, iSpecies));
+    speciesCells{targetIndex}.Q.setdata(timeStep, componentFlux(:, iSpecies));
+end
+end
+
+function fraction = fluidEdgeFraction(edgeLevelValues)
+fraction = zeros(size(edgeLevelValues, 1), 1);
+bothFluid = all(edgeLevelValues <= 0, 2);
+fraction(bothFluid) = 1;
+cross12 = edgeLevelValues(:, 1) <= 0 & edgeLevelValues(:, 2) > 0;
+fraction(cross12) = -edgeLevelValues(cross12, 1) ./ ...
+    (edgeLevelValues(cross12, 2) - edgeLevelValues(cross12, 1));
+cross21 = edgeLevelValues(:, 1) > 0 & edgeLevelValues(:, 2) <= 0;
+fraction(cross21) = -edgeLevelValues(cross21, 2) ./ ...
+    (edgeLevelValues(cross21, 1) - edgeLevelValues(cross21, 2));
+fraction = min(1, max(0, fraction));
+end
+
 function transportProblem = createPhreeqcTransport(grid, stepper, flow, name, initialConcentration, ...
-    inletConcentration, diffusionCoefficient, inletVelocity, EPS, upwindMode)
+    inletConcentration, diffusionCoefficient, inletVelocity, EPS, upwindMode, ...
+    inletBoundaryMode, accumulationCoefficient)
 concentration = Variable(grid, stepper, name, 'P0');
 concentration.setdata(0, @(t, x) initialConcentration);
 transportProblem = TransportLEVEL(grid, stepper, [name, ' Transport']);
 transportProblem.id2N = {1, 2, 3};
-transportProblem.id2F = {4};
 transportProblem.U = concentration;
-transportProblem.D.setdata(diffusionCoefficient * eye(2));
-transportProblem.gF.setdata(@(t, x) -inletConcentration * inletVelocity * (x(1) < EPS));
-transportProblem.A.setdata(0, @(t, x) 1);
+transportProblem.D.setdata(0, diffusionCoefficient * eye(2));
+if strcmp(inletBoundaryMode, 'dirichlet')
+    transportProblem.id2D = {4};
+    transportProblem.uD.setdata(0, @(t, x) inletConcentration);
+    transportProblem.gF.setdata(0, @(t, x) 0);
+else
+    transportProblem.id2F = {4};
+    transportProblem.gF.setdata(0, @(t, x) ...
+        -inletConcentration * inletVelocity * (x(1) < EPS));
+end
+transportProblem.A.setdata(0, @(t, x) accumulationCoefficient);
 transportProblem.C.setdata(0, flow.getdata(1));
 transportProblem.isUpwind = upwindMode;
 end
 
-function setPhreeqcTransportStepData(transportProblem, timeStep, flowData)
-transportProblem.A.setdata(timeStep, @(t, x) 1);
+function setPhreeqcTransportStepData(transportProblem, timeStep, flowData, ...
+    accumulationCoefficient)
+copyTransportStaticCoefficientsToStep(transportProblem, timeStep);
+transportProblem.A.setdata(timeStep, @(t, x) accumulationCoefficient);
 transportProblem.gF.setdata(timeStep, transportProblem.gF.getdata(0));
 transportProblem.C.setdata(timeStep, flowData);
+end
+
+function copyTransportStaticCoefficientsToStep(transportProblem, timeStep)
+if timeStep == 0
+    return;
+end
+for fieldName = {'D', 'uD'}
+    variableObj = transportProblem.(fieldName{1});
+    if ~isempty(variableObj.content) && ~isempty(variableObj.content{1})
+        variableObj.setdata(timeStep, variableObj.content{1});
+    end
+end
+end
+
+function discardCompletedTransportHistory(transportProblems, currentStep)
+if currentStep < 2
+    return;
+end
+variableFields = {'Q', 'U', 'A', 'B', 'C', 'D', 'E', 'F', ...
+    'uD', 'gF', 'uR', 'rob', 'L'};
+for iProblem = 1:numel(transportProblems)
+    problem = transportProblems{iProblem};
+    for iField = 1:numel(variableFields)
+        variableObj = problem.(variableFields{iField});
+        lastOldEntry = min(currentStep, numel(variableObj.content));
+        for iEntry = 2:lastOldEntry
+            variableObj.content{iEntry, 1} = [];
+        end
+    end
+end
 end
 
 function geom = computePhreeqcGeometryState(grid, levels, molarVolume, thickness)
@@ -4595,17 +5052,6 @@ else
 end
 end
 
-function [nonlinearFunc, nonlinearJacFunc] = zeroPhreeqcNonlinearFunctions(numSpecies, ~)
-nonlinearFunc = cell(numSpecies, 1);
-nonlinearJacFunc = cell(numSpecies, numSpecies);
-for iSpecies = 1:numSpecies
-    nonlinearFunc{iSpecies} = @(varargin) zeros(size(varargin{1}));
-    for jSpecies = 1:numSpecies
-        nonlinearJacFunc{iSpecies, jSpecies} = @(varargin) zeros(size(varargin{1}));
-    end
-end
-end
-
 function applyTransportCorrector(speciesCells, Corrector, timeStep)
 for iSpecies = 1:numel(speciesCells)
     if size(Corrector, 2) >= iSpecies
@@ -4615,18 +5061,35 @@ for iSpecies = 1:numel(speciesCells)
 end
 end
 
-function speciesCells = limitPhreeqcTransportBounds(speciesCells, upperBounds, speciesNames, timeStep)
+function speciesCells = limitPhreeqcTransportBounds(speciesCells, upperBounds, speciesNames, ...
+    timeStep, fluidTriangles, fullFluidTriangles)
 for iSpecies = 1:min(numel(speciesCells), numel(upperBounds))
     data = speciesCells{iSpecies}.U.getdata(timeStep);
     data = max(data, 0);
+    active = logical(fluidTriangles(:));
+    if numel(active) ~= numel(data)
+        active = true(size(data));
+    end
+    fullFluid = logical(fullFluidTriangles(:));
+    if numel(fullFluid) ~= numel(data)
+        fullFluid = active;
+    end
+    cutCell = active & ~fullFluid;
     upperBound = upperBounds(iSpecies);
     if isfinite(upperBound)
         tolerance = max(1e-15, 1e-9 * max(abs(upperBound), 1));
-        oldMax = max(data, [], 'omitnan');
+        oldMax = max(data(active), [], 'omitnan');
+        fullFluidMax = max(data(fullFluid), [], 'omitnan');
+        cutCellMax = max(data(cutCell), [], 'omitnan');
+        if isempty(fullFluidMax), fullFluidMax = NaN; end
+        if isempty(cutCellMax), cutCellMax = NaN; end
         clipped = data > upperBound;
-        if any(clipped) && oldMax > upperBound + tolerance
-            fprintf('  [PHREEQC limiter] %s step %d: clipped %d cells from max %.3e to %.3e mol/cm^3\n', ...
-                speciesNames{iSpecies}, timeStep, nnz(clipped), oldMax, upperBound);
+        activeClipped = clipped & active;
+        if any(activeClipped) && oldMax > upperBound + tolerance
+            fprintf(['  [PHREEQC limiter] %s step %d: clipped %d full + %d cut cells; ', ...
+                'raw max full=%.3e, cut=%.3e, bound=%.3e mol/cm^3\n'], ...
+                speciesNames{iSpecies}, timeStep, nnz(clipped & fullFluid), ...
+                nnz(clipped & cutCell), fullFluidMax, cutCellMax, upperBound);
         end
         data(clipped) = upperBound;
     end
@@ -5044,6 +5507,37 @@ else
 end
 end
 
+function problem = solveStokesLevel(problem, step, isolateSolve, meshPath, ...
+        levels, flowDirection, lengthXAxis, lengthYAxis, nxParts, nyParts, ...
+        inletVelocity, mu)
+if isolateSolve
+    solution = RunInFreshMatlabWorker(@SolveStokesLevelWorker, ...
+        meshPath, levels, flowDirection, lengthXAxis, lengthYAxis, ...
+        nxParts, nyParts, inletVelocity, mu);
+    problem.U.setdata(step, solution.velocity);
+    problem.P.setdata(step, solution.pressure);
+else
+    problem.computeLevel('s');
+end
+end
+
+function [K_cm2, K_mD] = computeUpstreamPermeabilityTensor( ...
+        baseGrid, baseCoord, levelSet, isolateSolve, meshPath)
+% Normalize to a reference cell, use upstream RTSPHEM, then restore cm^2.
+if nargin >= 4 && isolateSolve
+    result = RunInFreshMatlabWorker(@ComputePermeabilityMainDirectionWorker, ...
+        meshPath, levelSet);
+    K_cm2 = result.K_cm2;
+    K_mD = result.K_mD;
+    return;
+end
+K_cm2 = computePhysicalPermeabilityTensor( ...
+    baseCoord, baseGrid.triangles, levelSet, 'MainDirectionOnly');
+K_mD = K_cm2 / 9.869233e-12;
+assert(isfinite(K_mD(1, 1)) && K_mD(1, 1) > 0, ...
+    'Invalid upstream main-direction permeability.');
+end
+
 function tf = cfgHasNonEmptyField(config, fieldName)
 tf = isstruct(config) && isfield(config, fieldName) && ~isempty(config.(fieldName));
 end
@@ -5124,12 +5618,18 @@ cCurrent = currentConcentration(:);
 cPrevious = previousConcentration(:);
 
 diagnostics = struct();
-diagnostics.cMin = min(cCurrent, [], 'omitnan');
-diagnostics.cMax = max(cCurrent, [], 'omitnan');
+validFluid = fluidTriangles & isfinite(cCurrent);
+if any(validFluid)
+    diagnostics.cMin = min(cCurrent(validFluid), [], 'omitnan');
+    diagnostics.cMax = max(cCurrent(validFluid), [], 'omitnan');
+else
+    diagnostics.cMin = NaN;
+    diagnostics.cMax = NaN;
+end
 diagnostics.totalMass = computeTotalSoluteMass(grid, fluidTriangles, cCurrent, thickness);
 previousMass = computeTotalSoluteMass(grid, fluidTriangles, cPrevious, thickness);
 
-outletTriangles = flowConfig.outletTrianglePredicate(grid.baryT);
+outletTriangles = flowConfig.outletTrianglePredicate(grid.baryT) & fluidTriangles;
 outletConcentration = ComputeOutletConcentration(cCurrent, outletTriangles);
 outletEdges = flowConfig.outletEdgePredicate(grid.baryE);
 outletWaterFlux = sum(abs(flowData(outletEdges)) .* grid.areaE(outletEdges)) * thickness;
@@ -5153,7 +5653,7 @@ diagnostics.advectiveCfl = diagnostics.localVelocityMax * dt / max(hMin, eps);
 diagnostics.reactionCfl = normalSpeedMax * dt / max(hMin, eps);
 diagnostics.normalSpeedMax = normalSpeedMax;
 [diagnostics.poreComponents, diagnostics.largestPoreComponentFraction] = ...
-    computePoreConnectivity(grid, fluidTriangles);
+    ComputePoreConnectivity(grid, fluidTriangles);
 diagnostics.porosity = porosityValue;
 diagnostics.permeability = permeabilityValue;
 diagnostics.permeabilityRatio = permeabilityRatio;
@@ -5216,58 +5716,6 @@ if any(fluidTriangles) && any(isfinite(localSpeed(fluidTriangles)))
 else
     localPeMax = localVelocityMax * hMin / max(2 * diffusionCoefficient, eps);
 end
-end
-
-function [numComponents, largestFraction] = computePoreConnectivity(grid, fluidTriangles)
-fluidIds = find(fluidTriangles);
-numFluid = numel(fluidIds);
-if numFluid == 0
-    numComponents = 0;
-    largestFraction = 0;
-    return;
-end
-
-fluidMap = zeros(grid.numT, 1);
-fluidMap(fluidIds) = 1:numFluid;
-neighbors = cell(numFluid, 1);
-for iEdge = 1:grid.numE
-    adjacent = grid.T0E(iEdge, :);
-    adjacent = adjacent(adjacent > 0);
-    if numel(adjacent) == 2 && fluidTriangles(adjacent(1)) && fluidTriangles(adjacent(2))
-        a = fluidMap(adjacent(1));
-        b = fluidMap(adjacent(2));
-        neighbors{a}(end + 1) = b; %#ok<AGROW>
-        neighbors{b}(end + 1) = a; %#ok<AGROW>
-    end
-end
-
-visited = false(numFluid, 1);
-componentSizes = [];
-for iFluid = 1:numFluid
-    if visited(iFluid)
-        continue;
-    end
-    stack = iFluid;
-    visited(iFluid) = true;
-    count = 0;
-    while ~isempty(stack)
-        node = stack(end);
-        stack(end) = [];
-        count = count + 1;
-        nextNodes = neighbors{node};
-        for iNext = 1:numel(nextNodes)
-            nextNode = nextNodes(iNext);
-            if ~visited(nextNode)
-                visited(nextNode) = true;
-                stack(end + 1) = nextNode; %#ok<AGROW>
-            end
-        end
-    end
-    componentSizes(end + 1) = count; %#ok<AGROW>
-end
-
-numComponents = numel(componentSizes);
-largestFraction = max(componentSizes) / numFluid;
 end
 
 function nextStepSize = computeHardCflStepSize(diagnostics, hMin, advectiveSafety, reactiveSafety, minStep)

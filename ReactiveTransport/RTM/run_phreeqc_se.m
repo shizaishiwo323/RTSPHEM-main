@@ -1,8 +1,10 @@
+function result = run_phreeqc_se(overrides)
 %% run_phreeqc_se - 导出震电正演所需的反应输运与 PHREEQC 水化学
 %
 % 用法：
-%   1. 只修改本文件顶部的“用户可调参数”。
-%   2. 在 MATLAB 中运行本文件。
+%   result = run_phreeqc_se();
+%   result = run_phreeqc_se(struct('inletVelocity', 0.01, ...
+%       'acidConcentration_mol_L', 0.02, 'rateCoefficientTST', 1e-3));
 % 输出：
 %   outputs/rtm_runs/<runName>/
 %     run_metadata.json
@@ -10,7 +12,10 @@
 %     phreeqc_results/phreeqc_species_step_*.csv
 %     phreeqc_results/seismoelectric_chemistry.csv/.xlsx
 
-clear; clc;
+if nargin < 1 || isempty(overrides)
+    overrides = struct();
+end
+validateattributes(overrides, {'struct'}, {'scalar'});
 
 %% ===================== 路径与运行命名 =====================
 rtmDir = fileparts(mfilename('fullpath'));
@@ -23,8 +28,8 @@ cfg = struct();
 % 输出根目录。每次运行会在这里生成一个结果文件夹。
 cfg.outputRoot = fullfile(projectRoot, 'outputs', 'rtm_runs');
 
-% 运行名。留空 '' 时，PNM_beauty3 会自动生成 rtm_时间戳_layout 名称。
-cfg.runName = '';
+% 新目录避免覆盖未包含早期过渡状态的旧运行。
+cfg.runName = 'M14_24_bottom_left_600x400_literal_wormhole_Pe12_DaII20_200x100_early_transition_complete';
 
 % 如需固定输出到某个绝对路径，取消下一行注释并填写；设置后会覆盖 outputRoot/runName。
 % cfg.resultsDir = fullfile(projectRoot, 'outputs', 'rtm_runs', 'my_test_run');
@@ -36,7 +41,7 @@ cfg.runName = '';
 %   'square' 方形排布；characteristicLength 表示最小孔喉
 cfg.layoutType = 'random';
 
-% 与 Study process/PNM_beauty3.m 对齐的随机颗粒几何参数。
+% M14/24 600 x 400 um literal 方解石圆粒几何。
 cfg.sizeScale = 1;
 cfg.circleRadius = cfg.sizeScale * 0.003;
 cfg.circleSpacing = cfg.sizeScale * 0.0005;
@@ -55,7 +60,7 @@ cfg.targetAspectRatio = 0.6 / 0.4;
 %   false 每次生成新随机几何
 %   true  尝试读取 geometryLoadFile；为空时使用结果目录中的 random_geometry_config.mat
 cfg.loadExistingGeometry = true;
-cfg.geometrySaveFile = "C:\Users\imgw\Documents\MATLAB\RTSPHEM-main\ReactiveTransport\Analysis\孔隙耦合参数\original_data\T2lm-single\dissolution_results-Da_0.0369_Pe_0.1000_L_0.0010_lengthXAxis_0.060000_lengthYAxis_0.040000_random\random_geometry_config.mat";
+cfg.geometrySaveFile = "C:\Users\imgw\Documents\Codex\震电模拟\Wang_SE_experiment\generated_geometries\M14_24_bottom_left_600x400\M14_24_bottom_left_600x400_literal.mat";
 cfg.geometryLoadFile = cfg.geometrySaveFile;
 
 % 外部 TIF 几何。通常保持 false。
@@ -75,15 +80,15 @@ cfg.externalDxfReferenceLengthCm = 0.15;
 cfg.externalDxfImportDirection = 'rotate90_cw';
 
 %% ===================== 物理参数 =====================
-% 入口流速 [cm/s]
-cfg.inletVelocity = 0.001;
+% 分支 wormhole：Pe=12、DaII=20、DaI=1.667（L=0.001 cm，D=1e-5 cm^2/s）。
+cfg.inletVelocity = 0.12; % [cm/s]
 
 % 流体方向：left_to_right 或 bottom_to_top。
 cfg.flowDirection = 'left_to_right';
 
 % 酸浓度以 mol/L 输入，再显式换算为求解器使用的 mol/cm^3。
 % 原脚本的 1e-2 mol/cm^3 等于 10 mol/L，超出本模型的稀溶液换算适用范围。
-cfg.acidConcentration_mol_L = 1e-2;
+cfg.acidConcentration_mol_L = 0.100;
 validateattributes(cfg.acidConcentration_mol_L, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'positive', '<=', 0.5});
 cfg.initialHydrogenConcentration = cfg.acidConcentration_mol_L * 1e-3;
@@ -99,7 +104,7 @@ cfg.phreeqcRunGroup = 'phreeqc_database_calcite';
 cfg.phreeqcDatabasePath = ResolvePhreeqcDatabasePath( ...
     rtmDir, fullfile('backup_legacy_20260626', 'phreeqc.dat'));
 cfg.phreeqcTemperatureC = 25;
-cfg.phreeqcKineticsCorrectionFactor = 1;
+cfg.phreeqcKineticsCorrectionFactor = 0.0542005420054201 / 8.9e-5;
 cfg.phreeqcMaxSpecificSurfaceArea = Inf;
 cfg.phreeqcCalciteKineticsParameterConvention = 'legacy_m2_per_kgw';
 cfg.phreeqcCalciteSurfaceAreaExponent = 1;
@@ -125,13 +130,16 @@ cfg.phreeqcReactNeutralInterfaceCells = false;
 cfg.initialCalciumConcentration = 0;
 cfg.initialCarbonConcentration = 0;
 cfg.initialSodiumConcentration = 0;
-cfg.initialChlorideConcentration = cfg.initialHydrogenConcentration;
+% 初始孔隙水不预装注入酸；HCl 只通过左侧入口进入。
+cfg.initialChlorideConcentration = 0;
 cfg.inletCalciumConcentration = cfg.initialCalciumConcentration;
 cfg.inletCarbonConcentration = cfg.initialCarbonConcentration;
 cfg.inletSodiumConcentration = cfg.initialSodiumConcentration;
-cfg.inletChlorideConcentration = cfg.initialChlorideConcentration;
-% 逐单元 PHREEQC 表很大；目标切片和最终步仍由 doExportStep 自动导出。
+cfg.inletChlorideConcentration = ...
+    cfg.initialHydrogenConcentration + cfg.initialChlorideConcentration;
+% 逐单元 PHREEQC 表很大；保留最初 6 步以解析酸突破前沿，之后仍按目标切片导出。
 cfg.phreeqcExportEvery = Inf;
+cfg.phreeqcEarlyExportSteps = 6;
 cfg.phreeqcExportSeismoelectric = true;
 
 % 扩散系数 [cm^2/s]
@@ -140,21 +148,22 @@ cfg.diffusionCoefficient = 1e-5;
 % 碳酸钙摩尔体积 [cm^3/mol]
 cfg.molarVolume = 36.9;
 
-% 反应速率常数 [mol/dm^2/s]，与 PNM_beauty3.m 中的 TST 公式单位保持一致。
-cfg.rateCoefficientTST = 1e-4;
-if strcmpi(cfg.reactionModel, 'phreeqc')
-    cfg = ConfigurePhreeqcRunGroup(cfg, cfg.phreeqcRunGroup);
-end
+% DaII=20 对应的方解石速率；PHREEQC 修正因子同步改变实际动力学。
+cfg.rateCoefficientTST = 0.0542005420054201; % [mol/dm^2/s]
 
 %% ===================== 时间步与终止条件 =====================
-% 初始宏观时间步 [s]
-cfg.initialMacroscaleTimeStepSize = 0.10;
+% 高 Pe、快反应 wormhole 的保守初始宏观时间步 [s]
+cfg.initialMacroscaleTimeStepSize = 5e-5;
 % HyPHM 输运为隐式求解；硬 CFL 会把本算例锁死在约 0.01 s 小步。
 % 保留浓度越界限制和自适应孔隙率时间步控制。
 cfg.enableHardCflLimit = false;
 cfg.hardCflLimitInitialGrid = false;
 cfg.advectiveCflSafety = 0.3;
 cfg.reactiveCflSafety = 0.2;
+% PHREEQC 组分采用守恒隐式切单元有限体积输运，可在高 Pe 下保持非负和质量守恒。
+cfg.transportSolverBackend = 'cut_cell_fv';
+% 仅输运 Ca/C/Na/Cl 总量；pH、自由 H+ 和碳酸根物种均由 PHREEQC 反算。
+cfg.phreeqcTransportBasis = 'conserved_totals';
 
 % 最大时间步 [s]。如果留空 []，PNM_beauty3 会根据 Pe 自动估算。
 cfg.maximalStep = [];
@@ -163,29 +172,30 @@ cfg.maximalStep = [];
 cfg.endTime = [];
 % cfg.endTime = 10;
 
-% 目标溶解过程切片数。设置为 100 时，会自动按溶解进度调整时间步，
-% 预计从初始结构到接近完全溶解约导出 100 个 RTM/DXF 过程切片。
+% 从初始结构到完全溶解导出 100 个 RTM/DXF 过程切片。
 % 留空 [] 时沿用 timeStepperType/exportEvery 的原始行为。
-cfg.targetDissolutionSlices = 10;
+cfg.targetDissolutionSlices = 100;
+% 目标切片逻辑会为粒体积归零的最终步保留第 100 个导出位。
+cfg.targetDissolutionFinalPorosity = 1.0;
 
 % 当渗透率达到初始值的多少倍时，完成当前步后停止并导出最终结构。
 cfg.permeabilityRatioThreshold = 10000000;
 
 %% ===================== 网格与 DXF 导出精度 =====================
-% 微尺度网格分区数。越大越精细，也越慢。
-cfg.numPartitionsMicroscale = 2 * 64;
+% M14/24 的默认高分辨率诊断网格；正式运行前必须通过颗粒间隙分辨率检查。
+cfg.numPartitionsMicroscale = 200;
 
 % RTM/HyPHM 三角网格密度控制，优先级：
 %   1) meshTargetElementSizeCm 非空时，按目标网格尺寸 [cm] 自动算 X/Y 分区数；
 %   2) meshNumPartitionsX/Y 非空时，直接指定 X/Y 方向分区数；
 %   3) 否则沿用 numPartitionsMicroscale。
 cfg.meshTargetElementSizeCm =  [];
-cfg.meshNumPartitionsX = [];
-cfg.meshNumPartitionsY = [];
+cfg.meshNumPartitionsX = 200;
+cfg.meshNumPartitionsY = 100;
 
 % DXF/掩膜导出的规则网格分辨率。越大 DXF 越细，也越慢。
-cfg.dxfResolutionX = 200;
-cfg.dxfResolutionY = 100;
+cfg.dxfResolutionX = 512;
+cfg.dxfResolutionY = 384;
 
 %% ===================== 输出控制 =====================
 % 每隔多少个 RTM 时间步导出一次结构。同步 NMR 时建议保持 1。
@@ -216,6 +226,11 @@ cfg.pngNMRConfig = struct();
 nmrOptions = struct('nmr_method', 'none');
 
 %% ===================== 开始运行 =====================
+cfg = applyOverrides(cfg, overrides);
+if strcmpi(cfg.reactionModel, 'phreeqc')
+    cfg = ConfigurePhreeqcRunGroup(cfg, cfg.phreeqcRunGroup);
+end
+
 fprintf('========================================\n');
 fprintf('单组 RTM/NMR 运行\n');
 fprintf('  layout = %s\n', cfg.layoutType);
@@ -243,6 +258,8 @@ fprintf('  PNG NMR = %s (%s)\n', mat2str(cfg.enablePNGSimulation), cfg.pngNMRMet
 fprintf('========================================\n\n');
 
 result = PNM_beauty3(cfg);
+assertEarlyChemistryExport(result.seismoelectricChemistryCsv, ...
+    cfg.phreeqcEarlyExportSteps);
 
 fprintf('\n运行完成:\n');
 fprintf('  结果目录: %s\n', result.resultsDir);
@@ -250,3 +267,61 @@ fprintf('  最终孔隙率: %.6f\n', result.finalPorosity);
 fprintf('  最终渗透率: %.6f mD\n', result.finalPermeability);
 fprintf('  震电水化学 CSV: %s\n', result.seismoelectricChemistryCsv);
 fprintf('  震电水化学 XLSX: %s\n', result.seismoelectricChemistryXlsx);
+end
+
+function assertEarlyChemistryExport(csvPath, requiredSteps)
+if requiredSteps <= 0
+    return;
+end
+if exist(csvPath, 'file') ~= 2
+    error('RTSPHEM:SE:MissingChemistryCsv', ...
+        'PHREEQC seismoelectric chemistry CSV was not created: %s', csvPath);
+end
+chemistry = readtable(csvPath, 'VariableNamingRule', 'preserve');
+if ~ismember('TimeStep', chemistry.Properties.VariableNames)
+    error('RTSPHEM:SE:MissingTimeStepColumn', ...
+        'Chemistry CSV has no TimeStep column: %s', csvPath);
+end
+missing = setdiff((1:requiredSteps)', chemistry.TimeStep(:));
+if ~isempty(missing)
+    error('RTSPHEM:SE:MissingEarlyChemistry', ...
+        'Chemistry CSV is missing required early TimeStep values: %s', ...
+        strjoin(string(missing), ', '));
+end
+end
+
+function cfg = applyOverrides(cfg, overrides)
+names = fieldnames(overrides);
+for i = 1:numel(names)
+    cfg.(names{i}) = overrides.(names{i});
+end
+
+if isfield(overrides, 'acidConcentration_mol_L')
+    validateattributes(cfg.acidConcentration_mol_L, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive', '<=', 0.5});
+    if ~isfield(overrides, 'initialHydrogenConcentration')
+        cfg.initialHydrogenConcentration = cfg.acidConcentration_mol_L * 1e-3;
+    end
+    if ~isfield(overrides, 'inletChlorideConcentration')
+        cfg.inletChlorideConcentration = ...
+            cfg.initialHydrogenConcentration + cfg.initialChlorideConcentration;
+    end
+elseif isfield(overrides, 'initialHydrogenConcentration')
+    cfg.acidConcentration_mol_L = cfg.initialHydrogenConcentration * 1e3;
+    if ~isfield(overrides, 'inletChlorideConcentration')
+        cfg.inletChlorideConcentration = ...
+            cfg.initialHydrogenConcentration + cfg.initialChlorideConcentration;
+    end
+end
+
+validateattributes(cfg.inletVelocity, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive'});
+validateattributes(cfg.rateCoefficientTST, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive'});
+validateattributes(cfg.phreeqcKineticsCorrectionFactor, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive'});
+if ~isempty(cfg.targetDissolutionSlices)
+    validateattributes(cfg.targetDissolutionSlices, {'numeric'}, ...
+        {'scalar', 'integer', '>=', 2});
+end
+end

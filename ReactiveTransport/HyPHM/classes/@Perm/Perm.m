@@ -76,6 +76,9 @@ classdef Perm < AbstractProblem % < hgsetget & handle
 
         %> If the equation contains the term @f$\partial_t \vec{u}@f$, default: false
         isEvolution
+
+        % Solve the second unit-force direction when a full tensor is needed.
+        solveSecondDirection
     end
 
     properties (Access = private, Hidden)
@@ -137,6 +140,7 @@ classdef Perm < AbstractProblem % < hgsetget & handle
             this.name = name;
             this.balanceP = []; % default: no contrains
             this.isEvolution = false; % default: no evolution term
+            this.solveSecondDirection = true;
 
             Bubble = false;
             if ismember(varargin, 'Bubble')

@@ -1,8 +1,7 @@
 function [limitedStepSize, wasLimited, targetBoundaryPorosity] = LimitTargetDissolutionStepSize( ...
     proposedStepSize, currentStepSize, porosityDelta, currentPorosity, ...
-    initialPorosity, lastExportIndex, targetSliceCount, minStepSize, maxStepSize, boundaryFactor)
-% LimitTargetDissolutionStepSize caps dt so target-slice mode does not jump
-% beyond the second upcoming dissolution-progress export bucket.
+    initialPorosity, lastExportIndex, targetSliceCount, minStepSize, maxStepSize, boundaryFactor, finalPorosity)
+% LimitTargetDissolutionStepSize caps dt at the next export bucket.
 
 limitedStepSize = proposedStepSize;
 wasLimited = false;
@@ -10,6 +9,9 @@ targetBoundaryPorosity = NaN;
 
 if nargin < 10 || isempty(boundaryFactor)
     boundaryFactor = 0.95;
+end
+if nargin < 11 || isempty(finalPorosity)
+    finalPorosity = 1;
 end
 
 if ~all(isfinite([proposedStepSize, currentStepSize, porosityDelta, ...
@@ -22,15 +24,17 @@ end
 
 targetSliceCount = max(2, round(double(targetSliceCount(1))));
 lastExportIndex = max(0, min(targetSliceCount, round(double(lastExportIndex(1)))));
-if lastExportIndex >= targetSliceCount - 1
+if lastExportIndex >= targetSliceCount
     return;
 end
 
 initialPorosity = min(max(double(initialPorosity(1)), 0), 1 - eps);
-currentPorosity = min(max(double(currentPorosity(1)), initialPorosity), 1);
-nextBoundaryIndex = min(targetSliceCount, lastExportIndex + 2);
+finalPorosity = min(max(double(finalPorosity(1)), initialPorosity + eps), 1);
+currentPorosity = min(max(double(currentPorosity(1)), initialPorosity), finalPorosity);
+nextBoundaryIndex = min(targetSliceCount, lastExportIndex + 1);
 targetBoundaryPorosity = initialPorosity + ...
-    (1 - initialPorosity) * double(nextBoundaryIndex) / double(targetSliceCount);
+    (finalPorosity - initialPorosity) * ...
+    double(nextBoundaryIndex - 1) / double(targetSliceCount - 1);
 remainingPorosity = targetBoundaryPorosity - currentPorosity;
 if remainingPorosity <= eps
     return;

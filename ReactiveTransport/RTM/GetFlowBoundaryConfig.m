@@ -24,6 +24,7 @@ switch direction
         cfg.axisParts = nxParts;
         cfg.velocityVector = @(speed) [speed; 0];
         cfg.inletPredicate = @(x) x(1) < eps;
+        cfg.inletEdgePredicate = @(baryE) baryE(:, 1) < eps;
         cfg.outletEdgePredicate = @(baryE) baryE(:, 1) > (lengthXAxis - eps);
         cfg.inletNodePredicate = @(coordV) coordV(:, 1) < eps;
         cfg.outletNodePredicate = @(coordV) coordV(:, 1) > (lengthXAxis - eps);
@@ -42,6 +43,7 @@ switch direction
         cfg.axisParts = nyParts;
         cfg.velocityVector = @(speed) [0; speed];
         cfg.inletPredicate = @(x) x(2) < eps;
+        cfg.inletEdgePredicate = @(baryE) baryE(:, 2) < eps;
         cfg.outletEdgePredicate = @(baryE) baryE(:, 2) > (lengthYAxis - eps);
         cfg.inletNodePredicate = @(coordV) coordV(:, 2) < eps;
         cfg.outletNodePredicate = @(coordV) coordV(:, 2) > (lengthYAxis - eps);

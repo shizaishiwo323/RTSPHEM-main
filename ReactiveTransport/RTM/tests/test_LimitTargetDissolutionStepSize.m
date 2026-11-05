@@ -4,10 +4,10 @@ end
 
 function testLimitsStepToNextTargetBoundary(testCase)
 [dt, wasLimited, boundary] = LimitTargetDissolutionStepSize( ...
-    2.0, 1.0, 0.01, 0.55, 0.545, 1, 100, 1e-5, 60, 1.05);
+    2.0, 1.0, 0.001, 0.548, 0.545, 1, 100, 1e-5, 60, 1.05);
 
-expectedBoundary = 0.545 + (1 - 0.545) * 3 / 100;
-expectedDt = 1.05 * (expectedBoundary - 0.55) / 0.01;
+expectedBoundary = 0.545 + (1 - 0.545) / 99;
+expectedDt = 1.05 * (expectedBoundary - 0.548) / 0.001;
 
 verifyTrue(testCase, wasLimited);
 verifyEqual(testCase, boundary, expectedBoundary, 'AbsTol', 1e-12);
@@ -28,4 +28,20 @@ function testNoLimitWithoutPorositySlope(testCase)
 
 verifyFalse(testCase, wasLimited);
 verifyEqual(testCase, dt, 2.0);
+end
+
+function testPartialDissolutionEndpointSetsBoundary(testCase)
+[~, ~, boundary] = LimitTargetDissolutionStepSize( ...
+    2.0, 1.0, 0.01, 0.55, 0.545, 1, 10, 1e-5, 60, 1.05, 0.78);
+
+verifyEqual(testCase, boundary, 0.545 + (0.78 - 0.545) / 9, ...
+    'AbsTol', 1e-12);
+end
+
+function testLimitsPenultimateSliceToFinalBoundary(testCase)
+[~, wasLimited, boundary] = LimitTargetDissolutionStepSize( ...
+    2.0, 1.0, 0.01, 0.77, 0.55, 9, 10, 1e-5, 60, 0.95, 0.78);
+
+verifyTrue(testCase, wasLimited);
+verifyEqual(testCase, boundary, 0.78, 'AbsTol', 1e-12);
 end

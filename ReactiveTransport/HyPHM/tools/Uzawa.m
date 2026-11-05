@@ -10,8 +10,15 @@ try
 catch
     backSubsFound = false;
 end
-[R, ~, P] = chol(A); % Cholesky decomposition of Laplace part
-maxiter = 1000;
+useNestedDissection = size(A, 1) >= 100000;
+if useNestedDissection
+    ordering = dissect(A);
+    R = chol(A(ordering, ordering));
+    fprintf('Uzawa Laplace solve: dissect/chol (%d unknowns)\n', size(A, 1));
+else
+    [R, ~, P] = chol(A); % Cholesky decomposition of Laplace part
+end
+maxiter = 5000;
 tol = 10^(-7);
 
 fp = -scale .* fp;
@@ -20,7 +27,9 @@ temp = f + B' * (scale .* p);
 u = zeros(2*n, 1);
 w = zeros(2*n, 1);
 
-if backSubsFound
+if useNestedDissection
+    u = solveLaplaceBlocksNestedChol(R, ordering, temp, n);
+elseif backSubsFound
     u = backSubs(R, P, temp);
 else
     u(1:n, 1) = P * (R \ (R' \ (P' * temp(1:n))));
@@ -34,7 +43,9 @@ iter = 0;
 
 while iter < 10 || mod(iter, 2) > 0 || (norm([[A * u(1:n); A * u(n+1:2*n)] - B' * (scale .* p) - f; (-scale .* (B * u) - fp)]) > tol * norm([u; p]) & iter < maxiter)
     temp = B' * (scale .* d);
-    if backSubsFound
+    if useNestedDissection
+        w = solveLaplaceBlocksNestedChol(R, ordering, temp, n);
+    elseif backSubsFound
         w = backSubs(R, P, temp);
     else
         w(1:n, 1) = P * (R \ (R' \ (P' * temp(1:n))));
@@ -59,3 +70,11 @@ end
 assert(iter < maxiter, 'Uzawa did not converge');
 
 sol = [u; scale .* p];
+end
+
+function x = solveLaplaceBlocksNestedChol(R, ordering, rhs, n)
+x = zeros(2 * n, 1);
+x(ordering) = R \ (R' \ rhs(ordering));
+secondBlock = double(n) + ordering;
+x(secondBlock) = R \ (R' \ rhs(secondBlock));
+end

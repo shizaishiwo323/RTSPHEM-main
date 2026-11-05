@@ -261,7 +261,9 @@ end
 %% Solution Vector
 % write Dirichlet values to solution vector (these entries wont be touched by solver)
 X = [uD; vD; zeros(numV, 1); 0]; % [U, V, P, dum] where dum is a scalar dummy for the mass balance
-X = [X, X];
+if this.solveSecondDirection
+    X = [X, X];
+end
 %printline(3,  '...done [%.3f sec]', toc(tAssembly)) % stop timer assembly linear part
 
 %% Build large system of equations
@@ -310,8 +312,11 @@ MY = X;
 [MY(idx, 1), iter1] = Uzawa(AS, B, f, fp, zeros(sum(pressureDOF), 1), n, scale);
 f = [bV; bU];
 %iter1
-f = f([~markDirN, ~markDirN]);
-[MY(idx, 2), iter2] = Uzawa(AS, B, f, fp, zeros(sum(pressureDOF), 1), n, scale);
+if this.solveSecondDirection
+    f = f([~markDirN, ~markDirN]);
+    [MY(idx, 2), iter2] = Uzawa(AS, B, f, fp, ...
+        zeros(sum(pressureDOF), 1), n, scale);
+end
 
 %%%%%%%%%%%%%%%%%%%%%%%
 % tic
@@ -336,8 +341,13 @@ U = X(1:numVE, 1);
 V = X(numVE+1:2*numVE, 1);
 P = X(2*numVE+1:2*numVE+numV, 1); % there is the scalar mass balance dummy at the end of X
 %printline(3,  '...done [%.3f sec]', toc(tSolving)) % stop timer solving
-U2 = X(1:numVE, 2);
-V2 = X(numVE+1:2*numVE, 2);
+if this.solveSecondDirection
+    U2 = X(1:numVE, 2);
+    V2 = X(numVE+1:2*numVE, 2);
+else
+    U2 = zeros(numVE, 1);
+    V2 = zeros(numVE, 1);
+end
 
 
 %printline(3,  '...done [%.3f sec]', toc(tSolving)) % stop timer solving
